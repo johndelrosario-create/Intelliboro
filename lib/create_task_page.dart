@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'select_location.dart';
 
 class TaskCreation extends StatefulWidget {
   final bool showMap;
@@ -90,7 +91,19 @@ class _TaskCreationState extends State<TaskCreation> {
     );
   }
 
-  // Check if location permissions were granted disable map if not
+  Widget _buildMapSection() {
+    return SizedBox(
+    height: MediaQuery.of(context).size.height-440,
+    width: MediaQuery.of(context).size.width,
+    child: const Center(child: FullMap()),
+    );
+  }
+
+  Widget _buildMapDisabled() {
+    return Text(
+      'Location permissions are disabled. Map functions will not work',
+    );
+  }
 
   // Choose the latitude and longitude from the map
   //// Submit
@@ -135,8 +148,7 @@ class _TaskCreationState extends State<TaskCreation> {
               ],
             ),
             // Select Location picker
-            if(showMap)
-            _buildMapSection()
+            if (widget.showMap) _buildMapSection() else _buildMapDisabled(),
           ],
         ),
       ),

@@ -3,10 +3,17 @@ import 'package:flutter/material.dart';
 import 'package:intelliboro/theme.dart';
 import 'create_task_page.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
+// Define the access token
+const String accessToken = String.fromEnvironment('ACCESS_TOKEN');
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  MapboxOptions.setAccessToken(accessToken);
   runApp(Intelliboro());
 }
+
+
 
 class Intelliboro extends StatelessWidget {
   const Intelliboro({super.key});
@@ -68,24 +75,23 @@ class _HomePageState extends State<HomePage> {
           tooltip: 'New Task',
           child: const Icon(Icons.add),
 
-          onPressed:
-            () async {
-              var status = await Permission.location.request();
-              if (status.isDenied) {
-                await Permission.location.request();
-              } else if (status.isPermanentlyDenied) {
-                openAppSettings();
-              }
-              if (context.mounted) {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) {
-                      return TaskCreation('Task');
-                    },
-                  ),
-                );
-              }
+          onPressed: () async {
+            var status = await Permission.location.request();
+            if (status.isDenied) {
+              await Permission.location.request();
+            } else if (status.isPermanentlyDenied) {
+              openAppSettings();
+            }
+            if (context.mounted) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) {
+                    return TaskCreation(showMap: status.isGranted);
+                  },
+                ),
+              );
+            }
           },
         ),
       ),
