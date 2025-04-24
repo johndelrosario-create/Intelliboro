@@ -1,6 +1,8 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+// import 'package:intelliboro/Geofencing/geofence.dart';
 import 'package:intl/intl.dart';
+// import 'package:native_geofence/native_geofence.dart';
+import 'Geofencing/create_geofence.dart';
 import 'select_location.dart';
 
 class TaskCreation extends StatefulWidget {
@@ -93,9 +95,9 @@ class _TaskCreationState extends State<TaskCreation> {
 
   Widget _buildMapSection() {
     return SizedBox(
-    height: MediaQuery.of(context).size.height-440,
-    width: MediaQuery.of(context).size.width,
-    child: const Center(child: FullMap()),
+      height: MediaQuery.of(context).size.height - 640,
+      width: MediaQuery.of(context).size.width,
+      child: const Center(child: FullMap()),
     );
   }
 
@@ -105,12 +107,6 @@ class _TaskCreationState extends State<TaskCreation> {
     );
   }
 
-  // Choose the latitude and longitude from the map
-  //// Submit
-  //Widget _buildSubmitButton(){
-  //return ElevatedButton(onPressed: widget., child: Padding(padding: const EdgeInsets.all(16.0),
-  //child: Text('Create Task'),));
-  //}
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(
@@ -148,7 +144,9 @@ class _TaskCreationState extends State<TaskCreation> {
               ],
             ),
             // Select Location picker
+            //TODO: Choose the latitude and longitude from the map
             if (widget.showMap) _buildMapSection() else _buildMapDisabled(),
+
           ],
         ),
       ),

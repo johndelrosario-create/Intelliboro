@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:intelliboro/Geofencing/create_geofence.dart';
 //import 'package:flutter_svg/svg.dart';
 import 'package:intelliboro/theme.dart';
+import 'package:native_geofence/native_geofence.dart';
 import 'create_task_page.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
+import 'dart:async';
+import 'dart:ui';
+import 'dart:isolate';
 
 // Define the access token
 const String accessToken = String.fromEnvironment('ACCESS_TOKEN');
@@ -12,8 +17,6 @@ void main() {
   MapboxOptions.setAccessToken(accessToken);
   runApp(Intelliboro());
 }
-
-
 
 class Intelliboro extends StatelessWidget {
   const Intelliboro({super.key});
@@ -37,6 +40,27 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  String geofenceState = 'N/A';
+  ReceivePort port = ReceivePort();
+  @override
+  void initState() {
+    super.initState();
+    IsolateNameServer.registerPortWithName(port.sendPort, 'geofence_send_port');
+    port.listen((dynamic data) {
+      debugPrint('Event: $data');
+      setState(() {
+        geofenceState = data;
+      });
+    });
+    initPlatformState();
+  }
+
+  Future<void> initPlatformState() async {
+    debugPrint('Initilizing...');
+    await NativeGeofenceManager.instance.initialize();
+    debugPrint('Initialization done');
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -99,6 +123,7 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
+// Move to viewhomepage
 class TaskList extends StatelessWidget {
   const TaskList({super.key});
 
