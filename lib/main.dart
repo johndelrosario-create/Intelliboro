@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:intelliboro/Geofencing/create_geofence.dart';
 //import 'package:flutter_svg/svg.dart';
 import 'package:intelliboro/theme.dart';
 import 'package:native_geofence/native_geofence.dart';
@@ -61,6 +60,21 @@ class _HomePageState extends State<HomePage> {
     debugPrint('Initialization done');
   }
 
+  Future<bool> _checkPermissions() async {
+    final locationPerm = await Permission.location.request();
+    if (locationPerm.isDenied) {
+      await Permission.location.request();
+    } else if (locationPerm.isPermanentlyDenied) {
+      openAppSettings();
+    }
+    final backgroundLocationPerm = await Permission.locationAlways.request();
+    final notificationPerm = await Permission.notification.request();
+    return locationPerm.isGranted &&
+        backgroundLocationPerm.isGranted &&
+        notificationPerm.isGranted;
+  }
+
+  //TODO: Notifications permissions must be enabled!
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -100,18 +114,14 @@ class _HomePageState extends State<HomePage> {
           child: const Icon(Icons.add),
 
           onPressed: () async {
-            var status = await Permission.location.request();
-            if (status.isDenied) {
-              await Permission.location.request();
-            } else if (status.isPermanentlyDenied) {
-              openAppSettings();
-            }
+            bool status = await _checkPermissions();
+
             if (context.mounted) {
               Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (context) {
-                    return TaskCreation(showMap: status.isGranted);
+                    return TaskCreation(showMap: status);
                   },
                 ),
               );
