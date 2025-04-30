@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 //import 'package:flutter/services.dart';
-import 'package:intelliboro/Geofencing/add_geofence.dart';
-import 'package:intelliboro/Geofencing/callback.dart';
+import 'package:intelliboro/viewmodel/Geofencing/add_geofence.dart';
+import 'package:intelliboro/viewmodel/notifications/callback.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:native_geofence/native_geofence.dart';
 import 'package:geolocator/geolocator.dart' as locator;

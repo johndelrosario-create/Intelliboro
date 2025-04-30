@@ -142,8 +142,6 @@ class _TaskCreationState extends State<TaskCreation> {
                 ),
               ],
             ),
-            // Select Location picker
-            //TODO: Choose the latitude and longitude from the map
             if (widget.showMap) _buildMapSection() else _buildMapDisabled(),
 
           ],

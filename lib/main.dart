@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 //import 'package:flutter_svg/svg.dart';
 import 'package:intelliboro/theme.dart';
 import 'package:native_geofence/native_geofence.dart';
-import 'create_task_page.dart';
+import 'views/create_task_page.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'dart:async';
