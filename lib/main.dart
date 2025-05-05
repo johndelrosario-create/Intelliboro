@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 //import 'package:flutter_svg/svg.dart';
 import 'package:intelliboro/theme.dart';
 import 'package:native_geofence/native_geofence.dart';
-import 'views/create_task_page.dart';
+import 'views/create_task_view.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'dart:async';
@@ -60,6 +60,7 @@ class _HomePageState extends State<HomePage> {
     debugPrint('Initialization done');
   }
 
+  //FIX: Move to a different classs
   Future<bool> _checkPermissions() async {
     final locationPerm = await Permission.location.request();
     if (locationPerm.isDenied) {
@@ -74,7 +75,6 @@ class _HomePageState extends State<HomePage> {
         notificationPerm.isGranted;
   }
 
-  //TODO: Notifications permissions must be enabled!
   @override
   Widget build(BuildContext context) {
     return MaterialApp(

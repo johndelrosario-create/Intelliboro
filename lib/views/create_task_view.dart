@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
-// import 'package:intelliboro/Geofencing/geofence.dart';
 import 'package:intl/intl.dart';
-// import 'package:native_geofence/native_geofence.dart';
-import 'select_location.dart';
+import 'map_view.dart';
 
 class TaskCreation extends StatefulWidget {
   final bool showMap;
@@ -96,7 +94,7 @@ class _TaskCreationState extends State<TaskCreation> {
     return SizedBox(
       height: MediaQuery.of(context).size.height - 640,
       width: MediaQuery.of(context).size.width,
-      child: const Center(child: FullMap()),
+      child: const Center(child: MapboxMapView()),
     );
   }
 
@@ -143,12 +141,9 @@ class _TaskCreationState extends State<TaskCreation> {
               ],
             ),
             if (widget.showMap) _buildMapSection() else _buildMapDisabled(),
-
           ],
         ),
       ),
     );
   }
-
-  // Create task control
 }
