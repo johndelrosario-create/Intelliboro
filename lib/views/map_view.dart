@@ -34,6 +34,7 @@ class _MapboxMapViewState extends State<MapboxMapView> {
                 return MapWidget(
                   key: ValueKey("mapwidget"),
                   onMapCreated: mapboxMap.onMapCreated,
+                  onLongTapListener: mapboxMap.onLongTap,
                 );
               },
             ),

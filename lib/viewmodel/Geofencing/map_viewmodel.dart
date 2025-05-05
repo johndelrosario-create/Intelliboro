@@ -8,8 +8,7 @@ import 'package:intelliboro/services/location_service.dart';
 class MapboxMapViewModel extends ChangeNotifier {
   final LocationService _locationService;
   // What constructor? The inputs are the repository that provide it's data
-  MapboxMapViewModel()
-    :_locationService = LocationService();
+  MapboxMapViewModel() : _locationService = LocationService();
 
   //These are state which are public members
   MapboxMap? mapboxMap;
@@ -35,7 +34,7 @@ class MapboxMapViewModel extends ChangeNotifier {
         puckBearingEnabled: true,
       ),
     );
-     locator.Position userPosition = await _locationService.getCurrentLocation();
+    locator.Position userPosition = await _locationService.getCurrentLocation();
     mapboxMap.flyTo(
       CameraOptions(
         center: Point(
@@ -50,24 +49,23 @@ class MapboxMapViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  //   _onLongTap(MapContentGestureContext context) {
-  //     setState(() {
-  //       selectedPoint = context.point;
-  //       latitude = context.point.coordinates.lat;
-  //       longitude = context.point.coordinates.lng;
-  //       //TODO: Radius must be obtained from map and set using a slider
-  //     });
-  //     geofenceZoneSymbol!.create(
-  //       CircleAnnotationOptions(
-  //         geometry: context.point,
-  //         circleRadius: 10,
-  //         circleColor: Colors.lightBlue.toARGB32(),
-  //         circleOpacity: 0.2,
-  //         circleStrokeColor: Colors.black.toARGB32(),
-  //         circleStrokeWidth: 1.0,
-  //       ),
-  //     );
-  //   }
+  onLongTap(MapContentGestureContext context) {
+    selectedPoint = context.point;
+    latitude = context.point.coordinates.lat;
+    longitude = context.point.coordinates.lng;
+    //TODO: Radius must be obtained from map and set using a slider
+    geofenceZoneSymbol!.create(
+      CircleAnnotationOptions(
+        geometry: context.point,
+        circleRadius: 10,
+        circleColor: Colors.lightBlue.toARGB32(),
+        circleOpacity: 0.2,
+        circleStrokeColor: Colors.black.toARGB32(),
+        circleStrokeWidth: 1.0,
+      ),
+    );
+    notifyListeners();
+  }
 
   //   // TODO: Remove the helper once a geofence has been made
   //   void _createGeofenceAtSelectedPoint() {
