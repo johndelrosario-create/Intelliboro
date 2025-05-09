@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:intelliboro/services/geofencing_service.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
-import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart' as locator;
 import 'package:intelliboro/services/location_service.dart';
 
 // Change Notifier, re-renderviews when data is changed.
 class MapboxMapViewModel extends ChangeNotifier {
   final LocationService _locationService;
-  // What constructor? The inputs are the repository that provide it's data
+  late final GeofencingService _geofencingService;
+
   MapboxMapViewModel() : _locationService = LocationService();
 
-  //These are state which are public members
   MapboxMap? mapboxMap;
   CircleAnnotationManager? geofenceZonePicker;
   CircleAnnotationManager? geofenceZoneSymbol;
@@ -19,34 +19,46 @@ class MapboxMapViewModel extends ChangeNotifier {
   num? longitude;
 
   onMapCreated(MapboxMap mapboxMap) async {
-    this.mapboxMap = mapboxMap;
+    try {
+      this.mapboxMap = mapboxMap;
 
-    geofenceZonePicker =
-        await mapboxMap.annotations.createCircleAnnotationManager();
-    geofenceZoneSymbol =
-        await mapboxMap.annotations.createCircleAnnotationManager();
+      geofenceZonePicker =
+          await mapboxMap.annotations.createCircleAnnotationManager();
+      geofenceZoneSymbol =
+          await mapboxMap.annotations.createCircleAnnotationManager();
 
-    mapboxMap.location.updateSettings(
-      LocationComponentSettings(
-        enabled: true,
-        pulsingEnabled: true,
-        showAccuracyRing: true,
-        puckBearingEnabled: true,
-      ),
-    );
-    locator.Position userPosition = await _locationService.getCurrentLocation();
-    mapboxMap.flyTo(
-      CameraOptions(
-        center: Point(
-          coordinates: Position(userPosition.longitude, userPosition.latitude),
+      // Circle annotation for geofence zone
+      _geofencingService = GeofencingService(geofenceZonePicker!);
+
+      mapboxMap.location.updateSettings(
+        LocationComponentSettings(
+          enabled: true,
+          pulsingEnabled: true,
+          showAccuracyRing: true,
+          puckBearingEnabled: true,
         ),
-        zoom: 20,
-        bearing: 0,
-        pitch: 0,
-      ),
-      MapAnimationOptions(duration: 500),
-    );
-    notifyListeners();
+      );
+
+      locator.Position userPosition =
+          await _locationService.getCurrentLocation();
+      mapboxMap.flyTo(
+        CameraOptions(
+          center: Point(
+            coordinates: Position(
+              userPosition.longitude,
+              userPosition.latitude,
+            ),
+          ),
+          zoom: 20,
+          bearing: 0,
+          pitch: 0,
+        ),
+        MapAnimationOptions(duration: 500),
+      );
+      notifyListeners();
+    } catch (e) {
+      debugPrint("Error in onMapCreated: $e");
+    }
   }
 
   onLongTap(MapContentGestureContext context) {
@@ -67,42 +79,29 @@ class MapboxMapViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  //   // TODO: Remove the helper once a geofence has been made
-  //   void _createGeofenceAtSelectedPoint() {
-  //     final selectedPointNotNull = selectedPoint;
-  //     if (selectedPointNotNull != null && geofenceZonePicker != null) {
-  //       geofenceZonePicker!.create(
-  //         CircleAnnotationOptions(
-  //           geometry: selectedPointNotNull,
-  //           //TODO: Radius should reflect the radius in meters need a function to convert meters to pixels @ diff zoom levels
-  //           circleRadius: 100,
-  //           circleColor: Colors.amberAccent.toARGB32(),
-  //           circleOpacity: 0.5,
-  //           circleStrokeColor: Colors.white.toARGB32(),
-  //           circleStrokeWidth: 2.0,
-  //         ),
-  //       );
-  //     }
-  //     if (latitude != null && longitude != null) {
-  //       data = data.copyWith(id: () => "zone1");
-  //       data = data.copyWith(
-  //         location: () => data.location.copyWith(latitude: latitude?.toDouble()),
-  //       );
-  //       data = data.copyWith(
-  //         location:
-  //             () => data.location.copyWith(longitude: longitude?.toDouble()),
-  //       );
-
-  //       data = data.copyWith(radiusMeters: () => 10.0);
-  //     }
-  //   }
-
-  //   Future<void> _updateRegisteredGeofences() async {
-  //     final List<String> geofences =
-  //         await NativeGeofenceManager.instance.getRegisteredGeofenceIds();
-  //     setState(() {
-  //       activeGeofences = geofences;
-  //     });
-  //     debugPrint('Active geofences updated.');
-  //   }
+  void createGeofenceAtSelectedPoint(BuildContext context) {
+    if (selectedPoint != null) {
+      _geofencingService.createGeofence(
+        geometry: selectedPoint!,
+        radius: 100,
+        fillColor: Colors.amberAccent,
+        fillOpacity: 0.5,
+        strokeColor: Colors.white,
+        strokeWidth: 2.0,
+      );
+      debugPrint(
+        "Geofence created at: ${selectedPoint!.coordinates.lat}, ${selectedPoint!.coordinates.lng}",
+      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Geofence created successfully!')));
+      selectedPoint = null;
+      geofenceZoneSymbol?.deleteAll();
+      notifyListeners();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No point selected to create a geofence.')),
+      );
+    }
+  }
 }
