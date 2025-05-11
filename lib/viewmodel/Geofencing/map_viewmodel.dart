@@ -136,7 +136,6 @@ class MapboxMapViewModel extends ChangeNotifier {
       _geofencingService.createGeofence(
         geometry: selectedPoint!,
         radiusMeters: 100,
-        radius: 100,
         fillColor: Colors.amberAccent,
         fillOpacity: 0.5,
         strokeColor: Colors.white,

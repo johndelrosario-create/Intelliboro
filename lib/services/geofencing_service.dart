@@ -11,13 +11,12 @@ class GeofencingService {
   final MapboxMapViewModel mapViewModel;
 
   GeofencingService(this.mapViewModel)
-      : geofenceZonePicker = mapViewModel.getGeofenceZonePicker(),
-        geofenceZoneSymbol = mapViewModel.getGeofenceZoneSymbol();
+    : geofenceZonePicker = mapViewModel.getGeofenceZonePicker(),
+      geofenceZoneSymbol = mapViewModel.getGeofenceZoneSymbol();
 
   Future<void> createGeofence({
     required Point geometry,
     required double radiusMeters,
-    double radius = 10.0,
     Color fillColor = Colors.amberAccent,
     Color strokeColor = Colors.white,
     double strokeWidth = 2.0,
@@ -46,7 +45,7 @@ class GeofencingService {
         latitude: geometry.coordinates.lat.toDouble(),
         longitude: geometry.coordinates.lng.toDouble(),
       ),
-      radiusMeters: 100.0,
+      radiusMeters: radiusMeters,
       triggers: {GeofenceEvent.enter, GeofenceEvent.exit},
       iosSettings: IosGeofenceSettings(initialTrigger: true),
       androidSettings: AndroidGeofenceSettings(
@@ -78,7 +77,8 @@ extension ModifyAndroidGeofenceSettings on AndroidGeofenceSettings {
 }
 
 double metersToPixels(double radiusMeters, double latitude) {
-  const double earthCircumference = 40075016.686; // Earth's circumference in meters
+  const double earthCircumference =
+      40075016.686; // Earth's circumference in meters
   const double tileSize = 256.0; // Tile size in pixels
 
   // Adjust for latitude (cosine adjustment for non-equatorial locations)
