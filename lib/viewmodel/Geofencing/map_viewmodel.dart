@@ -3,13 +3,12 @@ import 'package:intelliboro/services/geofencing_service.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart' as locator;
 import 'package:intelliboro/services/location_service.dart';
+import 'dart:math';
 
 // Change Notifier, re-renderviews when data is changed.
 class MapboxMapViewModel extends ChangeNotifier {
   final LocationService _locationService;
   late final GeofencingService _geofencingService;
-
-  MapboxMapViewModel() : _locationService = LocationService();
 
   MapboxMap? mapboxMap;
   CircleAnnotationManager? geofenceZonePicker;
@@ -17,6 +16,8 @@ class MapboxMapViewModel extends ChangeNotifier {
   Point? selectedPoint;
   num? latitude;
   num? longitude;
+
+  MapboxMapViewModel() : _locationService = LocationService();
 
   onMapCreated(MapboxMap mapboxMap) async {
     try {
@@ -27,8 +28,8 @@ class MapboxMapViewModel extends ChangeNotifier {
       geofenceZoneSymbol =
           await mapboxMap.annotations.createCircleAnnotationManager();
 
-      // Circle annotation for geofence zone
-      _geofencingService = GeofencingService(geofenceZonePicker!);
+      // Pass the annotation managers to GeofencingService
+      _geofencingService = GeofencingService(this);
 
       mapboxMap.location.updateSettings(
         LocationComponentSettings(
@@ -55,34 +56,86 @@ class MapboxMapViewModel extends ChangeNotifier {
         ),
         MapAnimationOptions(duration: 500),
       );
+
       notifyListeners();
     } catch (e) {
       debugPrint("Error in onMapCreated: $e");
     }
   }
 
-  onLongTap(MapContentGestureContext context) {
-    selectedPoint = context.point;
-    latitude = context.point.coordinates.lat;
-    longitude = context.point.coordinates.lng;
-    //TODO: Radius must be obtained from map and set using a slider
-    geofenceZoneSymbol!.create(
-      CircleAnnotationOptions(
-        geometry: context.point,
-        circleRadius: 10,
-        circleColor: Colors.lightBlue.toARGB32(),
-        circleOpacity: 0.2,
-        circleStrokeColor: Colors.black.toARGB32(),
-        circleStrokeWidth: 1.0,
-      ),
-    );
-    notifyListeners();
+  Future<double> currentZoomLevel() {
+    if (mapboxMap == null) {
+      debugPrint("MapboxMap is null");
+      throw StateError("Error: MapboxMap not yet intialized.");
+    }
+    mapboxMap = mapboxMap;
+    return mapboxMap!.getCameraState().then((cameraState) {
+      return cameraState.zoom;
+    });
+  }
+
+  onLongTap(MapContentGestureContext context) async {
+    try {
+      selectedPoint = context.point;
+      latitude = context.point.coordinates.lat;
+      longitude = context.point.coordinates.lng;
+
+      // Desired radius in meters
+      double radiusInMeters = 100;
+
+      // Get the current zoom level
+      double zoomLevel = await currentZoomLevel();
+
+      // Convert radius in meters to pixels based on zoom level and latitude
+      double radiusInPixels = metersToPixels(
+        radiusInMeters,
+        context.point.coordinates.lat.toDouble(),
+        zoomLevel,
+      );
+
+      // Create the geofence zone with the calculated radius
+      geofenceZoneSymbol!.create(
+        CircleAnnotationOptions(
+          geometry: context.point,
+          circleRadius: radiusInPixels,
+          circleColor: Colors.lightBlue.toARGB32(),
+          circleOpacity: 0.2,
+          circleStrokeColor: Colors.black.toARGB32(),
+          circleStrokeWidth: 1.0,
+        ),
+      );
+
+      notifyListeners();
+    } catch (e) {
+      debugPrint("Error in onLongTap: $e");
+    }
+  }
+
+  // Helper method to convert meters to pixels based on zoom level and latitude
+  double metersToPixels(
+    double radiusMeters,
+    double latitude,
+    double zoomLevel,
+  ) {
+    const double earthCircumference =
+        40075016.686; // Earth's circumference in meters
+    const double tileSize = 256.0; // Tile size in pixels
+
+    // Adjust for latitude (cosine adjustment for non-equatorial locations)
+    double latitudeAdjustment = 1 / (cos(latitude * pi / 180));
+
+    // Convert meters to pixels
+    return (radiusMeters / earthCircumference) *
+        pow(2, zoomLevel) *
+        tileSize *
+        latitudeAdjustment;
   }
 
   void createGeofenceAtSelectedPoint(BuildContext context) {
     if (selectedPoint != null) {
       _geofencingService.createGeofence(
         geometry: selectedPoint!,
+        radiusMeters: 100,
         radius: 100,
         fillColor: Colors.amberAccent,
         fillOpacity: 0.5,
@@ -104,4 +157,7 @@ class MapboxMapViewModel extends ChangeNotifier {
       );
     }
   }
+
+  CircleAnnotationManager? getGeofenceZonePicker() => geofenceZonePicker;
+  CircleAnnotationManager? getGeofenceZoneSymbol() => geofenceZoneSymbol;
 }

@@ -1,24 +1,38 @@
 import 'package:flutter/material.dart';
+import 'package:intelliboro/viewModel/Geofencing/map_viewmodel.dart';
 import 'package:intelliboro/viewModel/notifications/callback.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:native_geofence/native_geofence.dart';
+import 'dart:math';
 
 class GeofencingService {
-  final CircleAnnotationManager geofenceZonePicker;
-  GeofencingService(this.geofenceZonePicker);
+  final CircleAnnotationManager? geofenceZonePicker;
+  final CircleAnnotationManager? geofenceZoneSymbol;
+  final MapboxMapViewModel mapViewModel;
 
-  void createGeofence({
+  GeofencingService(this.mapViewModel)
+      : geofenceZonePicker = mapViewModel.getGeofenceZonePicker(),
+        geofenceZoneSymbol = mapViewModel.getGeofenceZoneSymbol();
+
+  Future<void> createGeofence({
     required Point geometry,
+    required double radiusMeters,
     double radius = 10.0,
     Color fillColor = Colors.amberAccent,
     Color strokeColor = Colors.white,
     double strokeWidth = 2.0,
     double fillOpacity = 0.5,
-  }) {
-    geofenceZonePicker.create(
+  }) async {
+    //var zoomLevel = await mapViewModel.currentZoomLevel();
+    final double radiusInPixels = metersToPixels(
+      radiusMeters,
+      geometry.coordinates.lat.toDouble(),
+    );
+
+    geofenceZonePicker?.create(
       CircleAnnotationOptions(
         geometry: geometry,
-        circleRadius: 100,
+        circleRadius: radiusInPixels,
         circleColor: fillColor.toARGB32(),
         circleOpacity: fillOpacity,
         circleStrokeColor: strokeColor.toARGB32(),
@@ -61,4 +75,15 @@ extension ModifyAndroidGeofenceSettings on AndroidGeofenceSettings {
           notificationResponsiveness?.call() ?? this.notificationResponsiveness,
     );
   }
+}
+
+double metersToPixels(double radiusMeters, double latitude) {
+  const double earthCircumference = 40075016.686; // Earth's circumference in meters
+  const double tileSize = 256.0; // Tile size in pixels
+
+  // Adjust for latitude (cosine adjustment for non-equatorial locations)
+  double latitudeAdjustment = 1 / (cos(latitude * pi / 180));
+
+  // Convert meters to pixels
+  return (radiusMeters / earthCircumference) * tileSize * latitudeAdjustment;
 }
