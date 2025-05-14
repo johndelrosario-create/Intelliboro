@@ -24,7 +24,7 @@ class _MapboxMapViewState extends State<MapboxMapView> {
         children: [
           Expanded(
             child: ListenableBuilder(
-              listenable: MapboxMapViewModel(),
+              listenable: mapViewModel,
               builder: (context, child) {
                 return MapWidget(
                   key: ValueKey("mapwidget"),

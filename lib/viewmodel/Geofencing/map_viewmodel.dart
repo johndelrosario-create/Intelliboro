@@ -29,7 +29,7 @@ class MapboxMapViewModel extends ChangeNotifier {
   void startDebugLogging() {
     _debugTimer = Timer.periodic(Duration(seconds: 1), (timer) {
       if (circleRadiusInPixels != null) {
-        debugPrint("Current fixedRadiusInPixels: $circleRadiusInPixels");
+        debugPrint("Current circleRadiusInPixels: $circleRadiusInPixels");
       } else {
         debugPrint("fixedRadiusInPixels is not set yet.");
       }
@@ -77,7 +77,7 @@ class MapboxMapViewModel extends ChangeNotifier {
         ),
         MapAnimationOptions(duration: 500),
       );
-     
+
       notifyListeners();
     } catch (e) {
       debugPrint("Error in onMapCreated: $e");
@@ -96,24 +96,24 @@ class MapboxMapViewModel extends ChangeNotifier {
 
   onLongTap(MapContentGestureContext context) async {
     try {
-    //   if (isGeofenceHelperPlaced) {
-    //     debugPrint("Geofence helper is already placed. Ignoring further taps.");
-    //     return;
-    //   }
-    //   startDebugLogging();
+      //   if (isGeofenceHelperPlaced) {
+      //     debugPrint("Geofence helper is already placed. Ignoring further taps.");
+      //     return;
+      //   }
+      //   startDebugLogging();
 
-    //   selectedPoint = context.point;
-    //   latitude = context.point.coordinates.lat;
-    //   longitude = context.point.coordinates.lng;
+      //   selectedPoint = context.point;
+      //   latitude = context.point.coordinates.lat;
+      //   longitude = context.point.coordinates.lng;
 
-    //   // Desired radius in meters
-    //   double radiusInMeters = 50;
+      //   // Desired radius in meters
+      //   double radiusInMeters = 50;
 
-    //   // Convert radius in meters to pixels (fixed calculation)
-    //   double metersPerPixel = await metersToPixels(radiusInMeters);
-    //   debugPrint("meters per pixel: $metersPerPixel");
-    //   circleRadiusInPixels = radiusInMeters / metersPerPixel;
-    //   debugPrint("Pixel for radius : $circleRadiusInPixels");
+      //   // Convert radius in meters to pixels (fixed calculation)
+      //   double metersPerPixel = await metersToPixels(radiusInMeters);
+      //   debugPrint("meters per pixel: $metersPerPixel");
+      //   circleRadiusInPixels = radiusInMeters / metersPerPixel;
+      //   debugPrint("Pixel for radius : $circleRadiusInPixels");
 
       // Create the geofence zone helper with the calculated radius
       geofenceZoneSymbol!.create(
@@ -159,16 +159,20 @@ class MapboxMapViewModel extends ChangeNotifier {
       debugPrint("Pixel for radius : $circleRadiusInPixels");
 
       // Create the geofence zone helper with the calculated radius
-      geofenceZoneSymbol!.create(
-        CircleAnnotationOptions(
-          geometry: context.point,
-          circleRadius: circleRadiusInPixels,
-          circleColor: Colors.lightBlue.toARGB32(),
-          circleOpacity: 0.2,
-          circleStrokeColor: Colors.black.toARGB32(),
-          circleStrokeWidth: 1.0,
-        ),
-      );
+      // geofenceZoneSymbol!.create(
+      //   CircleAnnotationOptions(
+      //     geometry: context.point,
+      //     circleRadius: circleRadiusInPixels,
+      //     circleColor: Colors.lightBlue.toARGB32(),
+      //     circleOpacity: 0.2,
+      //     circleStrokeColor: Colors.black.toARGB32(),
+      //     circleStrokeWidth: 1.0,
+      //   ),
+      // );
+
+      //Update the circle's radius
+      await geofenceZonePicker!.setCircleRadius(circleRadiusInPixels ?? 0.0);
+      notifyListeners();
 
       isGeofenceHelperPlaced = true; // Mark the helper as placed
       debugPrint(
@@ -200,7 +204,6 @@ class MapboxMapViewModel extends ChangeNotifier {
       return 0.0; // Return a default value in case of error}
     }
   }
-
 
   void createGeofenceAtSelectedPoint(BuildContext context) {
     if (selectedPoint != null) {
