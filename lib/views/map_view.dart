@@ -30,6 +30,7 @@ class _MapboxMapViewState extends State<MapboxMapView> {
                   key: ValueKey("mapwidget"),
                   onMapCreated: mapViewModel.onMapCreated,
                   onLongTapListener: mapViewModel.onLongTap,
+                  onZoomListener: mapViewModel.onZoom,
                 );
               },
             ),

@@ -22,40 +22,54 @@ class GeofencingService {
     double strokeWidth = 2.0,
     double fillOpacity = 0.5,
   }) async {
-    //var zoomLevel = await mapViewModel.currentZoomLevel();
-    final double radiusInPixels = metersToPixels(
-      radiusMeters,
-      geometry.coordinates.lat.toDouble(),
-    );
+    try {
+      // Get the current zoom level
+      var zoomLevel = await mapViewModel.currentZoomLevel();
 
-    geofenceZonePicker?.create(
-      CircleAnnotationOptions(
-        geometry: geometry,
-        circleRadius: radiusInPixels,
-        circleColor: fillColor.toARGB32(),
-        circleOpacity: fillOpacity,
-        circleStrokeColor: strokeColor.toARGB32(),
-        circleStrokeWidth: 1.0,
-      ),
-    );
+      // Calculate the radius in pixels based on the zoom level and latitude
+      double radiusInPixels = await mapViewModel.metersToPixels(radiusMeters);
 
-    final geofence = Geofence(
-      id: "zone_${geometry.coordinates.lat}_${geometry.coordinates.lng}",
-      location: Location(
-        latitude: geometry.coordinates.lat.toDouble(),
-        longitude: geometry.coordinates.lng.toDouble(),
-      ),
-      radiusMeters: radiusMeters,
-      triggers: {GeofenceEvent.enter, GeofenceEvent.exit},
-      iosSettings: IosGeofenceSettings(initialTrigger: true),
-      androidSettings: AndroidGeofenceSettings(
-        initialTriggers: {GeofenceEvent.enter},
-        notificationResponsiveness: const Duration(seconds: 0),
-      ),
-    );
+      // Debugging: Log the calculated radius
+      debugPrint("Radius in meters: $radiusMeters");
+      debugPrint("Zoom level: $zoomLevel");
+      debugPrint("Calculated radius in pixels: $radiusInPixels");
 
-    NativeGeofenceManager.instance.createGeofence(geofence, geofenceTriggered);
-    debugPrint('Geofence created: ${geofence.id}');
+      // Create the geofence zone with the calculated radius
+      geofenceZonePicker?.create(
+        CircleAnnotationOptions(
+          geometry: geometry,
+          circleRadius: radiusInPixels,
+          circleColor: fillColor.toARGB32(),
+          circleOpacity: fillOpacity,
+          circleStrokeColor: strokeColor.toARGB32(),
+          circleStrokeWidth: strokeWidth,
+        ),
+      );
+
+      // Create the geofence for native geofencing
+      final geofence = Geofence(
+        id: "zone_${geometry.coordinates.lat}_${geometry.coordinates.lng}",
+        location: Location(
+          latitude: geometry.coordinates.lat.toDouble(),
+          longitude: geometry.coordinates.lng.toDouble(),
+        ),
+        radiusMeters: radiusMeters,
+        triggers: {GeofenceEvent.enter, GeofenceEvent.exit},
+        iosSettings: IosGeofenceSettings(initialTrigger: true),
+        androidSettings: AndroidGeofenceSettings(
+          initialTriggers: {GeofenceEvent.enter},
+          notificationResponsiveness: const Duration(seconds: 0),
+        ),
+      );
+
+      NativeGeofenceManager.instance.createGeofence(
+        geofence,
+        geofenceTriggered,
+      );
+      debugPrint('Geofence created: ${geofence.id}');
+    } catch (e) {
+      debugPrint("Error in createGeofence: $e");
+    }
   }
 }
 
@@ -74,16 +88,4 @@ extension ModifyAndroidGeofenceSettings on AndroidGeofenceSettings {
           notificationResponsiveness?.call() ?? this.notificationResponsiveness,
     );
   }
-}
-
-double metersToPixels(double radiusMeters, double latitude) {
-  const double earthCircumference =
-      40075016.686; // Earth's circumference in meters
-  const double tileSize = 256.0; // Tile size in pixels
-
-  // Adjust for latitude (cosine adjustment for non-equatorial locations)
-  double latitudeAdjustment = 1 / (cos(latitude * pi / 180));
-
-  // Convert meters to pixels
-  return (radiusMeters / earthCircumference) * tileSize * latitudeAdjustment;
 }
