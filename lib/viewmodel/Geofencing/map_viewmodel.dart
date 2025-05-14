@@ -12,7 +12,7 @@ class MapboxMapViewModel extends ChangeNotifier {
   late final GeofencingService _geofencingService;
 
   MapboxMap? mapboxMap;
-  CircleAnnotationManager? geofenceZonePicker;
+  CircleAnnotationManager? geofenceZoneHelper;
   CircleAnnotationManager? geofenceZoneSymbol;
   Point? selectedPoint;
   num? latitude;
@@ -27,6 +27,7 @@ class MapboxMapViewModel extends ChangeNotifier {
 
   // Start a timer to log the value of fixedRadiusInPixels
   void startDebugLogging() {
+    _debugTimer?.cancel(); // Cancel any existing timer
     _debugTimer = Timer.periodic(Duration(seconds: 1), (timer) {
       if (circleRadiusInPixels != null) {
         debugPrint("Current circleRadiusInPixels: $circleRadiusInPixels");
@@ -44,7 +45,7 @@ class MapboxMapViewModel extends ChangeNotifier {
     try {
       this.mapboxMap = mapboxMap;
 
-      geofenceZonePicker =
+      geofenceZoneHelper =
           await mapboxMap.annotations.createCircleAnnotationManager();
       geofenceZoneSymbol =
           await mapboxMap.annotations.createCircleAnnotationManager();
@@ -84,39 +85,23 @@ class MapboxMapViewModel extends ChangeNotifier {
     }
   }
 
-  Future<double> currentZoomLevel() {
-    if (mapboxMap == null) {
-      debugPrint("MapboxMap is null");
-      throw StateError("Error: MapboxMap not yet intialized.");
-    }
-    return mapboxMap!.getCameraState().then((cameraState) {
-      return cameraState.zoom;
-    });
-  }
-
   onLongTap(MapContentGestureContext context) async {
     try {
-      //   if (isGeofenceHelperPlaced) {
-      //     debugPrint("Geofence helper is already placed. Ignoring further taps.");
-      //     return;
-      //   }
-      //   startDebugLogging();
-
-      //   selectedPoint = context.point;
-      //   latitude = context.point.coordinates.lat;
-      //   longitude = context.point.coordinates.lng;
+      selectedPoint = context.point;
+      latitude = context.point.coordinates.lat;
+      longitude = context.point.coordinates.lng;
 
       //   // Desired radius in meters
-      //   double radiusInMeters = 50;
+      // double radiusInMeters = 50;
 
       //   // Convert radius in meters to pixels (fixed calculation)
       //   double metersPerPixel = await metersToPixels(radiusInMeters);
       //   debugPrint("meters per pixel: $metersPerPixel");
       //   circleRadiusInPixels = radiusInMeters / metersPerPixel;
-      //   debugPrint("Pixel for radius : $circleRadiusInPixels");
+      debugPrint("Created GF Radius in Pix: $circleRadiusInPixels");
 
       // Create the geofence zone helper with the calculated radius
-      geofenceZoneSymbol!.create(
+      geofenceZoneHelper!.create(
         CircleAnnotationOptions(
           geometry: context.point,
           circleRadius: circleRadiusInPixels,
@@ -137,47 +122,34 @@ class MapboxMapViewModel extends ChangeNotifier {
     }
   }
 
+  Future<double> currentZoomLevel() {
+    if (mapboxMap == null) {
+      debugPrint("MapboxMap is null");
+      throw StateError("Error: MapboxMap not yet intialized.");
+    }
+    return mapboxMap!.getCameraState().then((cameraState) {
+      return cameraState.zoom;
+    });
+  }
+
   onZoom(MapContentGestureContext context) async {
     try {
-      if (isGeofenceHelperPlaced) {
-        debugPrint("Geofence helper is already placed. Ignoring further taps.");
-        return;
-      }
       startDebugLogging();
-
-      selectedPoint = context.point;
       latitude = context.point.coordinates.lat;
-      longitude = context.point.coordinates.lng;
 
-      // Desired radius in meters
       double radiusInMeters = 50;
 
       // Convert radius in meters to pixels (fixed calculation)
       double metersPerPixel = await metersToPixels(radiusInMeters);
       debugPrint("meters per pixel: $metersPerPixel");
+
       circleRadiusInPixels = radiusInMeters / metersPerPixel;
       debugPrint("Pixel for radius : $circleRadiusInPixels");
 
-      // Create the geofence zone helper with the calculated radius
-      // geofenceZoneSymbol!.create(
-      //   CircleAnnotationOptions(
-      //     geometry: context.point,
-      //     circleRadius: circleRadiusInPixels,
-      //     circleColor: Colors.lightBlue.toARGB32(),
-      //     circleOpacity: 0.2,
-      //     circleStrokeColor: Colors.black.toARGB32(),
-      //     circleStrokeWidth: 1.0,
-      //   ),
-      // );
-
-      //Update the circle's radius
-      await geofenceZonePicker!.setCircleRadius(circleRadiusInPixels ?? 0.0);
+      //Update the helper's radius
+      await geofenceZoneHelper!.setCircleRadius(circleRadiusInPixels ?? 5.0);
       notifyListeners();
-
-      isGeofenceHelperPlaced = true; // Mark the helper as placed
-      debugPrint(
-        "Geofence helper placed with radius in pixels: $circleRadiusInPixels",
-      );
+      
     } catch (e) {
       debugPrint("Error in onZoom: $e");
     }
@@ -232,6 +204,6 @@ class MapboxMapViewModel extends ChangeNotifier {
     }
   }
 
-  CircleAnnotationManager? getGeofenceZonePicker() => geofenceZonePicker;
+  CircleAnnotationManager? getGeofenceZonePicker() => geofenceZoneHelper;
   CircleAnnotationManager? getGeofenceZoneSymbol() => geofenceZoneSymbol;
 }
