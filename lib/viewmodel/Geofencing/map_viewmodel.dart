@@ -100,23 +100,27 @@ class MapboxMapViewModel extends ChangeNotifier {
       //   circleRadiusInPixels = radiusInMeters / metersPerPixel;
       debugPrint("Created GF Radius in Pix: $circleRadiusInPixels");
 
-      // Create the geofence zone helper with the calculated radius
-      geofenceZoneHelper!.create(
-        CircleAnnotationOptions(
-          geometry: context.point,
-          circleRadius: circleRadiusInPixels,
-          circleColor: Colors.lightBlue.toARGB32(),
-          circleOpacity: 0.2,
-          circleStrokeColor: Colors.black.toARGB32(),
-          circleStrokeWidth: 1.0,
-        ),
-      );
+      if (geofenceZoneHelper != null) {
+        await geofenceZoneHelper!.create(
+          CircleAnnotationOptions(
+            geometry: context.point,
+            circleRadius: circleRadiusInPixels,
+            circleColor: Colors.lightBlue.toARGB32(),
+            circleOpacity: 0.2,
+            circleStrokeColor: Colors.black.toARGB32(),
+            circleStrokeWidth: 1.0,
+          ),
+        );
 
-      isGeofenceHelperPlaced = true; // Mark the helper as placed
-      debugPrint(
-        "Geofence helper placed with radius in pixels: $circleRadiusInPixels",
-      );
-      notifyListeners();
+        isGeofenceHelperPlaced = true; // Mark the helper as placed
+        debugPrint(
+          "Geofence helper placed with radius in pixels: $circleRadiusInPixels",
+        );
+        notifyListeners();
+      } else {
+        debugPrint("Geofence zone helper is not yet initialized.");
+      }
+      // Create the geofence zone helper with the calculated radius
     } catch (e) {
       debugPrint("Error in onLongTap: $e");
     }
@@ -146,10 +150,13 @@ class MapboxMapViewModel extends ChangeNotifier {
       circleRadiusInPixels = radiusInMeters / metersPerPixel;
       debugPrint("Pixel for radius : $circleRadiusInPixels");
 
-      //Update the helper's radius
-      await geofenceZoneHelper!.setCircleRadius(circleRadiusInPixels ?? 5.0);
-      notifyListeners();
-      
+      if (geofenceZoneHelper != null) {
+        //Update the helper's radius
+        await geofenceZoneHelper!.setCircleRadius(circleRadiusInPixels ?? 5.0);
+        notifyListeners();
+      } else {
+        debugPrint("Geofence zone helper is not yet initialized.");
+      }
     } catch (e) {
       debugPrint("Error in onZoom: $e");
     }

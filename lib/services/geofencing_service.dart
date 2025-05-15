@@ -3,7 +3,6 @@ import 'package:intelliboro/viewModel/Geofencing/map_viewmodel.dart';
 import 'package:intelliboro/viewModel/notifications/callback.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:native_geofence/native_geofence.dart';
-import 'dart:math';
 
 class GeofencingService {
   final CircleAnnotationManager? geofenceZonePicker;
