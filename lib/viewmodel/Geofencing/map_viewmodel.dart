@@ -149,9 +149,6 @@ class MapboxMapViewModel extends ChangeNotifier {
       debugPrint("Pixel for radius : $circleRadiusInPixels");
 
       if (geofenceZoneHelper != null) {
-        //Update the helper's radius
-        // await geofenceZoneHelper!.setCircleRadius(circleRadiusInPixels ?? 5.0);
-        // await CircleAnnotationManager.setCircleRadius(circleRadiusInPixels ?? 5.0);
         updateAllGeofenceRadii(circleRadiusInPixels ?? 5.0);
         notifyListeners();
       } else {
