@@ -20,6 +20,7 @@ class MapboxMapViewModel extends ChangeNotifier {
   num? longitude;
   double? circleRadiusInPixels;
   late final Projection projection = Projection();
+  List<String> geofenceHelperIds = [];
   bool isGeofenceHelperPlaced = false; // Flag to track if the helper is placed
 
   Timer? _debugTimer;
@@ -94,17 +95,10 @@ class MapboxMapViewModel extends ChangeNotifier {
       latitude = context.point.coordinates.lat;
       longitude = context.point.coordinates.lng;
 
-      //   // Desired radius in meters
-      // double radiusInMeters = 50;
-
-      //   // Convert radius in meters to pixels (fixed calculation)
-      //   double metersPerPixel = await metersToPixels(radiusInMeters);
-      //   debugPrint("meters per pixel: $metersPerPixel");
-      //   circleRadiusInPixels = radiusInMeters / metersPerPixel;
       debugPrint("Created GF Radius in Pix: $circleRadiusInPixels");
 
       if (geofenceZoneHelper != null) {
-        await geofenceZoneHelper!.create(
+        final annotation = await geofenceZoneHelper!.create(
           CircleAnnotationOptions(
             geometry: context.point,
             circleRadius: circleRadiusInPixels,
@@ -115,6 +109,7 @@ class MapboxMapViewModel extends ChangeNotifier {
           ),
         );
 
+        geofenceHelperIds.add(annotation.id);
         isGeofenceHelperPlaced = true; // Mark the helper as placed
         debugPrint(
           "Geofence helper placed with radius in pixels: $circleRadiusInPixels",
@@ -155,7 +150,10 @@ class MapboxMapViewModel extends ChangeNotifier {
 
       if (geofenceZoneHelper != null) {
         //Update the helper's radius
-        await geofenceZoneHelper!.setCircleRadius(circleRadiusInPixels ?? 5.0);
+        await geofenceZoneHelper!.update(
+            circleRadius: circleRadiusInPixels,
+          ),
+        );
         notifyListeners();
       } else {
         debugPrint("Geofence zone helper is not yet initialized.");
