@@ -20,7 +20,7 @@ class MapboxMapViewModel extends ChangeNotifier {
   num? longitude;
   double? circleRadiusInPixels;
   late final Projection projection = Projection();
-  List<String> geofenceHelperIds = [];
+  List<CircleAnnotation> geofenceZoneHelperIds = [];
   bool isGeofenceHelperPlaced = false; // Flag to track if the helper is placed
 
   Timer? _debugTimer;
@@ -109,7 +109,7 @@ class MapboxMapViewModel extends ChangeNotifier {
           ),
         );
 
-        geofenceHelperIds.add(annotation.id);
+        geofenceZoneHelperIds.add(annotation);
         isGeofenceHelperPlaced = true; // Mark the helper as placed
         debugPrint(
           "Geofence helper placed with radius in pixels: $circleRadiusInPixels",
@@ -150,16 +150,25 @@ class MapboxMapViewModel extends ChangeNotifier {
 
       if (geofenceZoneHelper != null) {
         //Update the helper's radius
-        await geofenceZoneHelper!.update(
-            circleRadius: circleRadiusInPixels,
-          ),
-        );
+        // await geofenceZoneHelper!.setCircleRadius(circleRadiusInPixels ?? 5.0);
+        // await CircleAnnotationManager.setCircleRadius(circleRadiusInPixels ?? 5.0);
+        updateAllGeofenceRadii(circleRadiusInPixels ?? 5.0);
         notifyListeners();
       } else {
         debugPrint("Geofence zone helper is not yet initialized.");
       }
     } catch (e) {
       debugPrint("Error in onZoom: $e");
+    }
+  }
+
+  Future<void> updateAllGeofenceRadii(double newRadius) async {
+    if (geofenceZoneHelper != null && geofenceZoneHelperIds.isNotEmpty) {
+      for (final id in geofenceZoneHelperIds) {
+        id.circleRadius = circleRadiusInPixels;
+        await geofenceZoneHelper!.update(id);
+      }
+      notifyListeners();
     }
   }
 
