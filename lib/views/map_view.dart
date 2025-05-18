@@ -26,11 +26,17 @@ class _MapboxMapViewState extends State<MapboxMapView> {
             child: ListenableBuilder(
               listenable: mapViewModel,
               builder: (context, child) {
-                return MapWidget(
-                  key: ValueKey("mapwidget"),
-                  onMapCreated: mapViewModel.onMapCreated,
-                  onLongTapListener: mapViewModel.onLongTap,
-                  onZoomListener: mapViewModel.onZoom,
+                return Stack(
+                  children: [
+                    MapWidget(
+                      key: ValueKey("mapwidget"),
+                      onMapCreated: mapViewModel.onMapCreated,
+                      onLongTapListener: mapViewModel.onLongTap,
+                      onZoomListener: mapViewModel.onZoom,
+                    ),
+                    if (!mapViewModel.isMapReady)
+                      const Center(child: CircularProgressIndicator()),
+                  ],
                 );
               },
             ),
@@ -38,15 +44,6 @@ class _MapboxMapViewState extends State<MapboxMapView> {
           ElevatedButton(
             onPressed: () async {
               mapViewModel.createGeofenceAtSelectedPoint(context);
-
-              // await NativeGeofenceManager.instance.createGeofence(
-              //   data,
-              //   geofenceTriggered,
-              // );
-              // debugPrint('Geofence created: ${data.location}');
-              // await _updateRegisteredGeofences();
-              // await Future.delayed(const Duration(seconds: 1));
-              // await _updateRegisteredGeofences();
             },
             child: Text("Add geofence"),
           ),

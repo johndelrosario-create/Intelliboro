@@ -12,6 +12,7 @@ class MapboxMapViewModel extends ChangeNotifier {
   late final GeofencingService _geofencingService;
 
   MapboxMap? mapboxMap;
+  bool isMapReady = false;
   CircleAnnotationManager? geofenceZoneHelper;
   CircleAnnotationManager? geofenceZoneSymbol;
   Point? selectedPoint;
@@ -64,7 +65,8 @@ class MapboxMapViewModel extends ChangeNotifier {
 
       locator.Position userPosition =
           await _locationService.getCurrentLocation();
-      mapboxMap.flyTo(
+
+      await this.mapboxMap!.flyTo(
         CameraOptions(
           center: Point(
             coordinates: Position(
@@ -76,9 +78,10 @@ class MapboxMapViewModel extends ChangeNotifier {
           bearing: 0,
           pitch: 0,
         ),
-        MapAnimationOptions(duration: 500),
+        MapAnimationOptions(duration: 1500),
       );
 
+      isMapReady = true;
       notifyListeners();
     } catch (e) {
       debugPrint("Error in onMapCreated: $e");
