@@ -22,7 +22,7 @@ class MapboxMapViewModel extends ChangeNotifier {
   late final Projection projection = Projection();
 
   List<CircleAnnotation> geofenceZoneHelperIds = [];
-  List<CircleAnnotation> geofenceZoneSymbolIds= [];
+  List<CircleAnnotation> geofenceZoneSymbolIds = [];
   bool isGeofenceHelperPlaced = false; // Flag to track if the helper is placed
 
   Timer? _debugTimer;
@@ -162,13 +162,25 @@ class MapboxMapViewModel extends ChangeNotifier {
   }
 
   Future<void> updateAllGeofenceRadii(double newRadius) async {
+    final List<Future> futures = [];
+    // helper annotations
     if (geofenceZoneHelper != null && geofenceZoneHelperIds.isNotEmpty) {
-      for (final id in geofenceZoneHelperIds) {
-        id.circleRadius = circleRadiusInPixels;
-        await geofenceZoneHelper!.update(id);
+      for (final annotation in geofenceZoneHelperIds) {
+        annotation.circleRadius = circleRadiusInPixels;
+        futures.add(geofenceZoneHelper!.update(annotation));
       }
-      notifyListeners();
     }
+
+    // For symbols
+    if (geofenceZoneSymbol != null && geofenceZoneSymbolIds.isNotEmpty) {
+      for (final annotation in geofenceZoneSymbolIds) {
+        annotation.circleRadius = circleRadiusInPixels;
+        futures.add(geofenceZoneSymbol!.update(annotation));
+      }
+    }
+
+    await Future.wait(futures);
+    notifyListeners();
   }
 
   // Simplified helper method to convert meters to pixels
