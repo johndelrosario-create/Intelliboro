@@ -20,7 +20,9 @@ class MapboxMapViewModel extends ChangeNotifier {
   num? longitude;
   double? circleRadiusInPixels;
   late final Projection projection = Projection();
+
   List<CircleAnnotation> geofenceZoneHelperIds = [];
+  List<CircleAnnotation> geofenceZoneSymbolIds= [];
   bool isGeofenceHelperPlaced = false; // Flag to track if the helper is placed
 
   Timer? _debugTimer;
@@ -195,6 +197,7 @@ class MapboxMapViewModel extends ChangeNotifier {
     if (selectedPoint != null) {
       _geofencingService.createGeofence(
         geometry: selectedPoint!,
+        // TODO: Radius meters should be dynamic
         radiusMeters: 50,
         fillColor: Colors.amberAccent,
         fillOpacity: 0.5,

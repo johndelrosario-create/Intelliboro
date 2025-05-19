@@ -34,8 +34,8 @@ class GeofencingService {
       debugPrint("Calculated radius in pixels: $radiusInPixels");
 
       // Create the geofence zone with the calculated radius
-      geofenceZonePicker?.create(
-        CircleAnnotationOptions(
+      final annotation = await geofenceZonePicker!.create(
+         CircleAnnotationOptions(
           geometry: geometry,
           circleRadius: radiusInPixels,
           circleColor: fillColor.toARGB32(),
@@ -44,6 +44,8 @@ class GeofencingService {
           circleStrokeWidth: strokeWidth,
         ),
       );
+
+        mapViewModel.geofenceZoneSymbolIds.add(annotation);
 
       // Create the geofence for native geofencing
       final geofence = Geofence(
