@@ -1,7 +1,3 @@
-import 'dart:async';
-
-import 'package:path/path.dart';
-import 'package:sqflite/sqflite.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
 
@@ -29,4 +25,22 @@ class TaskModel {
     required this.isRecurring,
     required this.isCompleted,
   });
+
+  // Convert TaskModel to Map
+  Map<String, dynamic> toMap() {
+    return {
+      'taskName': taskName,
+      'taskPriority': taskPriority,
+      'taskTime': taskTime.hour.toString() + ':' + taskTime.minute.toString(),
+      'taskDate': DateFormat('yyyy-MM-dd').format(taskDate),
+      'isRecurring': isRecurring ? 1 : 0,
+      'isCompleted': isCompleted ? 1 : 0,
+    };
+  }
+
+  @override
+  String toString() {
+    return 'TaskModel{taskName: $taskName, taskPriority: $taskPriority, taskTime: $taskTime, taskDate: $taskDate, isRecurring: $isRecurring, isCompleted: $isCompleted}';
+  }
+
 }
