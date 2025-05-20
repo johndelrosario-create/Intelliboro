@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 //import 'package:flutter_svg/svg.dart';
 import 'package:intelliboro/theme.dart';
 import 'package:native_geofence/native_geofence.dart';
+import 'package:path/path.dart';
+import 'package:sqflite/sqflite.dart';
 import 'views/create_task_view.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
@@ -11,9 +13,21 @@ import 'dart:isolate';
 
 // Define the access token
 const String accessToken = String.fromEnvironment('ACCESS_TOKEN');
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MapboxOptions.setAccessToken(accessToken);
+
+  // For database
+  final database = openDatabase(
+    join(await getDatabasesPath(), 'intelliboro.db'),
+    // When first created, create a table to store tasks
+    onCreate: (db, version) {
+      return db.execute(
+        'CREATE TABLE tasks(id INTEGER PRIMARY KEY, taskName TEXT, taskPriority INTEGER, taskTime TEXT, taskDate TEXT, isRecurring INTEGER, isCompleted INTEGER)',
+      );
+    },
+    version: 1,
+  );
   runApp(Intelliboro());
 }
 

@@ -21,7 +21,6 @@ class _TaskCreationState extends State<TaskCreation> {
   // Stores selected date
   DateTime? selectedDate;
 
-  // Store selected geofence
 
   final DateTime _firstDate = DateTime(DateTime.now().year);
   final DateTime _lastDate = DateTime(DateTime.now().year + 1);
