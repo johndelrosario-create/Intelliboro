@@ -1,6 +1,9 @@
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:intelliboro/model/task_model.dart';
+import 'package:intl/intl.dart';
+import 'package:flutter/material.dart';
+
 
 class TaskRepository {
   static Database? _database;
@@ -29,4 +32,31 @@ class TaskRepository {
     );
   }
 
+Future<List<TaskModel>> getTasks() async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query('tasks');
+    return [
+      // Converts the list of maps to a list of TaskModel objects
+      for (final {
+            'taskName': taskName,
+            'taskPriority': taskPriority,
+            'taskTime': taskTime,
+            'taskDate': taskDate,
+            'isRecurring': isRecurring,
+            'isCompleted': isCompleted,
+          }
+          in maps)
+        TaskModel(
+          taskName: taskName,
+          taskPriority: taskPriority,
+          taskTime: TimeOfDay(
+            hour: int.parse(taskTime.split(':')[0]),
+            minute: int.parse(taskTime.split(':')[1]),
+          ),
+          taskDate: DateFormat('yyyy-MM-dd').parse(taskDate),
+          isRecurring: isRecurring == 1,
+          isCompleted: isCompleted == 1,
+        ),
+    ];
+  }
 }

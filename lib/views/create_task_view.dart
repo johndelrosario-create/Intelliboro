@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:intelliboro/repository/task_repository.dart';
 import 'package:intl/intl.dart';
 import 'map_view.dart';
+import 'package:intelliboro/model/task_model.dart';
 
 class TaskCreation extends StatefulWidget {
   final bool showMap;
@@ -20,7 +22,6 @@ class _TaskCreationState extends State<TaskCreation> {
   TimeOfDay? selectedTime;
   // Stores selected date
   DateTime? selectedDate;
-
 
   final DateTime _firstDate = DateTime(DateTime.now().year);
   final DateTime _lastDate = DateTime(DateTime.now().year + 1);
@@ -140,6 +141,21 @@ class _TaskCreationState extends State<TaskCreation> {
               ],
             ),
             if (widget.showMap) _buildMapSection() else _buildMapDisabled(),
+            ElevatedButton(
+              onPressed: () async {
+                TaskRepository().insertTask(
+                  TaskModel(
+                    taskName: _nameController.text,
+                    taskPriority: 1,
+                    taskTime: selectedTime ?? TimeOfDay.now(),
+                    taskDate: selectedDate ?? DateTime.now(),
+                    isRecurring: false,
+                    isCompleted: false,
+                  ),
+                );
+              },
+              child: Text("Create task"),
+            ),
           ],
         ),
       ),

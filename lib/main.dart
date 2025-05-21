@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-//import 'package:flutter_svg/svg.dart';
+import 'package:intelliboro/model/task_model.dart';
+import 'package:intelliboro/repository/task_repository.dart';
 import 'package:intelliboro/theme.dart';
 import 'package:native_geofence/native_geofence.dart';
 import 'views/create_task_view.dart';
@@ -125,6 +126,7 @@ class _HomePageState extends State<HomePage> {
                   },
                 ),
               );
+              setState(() {});
             }
           },
         ),
@@ -134,50 +136,61 @@ class _HomePageState extends State<HomePage> {
 }
 
 // Move to viewhomepage
-class TaskList extends StatelessWidget {
+class TaskList extends StatefulWidget {
   const TaskList({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final List<String> entries = <String>[
-      'A',
-      'B',
-      'C',
-      'D',
-      'E',
-      'F',
-      'G',
-      'H',
-      'I',
-      'J',
-      'K',
-      'L',
-      'M',
-      'N',
-    ];
+  State<TaskList> createState() => _TaskListState();
+}
 
-    return ListView.separated(
-      padding: const EdgeInsets.all(22),
-      itemCount: entries.length,
-      itemBuilder: (BuildContext context, int index) {
-        return Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8.0),
-            border: Border.all(color: Colors.blueGrey.shade100, width: 1.0),
-          ),
-          height: 50,
-          child: Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Text(
-              'Entry ${entries[index]}',
-              style: TextStyle(fontSize: 20),
-            ),
-          ),
-        );
+class _TaskListState extends State<TaskList> {
+  late Future<List<TaskModel>> _tasksFuture;
+  @override
+  void initState() {
+    super.initState();
+    _tasksFuture = TaskRepository().getTasks();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<TaskModel>>(
+      future: _tasksFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Center(child: CircularProgressIndicator());
+        } else if (snapshot.hasError) {
+          return Center(child: Text('Error: ${snapshot.error}'));
+        } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
+          return Center(child: Text('No tasks available'));
+        } else {
+          final tasks = snapshot.data!;
+          return ListView.separated(
+            padding: const EdgeInsets.all(22),
+            itemCount: tasks.length,
+            itemBuilder: (BuildContext context, int index) {
+              return Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8.0),
+                  border: Border.all(
+                    color: Colors.blueGrey.shade100,
+                    width: 1.0,
+                  ),
+                ),
+                height: 50,
+                child: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Text(
+                    tasks[index].taskName,
+                    style: TextStyle(fontSize: 20),
+                  ),
+                ),
+              );
+            },
+            separatorBuilder:
+                (BuildContext context, int index) => SizedBox(height: 8),
+          );
+        }
       },
-      //separatorBuilder: (BuildContext context, int index) => const Divider(),
-      separatorBuilder:
-          (BuildContext context, int index) => SizedBox(height: 8),
     );
   }
 }
