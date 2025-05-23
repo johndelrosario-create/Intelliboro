@@ -43,12 +43,49 @@ class _MapboxMapViewState extends State<MapboxMapView> {
           ),
           ElevatedButton(
             onPressed: () async {
-              mapViewModel.createGeofenceAtSelectedPoint(context);
+              // Show dialog to get task name
+              final taskName = await _showTaskNameDialog(context);
+              if (taskName != null && taskName.isNotEmpty) {
+                mapViewModel.createGeofenceAtSelectedPoint(
+                  context,
+                  taskName: taskName, // Pass the task name
+                );
+              }
             },
             child: Text("Add geofence"),
           ),
         ],
       ),
+    );
+  }
+
+  Future<String?> _showTaskNameDialog(BuildContext context) async {
+    final TextEditingController taskNameController = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Enter Task Name'),
+          content: TextField(
+            controller: taskNameController,
+            decoration: const InputDecoration(hintText: "Task Name"),
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+            TextButton(
+              child: const Text('OK'),
+              onPressed: () {
+                Navigator.of(context).pop(taskNameController.text);
+              },
+            ),
+          ],
+        );
+      },
     );
   }
 }

@@ -42,6 +42,4 @@ class TaskModel {
   String toString() {
     return 'TaskModel{taskName: $taskName, taskPriority: $taskPriority, taskTime: $taskTime, taskDate: $taskDate, isRecurring: $isRecurring, isCompleted: $isCompleted}';
   }
-
-  
 }

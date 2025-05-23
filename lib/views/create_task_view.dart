@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intelliboro/repository/task_repository.dart';
 import 'package:intl/intl.dart';
-import 'map_view.dart';
 import 'package:intelliboro/model/task_model.dart';
+import 'package:intelliboro/viewModel/Geofencing/map_viewmodel.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
 class TaskCreation extends StatefulWidget {
   final bool showMap;
@@ -26,6 +27,24 @@ class _TaskCreationState extends State<TaskCreation> {
   final DateTime _firstDate = DateTime(DateTime.now().year);
   final DateTime _lastDate = DateTime(DateTime.now().year + 1);
   final TextEditingController _nameController = TextEditingController();
+
+  late final MapboxMapViewModel _mapViewModel;
+
+  @override
+  void initState() {
+    super.initState();
+    _mapViewModel = MapboxMapViewModel();
+    if (widget.name != null) {
+      _nameController.text = widget.name!;
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _mapViewModel.dispose();
+    super.dispose();
+  }
 
   // Configure date format
   String formatDate(DateTime? dateTime) {
@@ -91,16 +110,41 @@ class _TaskCreationState extends State<TaskCreation> {
   }
 
   Widget _buildMapSection() {
-    return SizedBox(
-      height: MediaQuery.of(context).size.height - 640,
-      width: MediaQuery.of(context).size.width,
-      child: const Center(child: MapboxMapView()),
+    return ListenableBuilder(
+      listenable: _mapViewModel,
+      builder: (context, child) {
+        return SizedBox(
+          height: MediaQuery.of(context).size.height * 0.3,
+          width: MediaQuery.of(context).size.width,
+          child: Stack(
+            children: [
+              MapWidget(
+                key: const ValueKey("embedded_mapwidget"),
+                onMapCreated: _mapViewModel.onMapCreated,
+                onLongTapListener: _mapViewModel.onLongTap,
+                onZoomListener: _mapViewModel.onZoom,
+              ),
+              if (!_mapViewModel.isMapReady)
+                const Center(child: CircularProgressIndicator()),
+              if (_mapViewModel.selectedPoint != null)
+                Positioned(
+                  top: 10,
+                  left: 10,
+                  child: Chip(
+                    label: Text('Location Selected for Geofence'),
+                    backgroundColor: Colors.greenAccent,
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 
   Widget _buildMapDisabled() {
-    return Text(
-      'Location permissions are disabled. Map functions will not work',
+    return const Text(
+      'Location permissions are disabled or map display is turned off. Map functions will not work.',
     );
   }
 
@@ -109,8 +153,14 @@ class _TaskCreationState extends State<TaskCreation> {
     final textTheme = Theme.of(
       context,
     ).textTheme.apply(displayColor: Theme.of(context).colorScheme.onSurface);
+
+    if (widget.name != null && _nameController.text.isEmpty) {
+      _nameController.text = widget.name!;
+    }
+
     return Scaffold(
       appBar: AppBar(
+        title: const Text('Create Task'),
         leading: IconButton(
           onPressed: () => Navigator.of(context).pop(),
           icon: const Icon(Icons.arrow_back),
@@ -118,45 +168,132 @@ class _TaskCreationState extends State<TaskCreation> {
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('Tasks', style: textTheme.headlineMedium),
-            const SizedBox(height: 16.0),
-            _buildTextField(),
-
-            // Select Date picker
-            const SizedBox(height: 16.0),
-            // Select TimePicker
-            Row(
-              children: [
-                TextButton(
-                  onPressed: () => _selectDate(context),
-                  child: Text(formatDate(selectedDate)),
-                ),
-                TextButton(
-                  onPressed: () => _selectTime(context),
-                  child: Text(formatTimeOfDay(selectedTime)),
-                ),
-              ],
-            ),
-            if (widget.showMap) _buildMapSection() else _buildMapDisabled(),
-            ElevatedButton(
-              onPressed: () async {
-                TaskRepository().insertTask(
-                  TaskModel(
-                    taskName: _nameController.text,
-                    taskPriority: 1,
-                    taskTime: selectedTime ?? TimeOfDay.now(),
-                    taskDate: selectedDate ?? DateTime.now(),
-                    isRecurring: false,
-                    isCompleted: false,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Task Details', style: textTheme.headlineMedium),
+              const SizedBox(height: 16.0),
+              _buildTextField(),
+              const SizedBox(height: 16.0),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton.icon(
+                      icon: const Icon(Icons.calendar_today),
+                      onPressed: () => _selectDate(context),
+                      label: Text(formatDate(selectedDate)),
+                    ),
                   ),
-                );
-              },
-              child: Text("Create task"),
-            ),
-          ],
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextButton.icon(
+                      icon: const Icon(Icons.access_time),
+                      onPressed: () => _selectTime(context),
+                      label: Text(formatTimeOfDay(selectedTime)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16.0),
+              if (widget.showMap) ...[
+                Text('Geofence', style: textTheme.titleMedium),
+                const Text(
+                  'Long-press on the map below to select a location for the geofence.',
+                ),
+                const SizedBox(height: 8.0),
+                _buildMapSection(),
+              ] else
+                _buildMapDisabled(),
+              const SizedBox(height: 24.0),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                onPressed: () async {
+                  final taskName = _nameController.text;
+                  debugPrint(
+                    "[CreateTaskView] Task name being sent to ViewModel: '$taskName'",
+                  );
+                  if (taskName.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Please enter a task name.'),
+                      ),
+                    );
+                    return;
+                  }
+
+                  await TaskRepository().insertTask(
+                    TaskModel(
+                      taskName: taskName,
+                      taskPriority: 1,
+                      taskTime: selectedTime ?? TimeOfDay.now(),
+                      taskDate: selectedDate ?? DateTime.now(),
+                      isRecurring: false,
+                      isCompleted: false,
+                    ),
+                  );
+
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Task "$taskName" created.')),
+                  );
+
+                  if (widget.showMap && _mapViewModel.selectedPoint != null) {
+                    try {
+                      await _mapViewModel.createGeofenceAtSelectedPoint(
+                        context,
+                        taskName: taskName,
+                      );
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Geofence added for "$taskName" at selected location.',
+                            ),
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Error creating geofence: $e'),
+                          ),
+                        );
+                      }
+                    }
+                  } else if (widget.showMap &&
+                      _mapViewModel.selectedPoint == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'No location selected on map. Geofence not created.',
+                        ),
+                      ),
+                    );
+                  }
+
+                  if (context.mounted) {
+                    Navigator.pop(context);
+                  }
+                },
+                child: ListenableBuilder(
+                  listenable: _mapViewModel,
+                  builder: (context, child) {
+                    final buttonText =
+                        (widget.showMap && _mapViewModel.selectedPoint != null)
+                            ? "Create Task & Geofence"
+                            : "Create Task";
+                    return Text(
+                      buttonText,
+                      style: const TextStyle(fontSize: 16),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

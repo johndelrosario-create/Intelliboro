@@ -4,27 +4,65 @@ import 'package:intelliboro/model/task_model.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
 
-
 class TaskRepository {
   static Database? _database;
+  static const String _dbName = 'intelliboro.db';
+  static bool _onCreateExecuted =
+      false; // Flag to check if onCreate was run in this session
+
   // For database
   Future<Database> get database async {
-    if (_database != null) return _database!;
+    debugPrint("[TaskRepository] Accessing database getter...");
+    if (_database != null) {
+      debugPrint("[TaskRepository] Database instance already exists.");
+      return _database!;
+    }
+    debugPrint("[TaskRepository] Database instance is null, initializing...");
+
+    String path = join(await getDatabasesPath(), _dbName);
+    debugPrint("[TaskRepository] Database path: $path");
+
     _database = await openDatabase(
-      join(await getDatabasesPath(), 'intelliboro.db'),
-      // When first created, create a table to store tasks
-      onCreate: (db, version) {
-        return db.execute(
-          'CREATE TABLE tasks(id INTEGER PRIMARY KEY, taskName TEXT, taskPriority INTEGER, taskTime TEXT, taskDate TEXT, isRecurring INTEGER, isCompleted INTEGER)',
+      path,
+      onCreate: (db, version) async {
+        debugPrint("[TaskRepository] onCreate: Creating tasks table...");
+        await db.execute(
+          'CREATE TABLE tasks(id INTEGER PRIMARY KEY AUTOINCREMENT, taskName TEXT, taskPriority INTEGER, taskTime TEXT, taskDate TEXT, isRecurring INTEGER, isCompleted INTEGER)',
         );
+        debugPrint("[TaskRepository] onCreate: Tasks table created.");
+        _onCreateExecuted = true; // Set flag
       },
-      version: 1,
+      version: 2,
     );
+
+    // After attempting to open, if onCreate wasn't run and table is still missing, something is wrong.
+    if (!_onCreateExecuted) {
+      var tableCheck = await _database!.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'",
+      );
+      if (tableCheck.isEmpty) {
+        debugPrint(
+          "[TaskRepository] onCreate was NOT executed and 'tasks' table still missing. Forcing delete and re-open.",
+        );
+        await _database!.close(); // Close first
+        await deleteDatabase(path); // Delete the database file
+        _database = null; // Reset static instance
+        _onCreateExecuted = false; // Reset flag
+        return await database; // Recurse to try opening again. Should now trigger onCreate.
+      }
+    }
+
+    debugPrint("[TaskRepository] Database initialized and instance set.");
     return _database!;
   }
+
   // Function for inserting task into database
   Future<void> insertTask(TaskModel task) async {
+    debugPrint("[TaskRepository] insertTask: Getting database instance...");
     final db = await database;
+    debugPrint(
+      "[TaskRepository] insertTask: Database instance received. Inserting task: ${task.taskName}",
+    );
     await db.insert(
       'tasks',
       task.toMap(),
@@ -32,7 +70,7 @@ class TaskRepository {
     );
   }
 
-Future<List<TaskModel>> getTasks() async {
+  Future<List<TaskModel>> getTasks() async {
     final db = await database;
     final List<Map<String, dynamic>> maps = await db.query('tasks');
     return [
