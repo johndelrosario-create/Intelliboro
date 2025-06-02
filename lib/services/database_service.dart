@@ -4,7 +4,7 @@ import 'package:sqflite/sqflite.dart';
 import 'dart:developer' as developer;
 
 class DatabaseService {
-  static final DatabaseService _instance = DatabaseService._internal();
+  static final DatabaseService _instance = DatabaseService._constructor();
   static Database? _mainIsolateDatabase; // Renamed for clarity
   static const String _dbName = 'intelliboro.db';
   static const int _dbVersion = 1;
@@ -14,6 +14,8 @@ class DatabaseService {
   static bool _isInitializingMainDB = false;
 
   factory DatabaseService() => _instance;
+
+  DatabaseService._constructor();
 
   // For the main UI isolate, uses a shared instance
   Future<Database> get mainDb async {
@@ -44,10 +46,6 @@ class DatabaseService {
     developer.log(
       "[DatabaseService] Opening new background DB connection (readOnly: $readOnly).",
     );
-    // Ensure FFI is initialized for this isolate if on desktop
-    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-      ffi.sqfliteFfiInit();
-    }
     return await _openDatabaseConnection(readOnly: readOnly);
   }
 
