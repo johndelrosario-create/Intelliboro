@@ -1,29 +1,19 @@
 import 'dart:io';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart' as ffi;
 import 'dart:developer' as developer;
 
 class DatabaseService {
   static final DatabaseService _instance = DatabaseService._internal();
   static Database? _mainIsolateDatabase; // Renamed for clarity
   static const String _dbName = 'intelliboro.db';
-  static const int _dbVersion = 2;
+  static const int _dbVersion = 1;
   static const String _tableName = 'geofences';
 
   // Lock to prevent concurrent initialization from main isolate
   static bool _isInitializingMainDB = false;
 
   factory DatabaseService() => _instance;
-
-  DatabaseService._internal() {
-    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-      // This should ideally be called once per application start,
-      // not necessarily in every isolate for ffi, but calling it here is generally safe.
-      ffi.sqfliteFfiInit();
-      developer.log("[DatabaseService] sqfliteFfiInit() called.");
-    }
-  }
 
   // For the main UI isolate, uses a shared instance
   Future<Database> get mainDb async {

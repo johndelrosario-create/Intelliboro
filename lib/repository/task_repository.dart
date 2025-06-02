@@ -32,7 +32,7 @@ class TaskRepository {
         debugPrint("[TaskRepository] onCreate: Tasks table created.");
         _onCreateExecuted = true; // Set flag
       },
-      version: 2,
+      version: 1,
     );
 
     // After attempting to open, if onCreate wasn't run and table is still missing, something is wrong.
