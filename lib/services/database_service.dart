@@ -27,8 +27,9 @@ class DatabaseService {
 
   // For the main UI isolate, uses a shared instance
   Future<Database> get mainDb async {
-    if (_mainIsolateDatabase != null && _mainIsolateDatabase!.isOpen)
+    if (_mainIsolateDatabase != null && _mainIsolateDatabase!.isOpen) {
       return _mainIsolateDatabase!;
+    }
     if (_isInitializingMainDB) {
       // Wait if another part of the main isolate is already initializing
       developer.log(
