@@ -8,7 +8,8 @@ class DatabaseService {
   static Database? _mainIsolateDatabase; // Renamed for clarity
   static const String _dbName = 'intelliboro.db';
   static const int _dbVersion = 1;
-  static const String _tableName = 'geofences';
+  static const String _geofencestableName = 'geofences';
+  static const String _tasksTableName = 'tasks';
 
   // Lock to prevent concurrent initialization from main isolate
   static bool _isInitializingMainDB = false;
@@ -69,69 +70,17 @@ class DatabaseService {
             true, // Explicitly true for the main shared connection logic
       );
       developer.log(
-        "[DatabaseService] DB opened. Verifying '$_tableName' table existence...",
+        "[DatabaseService] DB opened. Verifying '$_geofencestableName' table existence...",
       );
 
       // Verify table existence
       List<Map<String, dynamic>> tables = await db.rawQuery(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='$_tableName'",
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='$_geofencestableName' AND name='$_tasksTableName'",
+      );
+      developer.log(
+        "[DatabaseService] DB opened. Verifying '$_tasksTableName' table existence...",
       );
 
-      // Only attempt to fix schema (delete/recreate) if this is a writable connection
-      // and the primary geofences table is missing.
-      if (!readOnly && tables.isEmpty) {
-        developer.log(
-          "[DatabaseService] (Writable) '$_tableName' table NOT found. Forcing DB deletion and re-creation.",
-        );
-        await db.close(); // Close the problematic DB instance
-        await deleteDatabase(path); // Delete the physical DB file
-        developer.log(
-          "[DatabaseService] Database at $path deleted. Retrying openDatabase. This MUST trigger onCreate.",
-        );
-
-        // Retry opening. This MUST call onCreate.
-        db = await openDatabase(
-          path,
-          version: _dbVersion,
-          onCreate: _onCreate,
-          // onUpgrade should not be called if onCreate is, as the DB is new.
-          // If onUpgrade were to be called, it would be for future versions.
-          readOnly: false, // Explicitly false for the recreate attempt
-          singleInstance:
-              true, // Explicitly true for the recreate attempt as well
-        );
-        developer.log(
-          "[DatabaseService] DB re-opened after deletion (writable).",
-        );
-
-        // Re-verify (important for sanity and to catch deeper issues)
-        tables = await db.rawQuery(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name='$_tableName'",
-        );
-        if (tables.isEmpty) {
-          developer.log(
-            "[DatabaseService] CRITICAL FAILURE: (Writable) '$_tableName' table STILL NOT found after delete and re-open.",
-          );
-          throw Exception(
-            "Failed to create '$_tableName' table even after forced re-initialization for a writable database.",
-          );
-        } else {
-          developer.log(
-            "[DatabaseService] (Writable) '$_tableName' table confirmed after forced re-open.",
-          );
-        }
-      } else if (tables.isEmpty && readOnly) {
-        developer.log(
-          "[DatabaseService] (ReadOnly) '$_tableName' table NOT found. Cannot fix in read-only mode. Operations might fail.",
-        );
-        // For a read-only connection, if the table is missing, we can't fix it here.
-        // The caller will likely encounter errors. This is problematic and suggests
-        // the DB wasn't correctly initialized by a prior writable connection.
-      } else {
-        developer.log(
-          "[DatabaseService] '$_tableName' table found. Proceeding.",
-        );
-      }
       return db;
     } catch (e, stacktrace) {
       developer.log(
@@ -154,16 +103,14 @@ class DatabaseService {
     }
   }
 
-  // _verifyTable is less relevant if each connection is fresh or onCreate/onUpgrade handles it.
-  // Future<void> _verifyTable(Database db) async { ... }
-
   // onCreate and onUpgrade remain static or top-level like as they define schema
   static Future<void> _onCreate(Database db, int version) async {
     developer.log(
-      '[DatabaseService] _onCreate: Creating table $_tableName for version $version',
+      '[DatabaseService] _onCreate: Creating table $_geofencestableName for version $version',
     );
     await db.execute('''
-      CREATE TABLE IF NOT EXISTS $_tableName (
+      CREATE TABLE IF NOT EXISTS $_geofencestableName
+       (
         id TEXT PRIMARY KEY,
         latitude REAL NOT NULL,
         longitude REAL NOT NULL,
@@ -177,11 +124,28 @@ class DatabaseService {
       )
     ''');
     await db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_${_tableName}_id ON $_tableName (id)',
+      'CREATE INDEX IF NOT EXISTS idx_${_geofencestableName}_id ON $_geofencestableName (id)',
     );
-    developer.log('[DatabaseService] _onCreate: Table and index created.');
+    developer.log(
+      '[DatabaseService] _onCreate: $_geofencestableName and index created.',
+    );
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $_tasksTableName
+       (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        taskName TEXT NOT NULL,
+        taskPriority INTEGER NOT NULL,
+        taskTime TEXT NOT NULL,
+        taskDate TEXT NOT NULL,
+        isRecurring INTEGER NOT NULL,
+        isCompleted INTEGER NOT NULL,
+        created_at INTEGER DEFAULT (strftime('%s', 'now'))
+      )
+    ''');
+    developer.log('[DatabaseService] _onCreate: $_tasksTableName created.');
   }
 
+  // Ununsed for now
   static Future<void> _onUpgrade(
     Database db,
     int oldVersion,
@@ -192,7 +156,7 @@ class DatabaseService {
     );
     if (oldVersion < 2) {
       try {
-        await db.execute('ALTER TABLE $_tableName ADD COLUMN task TEXT');
+        // await db.execute('ALTER TABLE $_tableName ADD COLUMN task TEXT');
         developer.log('[DatabaseService] _onUpgrade: task column added.');
       } catch (e) {
         developer.log(
@@ -210,10 +174,10 @@ class DatabaseService {
   ) async {
     // ... (validation logic as before) ...
     developer.log(
-      '[DatabaseService] Inserting geofence into $_tableName: $geofenceData using provided DB object',
+      '[DatabaseService] Inserting geofence into $_geofencestableName: $geofenceData using provided DB object',
     );
     return await db.insert(
-      _tableName,
+      _geofencestableName,
       geofenceData,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
@@ -223,7 +187,7 @@ class DatabaseService {
     developer.log(
       '[DatabaseService] Fetching all geofences using provided DB object',
     );
-    return await db.query(_tableName);
+    return await db.query(_geofencestableName);
   }
 
   Future<Map<String, dynamic>?> getGeofenceById(Database db, String id) async {
@@ -231,7 +195,7 @@ class DatabaseService {
       '[DatabaseService] Fetching geofence by ID: $id using provided DB object',
     );
     final List<Map<String, dynamic>> maps = await db.query(
-      _tableName,
+      _geofencestableName,
       where: 'id = ?',
       whereArgs: [id],
       limit: 1,
