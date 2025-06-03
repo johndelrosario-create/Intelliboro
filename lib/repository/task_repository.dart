@@ -17,9 +17,7 @@ class TaskRepository {
     );
     await db.insert(
       _tableName,
-      // 'tasks',
       task.toMap()..remove('id'),
-      // task.toMap(),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }

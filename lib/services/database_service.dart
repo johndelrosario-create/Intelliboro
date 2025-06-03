@@ -72,6 +72,12 @@ class DatabaseService {
       developer.log(
         "[DatabaseService] DB opened. Verifying '$_geofencestableName' table existence...",
       );
+      if (!db.isOpen) {
+        developer.log(
+          "[DatabaseService] (Simplified) CRITICAL: Database is not open after openDatabase call!",
+        );
+        throw Exception("Database not open after 'openDatabase' call");
+      }
 
       // Verify table existence
       List<Map<String, dynamic>> tables = await db.rawQuery(
