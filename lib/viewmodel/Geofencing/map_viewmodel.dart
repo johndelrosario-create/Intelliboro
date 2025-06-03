@@ -27,8 +27,6 @@ class MapboxMapViewModel extends ChangeNotifier {
   double _currentHelperRadiusInPixels =
       30.0; // Initial fallback if map not ready for calc.
 
-  // late final Projection projection = Projection(); // Projection can be obtained from mapboxMap.projection
-
   List<CircleAnnotation> geofenceZoneHelperIds = [];
   List<CircleAnnotation> geofenceZoneSymbolIds =
       []; // These are for the actual saved geofences
@@ -41,7 +39,6 @@ class MapboxMapViewModel extends ChangeNotifier {
 
   MapboxMapViewModel() : _locationService = LocationService() {
     _geofencingService = GeofencingService(this);
-    // _loadSavedGeofences will be called from onMapCreated now
   }
 
   Future<void> _loadSavedGeofences({bool forceNativeRecreation = true}) async {
@@ -101,7 +98,7 @@ class MapboxMapViewModel extends ChangeNotifier {
         '[MapViewModel] Error loading saved geofences: $e\\n$stackTrace',
       );
       mapInitializationError = "Error loading geofences: ${e.toString()}";
-      // notifyListeners(); // Notify to update UI with error
+      notifyListeners(); // Notify to update UI with error
     }
   }
 
