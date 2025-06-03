@@ -3,6 +3,7 @@ import 'package:intelliboro/model/task_model.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
 import 'package:intelliboro/services/database_service.dart';
+import 'dart:developer' as developer;
 
 class TaskRepository {
   static const String _tableName = 'tasks';
@@ -12,14 +13,35 @@ class TaskRepository {
     debugPrint("[TaskRepository] insertTask: Getting database instance...");
     // final db = await database;
     final db = await DatabaseService().mainDb;
-    debugPrint(
-      "[TaskRepository] insertTask: Database instance received. Inserting task: ${task.taskName}",
+    developer.log(
+      "[TaskRepository] insertTask: Received DB. Path: ${db.path}, isOpen: ${db.isOpen}",
+    ); // ADD THIS
+    if (!db.isOpen) {
+      developer.log(
+        "[TaskRepository] insertTask: CRITICAL - DB IS CLOSED *IMMEDIATELY AFTER* receiving from DatabaseService.mainDb!",
+      );
+      throw Exception(
+        "DatabaseService.mainDb returned a closed database to TaskRepository.insertTask",
+      );
+    }
+    developer.log(
+      "[TaskRepository] insertTask: DB is open. Inserting task: ${task.taskName}",
     );
-    await db.insert(
-      _tableName,
-      task.toMap()..remove('id'),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    try {
+      await db.insert(
+        _tableName,
+        task.toMap()..remove('id'),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      developer.log(
+        "[TaskRepository] insertTask: Task ${task.taskName} inserted successfully.",
+      );
+    } catch (e, stacktrace) {
+      developer.log(
+        "[TaskRepository] insertTask: FAILED to insert. DB Path: ${db.path}, isOpen: ${db.isOpen}. Error: $e\n$stacktrace",
+      );
+      rethrow;
+    }
   }
 
   Future<List<TaskModel>> getTasks() async {

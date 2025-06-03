@@ -15,9 +15,6 @@ import 'package:sqflite/sqflite.dart';
 
 @pragma('vm:entry-point')
 Future<void> geofenceTriggered(GeofenceCallbackParams params) async {
-  // Initialize services for this isolate.
-  // No need for WidgetsFlutterBinding.ensureInitialized() if not using Flutter framework features directly.
-  // sqflite_common_ffi.sqfliteFfiInit() is now called within DatabaseService when needed.
 
   developer.log(
     '[GeofenceCallback] Event: ${params.event}, Geofence IDs: ${params.geofences.map((g) => g.id).toList()}, Location: ${params.location}',

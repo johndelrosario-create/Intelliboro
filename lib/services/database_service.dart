@@ -68,13 +68,14 @@ class DatabaseService {
     return _mainIsolateDatabase!;
   }
 
+  //Used in callback
   // For background isolates to get a fresh, independent connection
-  // Future<Database> openNewBackgroundConnection({bool readOnly = true}) async {
-  //   developer.log(
-  //     "[DatabaseService] Opening new background DB connection (readOnly: $readOnly).",
-  //   );
-  //   return await _openDatabaseConnection(readOnly: readOnly);
-  // }
+  Future<Database> openNewBackgroundConnection({bool readOnly = true}) async {
+    developer.log(
+      "[DatabaseService] Opening new background DB connection (readOnly: $readOnly).",
+    );
+    return await _openDatabaseConnection(readOnly: readOnly);
+  }
 
   // Core method to open a database connection
   Future<Database> _openDatabaseConnection({required bool readOnly}) async {
