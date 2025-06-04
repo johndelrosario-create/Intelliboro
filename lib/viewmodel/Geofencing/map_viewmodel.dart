@@ -20,6 +20,7 @@ class MapboxMapViewModel extends ChangeNotifier {
   Point? selectedPoint;
   num? latitude;
   num? longitude;
+  CameraState? cameraState;
 
   // Target radius in meters for the helper circle.
   static const double _helperTargetRadiusMeters = 50.0;
@@ -119,8 +120,10 @@ class MapboxMapViewModel extends ChangeNotifier {
       geofenceZoneSymbolIds.clear();
 
       // Get the meters-to-pixels conversion factor once
+      //BUG: metersPerPixel is wrong
       final double metersPerPixel =
           await metersToPixelsAtCurrentLocationAndZoom();
+      debugPrint("[MapViewModel] Line 124 Meters per pixel: $metersPerPixel");
       if (metersPerPixel == 0.0) {
         debugPrint(
           "Could not calculate meters per pixel. Aborting geofence display.",
@@ -150,6 +153,9 @@ class MapboxMapViewModel extends ChangeNotifier {
 
           // Calculate radius in pixels using the fetched conversion factor
           final radiusInPixels = geofence.radiusMeters / metersPerPixel;
+          debugPrint(
+            "[MapViewModel] Line 154 Radius in pixels: $radiusInPixels for ${geofence.radiusMeters}m",
+          );
 
           final annotation = await geofenceZoneSymbol!.create(
             CircleAnnotationOptions(
@@ -329,10 +335,16 @@ class MapboxMapViewModel extends ChangeNotifier {
       if (this.mapboxMap != null) {
         // Check mapboxMap again as it's used
         final cameraState = await this.mapboxMap!.getCameraState();
+        //BUG: Incorrect Lat
         final centerLat = cameraState.center.coordinates.lat;
+        //BUG: Incorrect zoom
         double zoomLevel = cameraState.zoom;
+        debugPrint(
+          "[MapViewModel]Line 339 Initial center lat: $centerLat, zoom level: $zoomLevel",
+        );
         final metersPerPixel = await this.mapboxMap!.projection
             .getMetersPerPixelAtLatitude(centerLat.toDouble(), zoomLevel);
+        debugPrint("[MapViewModel] Line 338 meters per Pixel: $metersPerPixel");
         if (metersPerPixel > 0) {
           _currentHelperRadiusInPixels =
               _helperTargetRadiusMeters / metersPerPixel;
@@ -356,6 +368,17 @@ class MapboxMapViewModel extends ChangeNotifier {
       // Notify listeners regardless of success or failure to update UI
       // (e.g. to show mapInitializationError if any)
       notifyListeners();
+    }
+  }
+
+  onCameraIdle(MapIdleEventData eventData) async {
+    try {
+      debugPrint("[MapViewModel] Camera idle event triggered.");
+      cameraState = await mapboxMap!.getCameraState();
+      await updateAllGeofenceVisualRadii();
+      notifyListeners(); // Notify listeners to update UI if needed
+    } catch (e) {
+      debugPrint("[MapViewModel] Error in onCameraIdle: $e");
     }
   }
 

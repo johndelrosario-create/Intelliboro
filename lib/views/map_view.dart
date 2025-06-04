@@ -33,6 +33,7 @@ class _MapboxMapViewState extends State<MapboxMapView> {
                       onMapCreated: mapViewModel.onMapCreated,
                       onLongTapListener: mapViewModel.onLongTap,
                       onZoomListener: mapViewModel.onZoom,
+                onMapIdleListener: mapViewModel.onCameraIdle,
                     ),
                     if (!mapViewModel.isMapReady)
                       const Center(child: CircularProgressIndicator()),
