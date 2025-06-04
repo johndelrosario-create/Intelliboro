@@ -123,6 +123,7 @@ class _TaskCreationState extends State<TaskCreation> {
                 onMapCreated: _mapViewModel.onMapCreated,
                 onLongTapListener: _mapViewModel.onLongTap,
                 onZoomListener: _mapViewModel.onZoom,
+                onMapIdleListener: _mapViewModel.onCameraIdle,
               ),
               if (!_mapViewModel.isMapReady)
                 const Center(child: CircularProgressIndicator()),

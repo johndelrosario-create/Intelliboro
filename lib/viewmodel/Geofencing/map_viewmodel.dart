@@ -332,6 +332,24 @@ class MapboxMapViewModel extends ChangeNotifier {
 
       // Calculate initial helper radius once map is ready
       // This should ideally use the actual map center after flyTo or a default if flyTo didn't happen.
+
+      debugPrint("[MapViewModel] onMapCreated finished.");
+    } catch (e, stackTrace) {
+      debugPrint(
+        "[MapViewModel] CRITICAL Error in onMapCreated: $e\\n$stackTrace",
+      );
+      mapInitializationError = "Map initialization failed: ${e.toString()}";
+      isMapReady = false; // Explicitly set to false on critical error
+    } finally {
+      // Notify listeners regardless of success or failure to update UI
+      // (e.g. to show mapInitializationError if any)
+      notifyListeners();
+    }
+  }
+
+  onCameraIdle(MapIdleEventData eventData) async {
+    try {
+      debugPrint("[MapViewModel] Camera idle event triggered.");
       if (this.mapboxMap != null) {
         // Check mapboxMap again as it's used
         final cameraState = await this.mapboxMap!.getCameraState();
@@ -357,23 +375,6 @@ class MapboxMapViewModel extends ChangeNotifier {
           );
         }
       }
-      debugPrint("[MapViewModel] onMapCreated finished.");
-    } catch (e, stackTrace) {
-      debugPrint(
-        "[MapViewModel] CRITICAL Error in onMapCreated: $e\\n$stackTrace",
-      );
-      mapInitializationError = "Map initialization failed: ${e.toString()}";
-      isMapReady = false; // Explicitly set to false on critical error
-    } finally {
-      // Notify listeners regardless of success or failure to update UI
-      // (e.g. to show mapInitializationError if any)
-      notifyListeners();
-    }
-  }
-
-  onCameraIdle(MapIdleEventData eventData) async {
-    try {
-      debugPrint("[MapViewModel] Camera idle event triggered.");
       cameraState = await mapboxMap!.getCameraState();
       await updateAllGeofenceVisualRadii();
       notifyListeners(); // Notify listeners to update UI if needed
