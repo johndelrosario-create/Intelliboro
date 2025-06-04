@@ -103,86 +103,7 @@ class MapboxMapViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> _displaySavedGeofences() async {
-    try {
-      debugPrint('Displaying ${_savedGeofences.length} saved geofences');
-
-      if (geofenceZoneSymbol == null || mapboxMap == null) {
-        debugPrint(
-          'Geofence zone symbol manager or mapboxMap is null, cannot display geofences',
-        );
-        return;
-      }
-
-      // Clear existing geofences
-      debugPrint('Clearing existing geofence annotations...');
-      await geofenceZoneSymbol!.deleteAll();
-      geofenceZoneSymbolIds.clear();
-
-      // Get the meters-to-pixels conversion factor once
-      //BUG: metersPerPixel is wrong
-      final double metersPerPixel =
-          await metersToPixelsAtCurrentLocationAndZoom();
-      debugPrint("[MapViewModel] Line 124 Meters per pixel: $metersPerPixel");
-      if (metersPerPixel == 0.0) {
-        debugPrint(
-          "Could not calculate meters per pixel. Aborting geofence display.",
-        );
-        return;
-      }
-
-      // Add all saved geofences
-      for (final geofence in _savedGeofences) {
-        try {
-          debugPrint(
-            'Adding geofence ${geofence.id} at ${geofence.latitude}, ${geofence.longitude}',
-          );
-
-          final point = Point(
-            coordinates: Position(geofence.longitude, geofence.latitude),
-          );
-
-          // Parse colors with error handling
-          final fillColor = _parseColor(geofence.fillColor);
-          final strokeColor = _parseColor(geofence.strokeColor);
-
-          if (fillColor == null || strokeColor == null) {
-            debugPrint('Invalid color format for geofence ${geofence.id}');
-            continue;
-          }
-
-          // Calculate radius in pixels using the fetched conversion factor
-          final radiusInPixels = geofence.radiusMeters / metersPerPixel;
-          debugPrint(
-            "[MapViewModel] Line 154 Radius in pixels: $radiusInPixels for ${geofence.radiusMeters}m",
-          );
-
-          final annotation = await geofenceZoneSymbol!.create(
-            CircleAnnotationOptions(
-              geometry: point,
-              circleRadius: radiusInPixels,
-              circleColor: fillColor.value,
-              circleOpacity: geofence.fillOpacity,
-              circleStrokeColor: strokeColor.value,
-              circleStrokeWidth: geofence.strokeWidth,
-            ),
-          );
-
-          geofenceZoneSymbolIds.add(annotation);
-          debugPrint('Added geofence ${geofence.id} to map');
-        } catch (e, stackTrace) {
-          debugPrint(
-            'Error displaying geofence ${geofence.id}: $e\n$stackTrace',
-          );
-        }
-      }
-      debugPrint(
-        'Finished displaying ${_savedGeofences.length} geofences with ${geofenceZoneSymbolIds.length} symbols.',
-      );
-    } catch (e, stackTrace) {
-      debugPrint('Error in _displaySavedGeofences: $e\n$stackTrace');
-    }
-  }
+  
 
   Color? _parseColor(String colorString) {
     try {
@@ -330,9 +251,7 @@ class MapboxMapViewModel extends ChangeNotifier {
         );
       }
 
-      // Calculate initial helper radius once map is ready
-      // This should ideally use the actual map center after flyTo or a default if flyTo didn't happen.
-
+      
       debugPrint("[MapViewModel] onMapCreated finished.");
     } catch (e, stackTrace) {
       debugPrint(
@@ -365,9 +284,6 @@ class MapboxMapViewModel extends ChangeNotifier {
         if (metersPerPixel > 0) {
           _currentHelperRadiusInPixels =
               _helperTargetRadiusMeters / metersPerPixel;
-          // debugPrint(
-          //   "[MapViewModel] Initial helper radius calculated: $_currentHelperRadiusInPixels px for $_helperTargetRadiusMeters m at $centerLat, zoom $zoomLevel",
-          // );
           debugPrint(
             "[MapViewModel] onCameraIdle: Helper radius updated to: $_currentHelperRadiusInPixels px for $_helperTargetRadiusMeters m (lat: $centerLat, zoom: $zoomLevel)",
           );
@@ -377,11 +293,73 @@ class MapboxMapViewModel extends ChangeNotifier {
           );
         }
       }
-      // cameraState = await mapboxMap!.getCameraState();
       await updateAllGeofenceVisualRadii();
       notifyListeners(); // Notify listeners to update UI if needed
     } catch (e) {
       debugPrint("[MapViewModel] Error in onCameraIdle: $e");
+    }
+  }
+
+Future<void> _displaySavedGeofences() async {
+    try {
+      debugPrint('[MapViewModel] Displaying ${_savedGeofences.length} saved geofences');
+
+      if (geofenceZoneSymbol == null || mapboxMap == null) {
+        debugPrint(
+          'Geofence zone symbol manager or mapboxMap is null, cannot display geofences',
+        );
+        return;
+      }
+
+      // Clear existing geofences
+      debugPrint('Clearing existing geofence annotations...');
+      await geofenceZoneSymbol!.deleteAll();
+      geofenceZoneSymbolIds.clear();
+
+      // Add all saved geofences
+      for (final geofence in _savedGeofences) {
+        try {
+          debugPrint(
+            'Adding geofence ${geofence.id} at ${geofence.latitude}, ${geofence.longitude}',
+          );
+
+          final point = Point(
+            coordinates: Position(geofence.longitude, geofence.latitude),
+          );
+
+          // Parse colors with error handling
+          final fillColor = _parseColor(geofence.fillColor);
+          final strokeColor = _parseColor(geofence.strokeColor);
+
+          if (fillColor == null || strokeColor == null) {
+            debugPrint('Invalid color format for geofence ${geofence.id}');
+            continue;
+          }
+
+          final annotation = await geofenceZoneSymbol!.create(
+            CircleAnnotationOptions(
+              geometry: point,
+              circleRadius: _currentHelperRadiusInPixels,
+              circleColor: fillColor.value,
+              circleOpacity: geofence.fillOpacity,
+              circleStrokeColor: strokeColor.value,
+              circleStrokeWidth: geofence.strokeWidth,
+            ),
+          );
+
+          geofenceZoneSymbolIds.add(annotation);
+          debugPrint('Added geofence ${geofence.id} to map');
+        } catch (e, stackTrace) {
+          debugPrint(
+            'Error displaying geofence ${geofence.id}: $e\n$stackTrace',
+          );
+        }
+      }
+      debugPrint(
+        'Finished displaying ${_savedGeofences.length} geofences with ${geofenceZoneSymbolIds.length} symbols.',
+      );
+    } catch (e, stackTrace) {
+      debugPrint('Error in _displaySavedGeofences: $e\n$stackTrace');
     }
   }
 
