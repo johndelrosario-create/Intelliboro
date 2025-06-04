@@ -351,23 +351,25 @@ class MapboxMapViewModel extends ChangeNotifier {
     try {
       debugPrint("[MapViewModel] Camera idle event triggered.");
       if (this.mapboxMap != null) {
-        // Check mapboxMap again as it's used
-        final cameraState = await this.mapboxMap!.getCameraState();
-        //BUG: Incorrect Lat
+        final cameraState = await mapboxMap!.getCameraState();
         final centerLat = cameraState.center.coordinates.lat;
-        //BUG: Incorrect zoom
         double zoomLevel = cameraState.zoom;
         debugPrint(
           "[MapViewModel]Line 339 Initial center lat: $centerLat, zoom level: $zoomLevel",
         );
+
         final metersPerPixel = await this.mapboxMap!.projection
             .getMetersPerPixelAtLatitude(centerLat.toDouble(), zoomLevel);
         debugPrint("[MapViewModel] Line 338 meters per Pixel: $metersPerPixel");
+
         if (metersPerPixel > 0) {
           _currentHelperRadiusInPixels =
               _helperTargetRadiusMeters / metersPerPixel;
+          // debugPrint(
+          //   "[MapViewModel] Initial helper radius calculated: $_currentHelperRadiusInPixels px for $_helperTargetRadiusMeters m at $centerLat, zoom $zoomLevel",
+          // );
           debugPrint(
-            "[MapViewModel] Initial helper radius calculated: $_currentHelperRadiusInPixels px for $_helperTargetRadiusMeters m at $centerLat, zoom $zoomLevel",
+            "[MapViewModel] onCameraIdle: Helper radius updated to: $_currentHelperRadiusInPixels px for $_helperTargetRadiusMeters m (lat: $centerLat, zoom: $zoomLevel)",
           );
         } else {
           debugPrint(
@@ -375,7 +377,7 @@ class MapboxMapViewModel extends ChangeNotifier {
           );
         }
       }
-      cameraState = await mapboxMap!.getCameraState();
+      // cameraState = await mapboxMap!.getCameraState();
       await updateAllGeofenceVisualRadii();
       notifyListeners(); // Notify listeners to update UI if needed
     } catch (e) {
