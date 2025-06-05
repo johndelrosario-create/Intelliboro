@@ -226,6 +226,10 @@ class GeofencingService {
         ),
       );
 
+      developer.log(
+        '[GeofencingService._createNativeGeofence] Attempting to create native geofence with params: ID=$id, Lat=${location.latitude}, Lon=${location.longitude}, Radius=${radiusMeters}m',
+      );
+
       // Register the geofence with the callback
       await NativeGeofenceManager.instance.createGeofence(
         geofence,
@@ -235,7 +239,40 @@ class GeofencingService {
       // Cache the geofence for later removal
       _geofenceCache[geofence.id] = geofence;
 
-      developer.log('Native geofence created: $id');
+      developer.log(
+        '[GeofencingService._createNativeGeofence] Native geofence creation requested for ID: $id. Checking monitored regions...',
+      );
+
+      // Log all monitored regions
+      final List<ActiveGeofence> monitoredRegions =
+          await NativeGeofenceManager.instance.getRegisteredGeofences();
+
+      if (monitoredRegions.isEmpty) {
+        developer.log(
+          '[GeofencingService._createNativeGeofence] No monitored regions reported by the plugin.',
+        );
+      } else {
+        developer.log(
+          '[GeofencingService._createNativeGeofence] Currently monitored regions by plugin (${monitoredRegions.length}):',
+        );
+        for (var activeRegion in monitoredRegions) {
+          developer.log(
+            '  - ID: ${activeRegion.id}, Lat: ${activeRegion.location.latitude}, Lon: ${activeRegion.location.longitude}, Radius: ${activeRegion.radiusMeters}m',
+          );
+        }
+      }
+
+      final bool isJustCreatedActive = monitoredRegions.any(
+        (ag) => ag.id == id,
+      );
+      developer.log(
+        '[GeofencingService._createNativeGeofence] Is newly created geofence ($id) listed as monitored by plugin? $isJustCreatedActive',
+      );
+      if (!isJustCreatedActive) {
+        developer.log(
+          '[GeofencingService._createNativeGeofence] WARNING: Newly created geofence $id was NOT found in the list of monitored regions immediately after creation. This is a problem!',
+        );
+      }
     } catch (e, stackTrace) {
       developer.log(
         'Error creating native geofence',

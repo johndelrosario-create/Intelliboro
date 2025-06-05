@@ -15,14 +15,65 @@ import 'dart:isolate'; // Used by old HomePage
 import 'package:intelliboro/views/task_list_view.dart';
 import 'package:intelliboro/services/location_service.dart'; // Import LocationService
 import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter_local_notifications/flutter_local_notifications.dart'; // Add this
+import 'dart:developer' as developer; // For logging
 
 // Define the access token
 const String accessToken = String.fromEnvironment('ACCESS_TOKEN');
+
+// Create an instance of the plugin
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize flutter_local_notifications
+  try {
+    const AndroidInitializationSettings initializationSettingsAndroid =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const DarwinInitializationSettings
+    initializationSettingsIOS = DarwinInitializationSettings(
+      defaultPresentBanner: true,
+      defaultPresentSound: true,
+      // onDidReceiveLocalNotification: onDidReceiveLocalNotification, // Optional: for older iOS versions
+    );
+    const InitializationSettings initializationSettings =
+        InitializationSettings(
+          android: initializationSettingsAndroid,
+          iOS: initializationSettingsIOS,
+        );
+    bool? initialized = await flutterLocalNotificationsPlugin.initialize(
+      initializationSettings,
+      // onDidReceiveNotificationResponse: onDidReceiveNotificationResponse, // Optional: handle notification tap
+    );
+    developer.log(
+      "[main] FlutterLocalNotificationsPlugin initialized: $initialized",
+    );
+  } catch (e, s) {
+    developer.log(
+      "[main] Error initializing FlutterLocalNotificationsPlugin: $e\n$s",
+    );
+  }
+
   MapboxOptions.setAccessToken(accessToken);
   runApp(const MyApp());
 }
+
+// Optional: Callback for when a notification is tapped (if you need to handle it)
+// void onDidReceiveNotificationResponse(NotificationResponse notificationResponse) async {
+//   final String? payload = notificationResponse.payload;
+//   if (notificationResponse.payload != null) {
+//     developer.log('[main] Notification payload: $payload');
+//   }
+//   // Navigate to a specific screen, etc.
+// }
+
+// Optional: For older iOS versions to handle notifications when app is in foreground
+// Future onDidReceiveLocalNotification(int id, String? title, String? body, String? payload) async {
+//   // display a dialog with the notification details, tap ok to go to another page
+//   developer.log('[main] onDidReceiveLocalNotification: $title - $payload');
+// }
 
 class MyApp extends StatelessWidget {
   const MyApp({Key? key}) : super(key: key);

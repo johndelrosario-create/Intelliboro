@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+import 'package:intelliboro/main.dart';
+
 import 'package:native_geofence/native_geofence.dart';
 import 'package:intelliboro/services/geofence_storage.dart';
 import 'package:intelliboro/models/geofence_data.dart';
@@ -15,7 +17,6 @@ import 'package:sqflite/sqflite.dart';
 
 @pragma('vm:entry-point')
 Future<void> geofenceTriggered(GeofenceCallbackParams params) async {
-
   developer.log(
     '[GeofenceCallback] Event: ${params.event}, Geofence IDs: ${params.geofences.map((g) => g.id).toList()}, Location: ${params.location}',
   );
@@ -27,36 +28,6 @@ Future<void> geofenceTriggered(GeofenceCallbackParams params) async {
 
   Database? dbForIsolate;
   try {
-    final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-        FlutterLocalNotificationsPlugin();
-
-    const AndroidInitializationSettings initializationSettingsAndroid =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-    const DarwinInitializationSettings initializationSettingsIOS =
-        DarwinInitializationSettings(
-          defaultPresentBanner: true,
-          defaultPresentSound: true,
-        );
-    const InitializationSettings initializationSettings =
-        InitializationSettings(
-          android: initializationSettingsAndroid,
-          iOS: initializationSettingsIOS,
-        );
-
-    bool? initialized = await flutterLocalNotificationsPlugin.initialize(
-      initializationSettings,
-    );
-    developer.log(
-      "[GeofenceCallback] Notifications plugin initialized: $initialized",
-    );
-
-    if (!(initialized ?? false)) {
-      developer.log(
-        '[GeofenceCallback] Failed to initialize notifications plugin.',
-      );
-      return;
-    }
-
     String geofenceId =
         params.geofences.isNotEmpty ? params.geofences.first.id : "unknown_id";
     String taskName = "Task details not found";
@@ -137,7 +108,7 @@ Future<void> geofenceTriggered(GeofenceCallbackParams params) async {
       payload: 'geofence_id=$geofenceId&task_name=$taskName',
     );
     developer.log(
-      '[GeofenceCallback] Notification sent: Title=$notificationTitle, Body=$notificationBody',
+      '[GeofenceCallback] Notification show() called using global plugin. Title=$notificationTitle, Body=$notificationBody',
     );
   } catch (e, s) {
     developer.log(

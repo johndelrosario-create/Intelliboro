@@ -37,7 +37,10 @@ class DatabaseService {
         Completer<Database>(); // Create a new completer for this attempt
 
     try {
-      final db = await _openDatabaseConnection(readOnly: false);
+      final db = await _openDatabaseConnection(
+        readOnly: false,
+        singleInstance: true, // Explicitly true for mainDb
+      );
       // Check if the database is actually open after _openDatabaseConnection
       if (!db.isOpen) {
         developer.log(
@@ -72,18 +75,24 @@ class DatabaseService {
   // For background isolates to get a fresh, independent connection
   Future<Database> openNewBackgroundConnection({bool readOnly = true}) async {
     developer.log(
-      "[DatabaseService] Opening new background DB connection (readOnly: $readOnly).",
+      "[DatabaseService] Opening new background DB connection (readOnly: $readOnly, singleInstance: false).",
     );
-    return await _openDatabaseConnection(readOnly: readOnly);
+    return await _openDatabaseConnection(
+      readOnly: readOnly,
+      singleInstance: false, // Explicitly false for background connections
+    );
   }
 
   // Core method to open a database connection
-  Future<Database> _openDatabaseConnection({required bool readOnly}) async {
+  Future<Database> _openDatabaseConnection({
+    required bool readOnly,
+    required bool singleInstance, // Added parameter
+  }) async {
     Database? db; // Declare db here to be accessible in catch
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, _dbName);
     developer.log(
-      "[DatabaseService] Attempting to open DB at path: $path, version: $_dbVersion, readOnly: $readOnly, singleInstance: true",
+      "[DatabaseService] Attempting to open DB at path: $path, version: $_dbVersion, readOnly: $readOnly, singleInstance: $singleInstance",
     );
 
     try {
@@ -94,8 +103,7 @@ class DatabaseService {
         onUpgrade: _onUpgrade, // Static method
         onDowngrade: onDatabaseDowngradeDelete,
         readOnly: readOnly,
-        singleInstance:
-            true, // Explicitly true for the main shared connection logic
+        singleInstance: singleInstance, // Use the passed parameter
       );
       developer.log(
         "[DatabaseService] DB object received. Path: $path. Verifying 'isOpne'...",
