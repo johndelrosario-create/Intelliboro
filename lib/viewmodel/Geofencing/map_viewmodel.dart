@@ -16,6 +16,7 @@ class MapboxMapViewModel extends ChangeNotifier {
 
   MapboxMap? mapboxMap;
   bool isMapReady = false;
+  bool _isCreatingGeofence = false; // Add state tracking
   CircleAnnotationManager? geofenceZoneHelper;
   CircleAnnotationManager? geofenceZoneSymbol;
   Point? selectedPoint;
@@ -509,6 +510,11 @@ class MapboxMapViewModel extends ChangeNotifier {
     BuildContext context, {
     required String taskName,
   }) async {
+    if (_isCreatingGeofence) {
+      debugPrint('Already creating a geofence, ignoring duplicate request');
+      return;
+    }
+
     if (selectedPoint == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -520,6 +526,7 @@ class MapboxMapViewModel extends ChangeNotifier {
       return;
     }
 
+    _isCreatingGeofence = true;
     try {
       debugPrint('Creating geofence at ${selectedPoint!.coordinates}');
 
@@ -542,7 +549,7 @@ class MapboxMapViewModel extends ChangeNotifier {
         "[MapViewModel] GeofenceData to be saved: ${geofenceData.toJson()}",
       );
 
-      // Save to database
+      // Save to database first
       debugPrint('Saving geofence to database...');
       await _geofenceStorage.saveGeofence(geofenceData);
       debugPrint('Geofence saved to database');
@@ -550,10 +557,26 @@ class MapboxMapViewModel extends ChangeNotifier {
       // Add to local list
       _savedGeofences.add(geofenceData);
 
+      // Clear the helper circle if it exists - do this before creating native geofence
+      if (geofenceZoneHelper != null) {
+        debugPrint('Clearing geofence zone helper');
+        await geofenceZoneHelper!.deleteAll();
+        geofenceZoneHelperIds.clear();
+      }
+
+      // Clear the selection
+      selectedPoint = null;
+      isGeofenceHelperPlaced = false;
+
+      // Notify UI of visual changes before heavy operation
+      notifyListeners();
+
       // Create the geofence in the native service
       debugPrint('Creating geofence in native service...');
       await _geofencingService.createGeofence(
-        geometry: selectedPoint!,
+        geometry: Point(
+          coordinates: Position(geofenceData.longitude, geofenceData.latitude),
+        ),
         radiusMeters: _helperTargetRadiusMeters,
         customId: geofenceId,
         fillColor: Colors.amberAccent,
@@ -563,33 +586,27 @@ class MapboxMapViewModel extends ChangeNotifier {
       );
       debugPrint('Geofence created in native service');
 
-      // Clear the helper circle if it exists
-      if (geofenceZoneHelper != null) {
-        debugPrint('Clearing geofence zone helper');
-        await geofenceZoneHelper!.deleteAll();
-      }
-
-      // Clear the selection
-      selectedPoint = null;
-      isGeofenceHelperPlaced = false;
-
       // Refresh the display
-      if (mapboxMap != null) {
+      if (mapboxMap != null && !_isDisposed) {
         debugPrint('Refreshing geofence display...');
         await _displaySavedGeofences();
       }
 
       // Show success message
-      if (context.mounted) {
+      if (context.mounted && !_isDisposed) {
         _showSuccess(context, 'Geofence created successfully!');
       }
 
-      notifyListeners();
+      if (!_isDisposed) {
+        notifyListeners();
+      }
     } catch (e, stackTrace) {
       debugPrint('Error creating geofence: $e\n$stackTrace');
-      if (context.mounted) {
+      if (context.mounted && !_isDisposed) {
         _showError(context, 'Failed to create geofence: ${e.toString()}');
       }
+    } finally {
+      _isCreatingGeofence = false;
     }
   }
 
@@ -651,8 +668,12 @@ class MapboxMapViewModel extends ChangeNotifier {
   CircleAnnotationManager? getGeofenceZonePicker() => geofenceZoneHelper;
   CircleAnnotationManager? getGeofenceZoneSymbol() => geofenceZoneSymbol;
 
+  bool _isDisposed = false;
+
   @override
   void dispose() {
+    _isDisposed = true;
+
     // Stop any running timers
     _debugTimer?.cancel();
     _debugTimer = null;
@@ -662,8 +683,12 @@ class MapboxMapViewModel extends ChangeNotifier {
     _geofencingService.unregisterMapViewModel();
 
     // Clear any resources held by this specific view model
-    geofenceZoneHelper = null;
-    geofenceZoneSymbol = null;
+    geofenceZoneHelper?.deleteAll().then((_) {
+      geofenceZoneHelper = null;
+    });
+    geofenceZoneSymbol?.deleteAll().then((_) {
+      geofenceZoneSymbol = null;
+    });
     mapboxMap = null;
 
     super.dispose();

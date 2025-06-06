@@ -32,21 +32,41 @@ void main() async {
   try {
     const AndroidInitializationSettings initializationSettingsAndroid =
         AndroidInitializationSettings('@mipmap/ic_launcher');
-    const DarwinInitializationSettings
-    initializationSettingsIOS = DarwinInitializationSettings(
-      defaultPresentBanner: true,
-      defaultPresentSound: true,
-      // onDidReceiveLocalNotification: onDidReceiveLocalNotification, // Optional: for older iOS versions
-    );
+    const DarwinInitializationSettings initializationSettingsIOS =
+        DarwinInitializationSettings(
+          defaultPresentBanner: true,
+          defaultPresentSound: true,
+        );
     const InitializationSettings initializationSettings =
         InitializationSettings(
           android: initializationSettingsAndroid,
           iOS: initializationSettingsIOS,
         );
+
     bool? initialized = await flutterLocalNotificationsPlugin.initialize(
       initializationSettings,
-      // onDidReceiveNotificationResponse: onDidReceiveNotificationResponse, // Optional: handle notification tap
+      onDidReceiveNotificationResponse: (NotificationResponse response) {
+        developer.log('[main] Notification clicked: ${response.payload}');
+      },
     );
+
+    // Create the notification channel
+    const AndroidNotificationChannel channel = AndroidNotificationChannel(
+      'geofence_alerts',
+      'Geofence Alerts',
+      description: 'Important alerts for location-based events',
+      importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
+      showBadge: true,
+    );
+
+    await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.createNotificationChannel(channel);
+
     developer.log(
       "[main] FlutterLocalNotificationsPlugin initialized: $initialized",
     );
@@ -291,30 +311,86 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   String geofenceState = 'N/A';
-  final ReceivePort port = ReceivePort(); // Made final
-  // final LocationService _locationService = LocationService(); // Instance for HomePage if needed
+  final ReceivePort port = ReceivePort();
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+      FlutterLocalNotificationsPlugin();
 
   @override
   void initState() {
     super.initState();
-    IsolateNameServer.registerPortWithName(port.sendPort, 'geofence_send_port');
+    _initializeNotifications();
+    _initializeGeofencePort();
+  }
+
+  void _initializeGeofencePort() {
+    // Remove any existing port mapping first
+    IsolateNameServer.removePortNameMapping('native_geofence_send_port');
+
+    // Register the port
+    final bool registered = IsolateNameServer.registerPortWithName(
+      port.sendPort,
+      'native_geofence_send_port',
+    );
+
+    if (!registered) {
+      debugPrint('Failed to register native_geofence_send_port');
+      return;
+    }
+
     port.listen((dynamic data) {
+      debugPrint('Received geofence event: $data');
       if (mounted) {
-        // Check if widget is still in tree
-        debugPrint('Event: $data');
         setState(() {
-          geofenceState = data.toString(); // Ensure data is string
+          geofenceState = data.toString();
         });
       }
     });
-    // initPlatformState(); // NativeGeofenceManager initialization is usually handled by its own service/plugin
   }
 
-  // Future<void> initPlatformState() async {
-  //   debugPrint('Initializing...');
-  //   // await NativeGeofenceManager.instance.initialize();
-  //   debugPrint('Initialization done');
-  // }
+  Future<void> _initializeNotifications() async {
+    const AndroidInitializationSettings initializationSettingsAndroid =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+
+    const InitializationSettings initializationSettings =
+        InitializationSettings(android: initializationSettingsAndroid);
+
+    await flutterLocalNotificationsPlugin.initialize(
+      initializationSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) {
+        debugPrint('Notification clicked: ${response.payload}');
+        // Handle notification click
+      },
+    );
+
+    // Create the notification channel
+    const AndroidNotificationChannel channel = AndroidNotificationChannel(
+      'geofence_channel',
+      'Geofence Notifications',
+      description: 'Notifications for geofence events',
+      importance: Importance.high,
+      playSound: true,
+      enableVibration: true,
+      showBadge: true,
+    );
+
+    await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.createNotificationChannel(channel);
+
+    // Request notification permissions
+    final AndroidFlutterLocalNotificationsPlugin? androidImplementation =
+        flutterLocalNotificationsPlugin
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >();
+
+    if (androidImplementation != null) {
+      await androidImplementation.requestNotificationsPermission();
+      await androidImplementation.requestExactAlarmsPermission();
+    }
+  }
 
   // _checkPermissions is effectively replaced by AppInitializer for the main app flow.
   // If HomePage is used independently and needs to check/request permissions:

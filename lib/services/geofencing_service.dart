@@ -5,27 +5,18 @@ import 'dart:ui' show IsolateNameServer;
 
 import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
-import 'package:native_geofence/native_geofence.dart'
-    show
-        NativeGeofenceManager,
-        Geofence,
-        GeofenceEvent,
-        IosGeofenceSettings,
-        AndroidGeofenceSettings,
-        Location,
-        GeofenceCallbackParams,
-        ActiveGeofence;
+import 'package:native_geofence/native_geofence.dart' as native_geofence;
 import 'package:intelliboro/viewModel/Geofencing/map_viewmodel.dart';
 import 'package:intelliboro/viewModel/notifications/callback.dart'
     show geofenceTriggered;
+import 'package:intelliboro/models/geofence_data.dart';
 
 class GeofencingService {
   // --- Singleton implementation ---
   static final GeofencingService _instance = GeofencingService._internal();
 
-  factory GeofencingService() {
-    return _instance;
-  }
+  factory GeofencingService() => _instance;
+
   // --- End Singleton implementation ---
 
   // A reference to the MapViewModel is problematic for a singleton service.
@@ -70,46 +61,58 @@ class GeofencingService {
   }
 
   Future<void> _initialize() async {
+    if (_isInitialized) {
+      developer.log('[GeofencingService] Already initialized, skipping.');
+      return;
+    }
+
     try {
       // First, ensure any existing port mapping is removed
-      IsolateNameServer.removePortNameMapping('geofence_send_port');
+      IsolateNameServer.removePortNameMapping('native_geofence_send_port');
 
       // Register the port for geofence events
       final bool registered = IsolateNameServer.registerPortWithName(
         _port.sendPort,
-        'geofence_send_port',
+        'native_geofence_send_port',
       );
 
       if (!registered) {
         developer.log(
-          '[GeofencingService] WARNING: Failed to register port with name "geofence_send_port"',
+          '[GeofencingService] WARNING: Failed to register port with name "native_geofence_send_port"',
         );
-      } else {
-        developer.log(
-          '[GeofencingService] Successfully registered port with name "geofence_send_port"',
+        // Try to remove and register again
+        IsolateNameServer.removePortNameMapping('native_geofence_send_port');
+        final bool retryRegistered = IsolateNameServer.registerPortWithName(
+          _port.sendPort,
+          'native_geofence_send_port',
         );
+        if (!retryRegistered) {
+          throw Exception('Failed to register port after retry');
+        }
       }
 
-      // This listener will now live for the entire app lifecycle
+      // Listen for geofence events on the port
       _port.listen((dynamic data) {
         developer.log('[GeofencingService] Received on port: $data');
       });
 
-      // Initialize the native geofence plugin
-      await NativeGeofenceManager.instance.initialize();
+      // Initialize the geofence plugin
+      await native_geofence.NativeGeofenceManager.instance.initialize();
+
+      // Verify initialization by checking monitored regions
+      final regions =
+          await native_geofence.NativeGeofenceManager.instance
+              .getRegisteredGeofences();
       developer.log(
-        '[GeofencingService] NativeGeofenceManager.instance.initialize() called successfully.',
+        '[GeofencingService] Currently monitoring regions: $regions',
       );
 
       _isInitialized = true;
-      developer.log('GeofencingService initialized');
+      developer.log('[GeofencingService] Successfully initialized');
     } catch (e, stackTrace) {
       developer.log(
-        'Error initializing GeofencingService',
-        error: e,
-        stackTrace: stackTrace,
+        '[GeofencingService] Error during initialization: $e\n$stackTrace',
       );
-      _isInitialized = false; // Ensure we can retry if init fails
       rethrow;
     }
   }
@@ -155,10 +158,31 @@ class GeofencingService {
       );
 
       // Create the native geofence
-      await _createNativeGeofence(
-        id: geofenceId,
-        geometry: geometry,
-        radiusMeters: radiusMeters,
+      await native_geofence.NativeGeofenceManager.instance.createGeofence(
+        native_geofence.Geofence(
+          id: geofenceId,
+          location: native_geofence.Location(
+            latitude: geometry.coordinates.lat.toDouble(),
+            longitude: geometry.coordinates.lng.toDouble(),
+          ),
+          radiusMeters: radiusMeters,
+          triggers: {
+            native_geofence.GeofenceEvent.enter,
+            native_geofence.GeofenceEvent.exit,
+          },
+          iosSettings: native_geofence.IosGeofenceSettings(
+            initialTrigger: false,
+          ),
+          androidSettings: native_geofence.AndroidGeofenceSettings(
+            initialTriggers: {
+              native_geofence.GeofenceEvent.enter,
+              native_geofence.GeofenceEvent.exit,
+            },
+            notificationResponsiveness: const Duration(seconds: 0),
+            loiteringDelay: const Duration(seconds: 0),
+          ),
+        ),
+        geofenceTriggered,
       );
 
       _createdGeofenceIds.add(geofenceId);
@@ -254,20 +278,26 @@ class GeofencingService {
   }) async {
     try {
       // Create location from geometry
-      final location = Location(
+      final location = native_geofence.Location(
         latitude: geometry.coordinates.lat.toDouble(),
         longitude: geometry.coordinates.lng.toDouble(),
       );
 
       // Create the geofence with all required parameters
-      final geofence = Geofence(
+      final geofence = native_geofence.Geofence(
         id: id,
         location: location,
         radiusMeters: radiusMeters,
-        triggers: {GeofenceEvent.enter, GeofenceEvent.exit},
-        iosSettings: IosGeofenceSettings(initialTrigger: false),
-        androidSettings: AndroidGeofenceSettings(
-          initialTriggers: {GeofenceEvent.enter, GeofenceEvent.exit},
+        triggers: {
+          native_geofence.GeofenceEvent.enter,
+          native_geofence.GeofenceEvent.exit,
+        },
+        iosSettings: native_geofence.IosGeofenceSettings(initialTrigger: false),
+        androidSettings: native_geofence.AndroidGeofenceSettings(
+          initialTriggers: {
+            native_geofence.GeofenceEvent.enter,
+            native_geofence.GeofenceEvent.exit,
+          },
           notificationResponsiveness: const Duration(seconds: 0),
           loiteringDelay: const Duration(seconds: 0),
         ),
@@ -278,10 +308,7 @@ class GeofencingService {
       );
 
       // Register the geofence with the callback
-      await NativeGeofenceManager.instance.createGeofence(
-        geofence,
-        geofenceTriggered,
-      );
+      // No need to call startGeofencing; use createGeofence with callback instead
 
       // Cache the geofence for later removal
       _geofenceCache[geofence.id] = geofence;
@@ -291,8 +318,9 @@ class GeofencingService {
       );
 
       // Log all monitored regions
-      final List<ActiveGeofence> monitoredRegions =
-          await NativeGeofenceManager.instance.getRegisteredGeofences();
+      final List<native_geofence.ActiveGeofence> monitoredRegions =
+          await native_geofence.NativeGeofenceManager.instance
+              .getRegisteredGeofences();
 
       if (monitoredRegions.isEmpty) {
         developer.log(
@@ -331,7 +359,7 @@ class GeofencingService {
   }
 
   // Store created geofences to be able to remove them later
-  final Map<String, Geofence> _geofenceCache = {};
+  final Map<String, native_geofence.Geofence> _geofenceCache = {};
 
   Future<void> removeGeofence(String id) async {
     try {
@@ -347,21 +375,34 @@ class GeofencingService {
       // Get the geofence from cache or create a minimal one
       final geofence =
           _geofenceCache[id] ??
-          Geofence(
+          native_geofence.Geofence(
             id: id,
-            location: const Location(latitude: 0, longitude: 0), // Dummy values
+            location: const native_geofence.Location(
+              latitude: 0,
+              longitude: 0,
+            ), // Dummy values
             radiusMeters: 100, // Dummy value
-            triggers: {GeofenceEvent.enter, GeofenceEvent.exit},
-            iosSettings: IosGeofenceSettings(initialTrigger: false),
-            androidSettings: AndroidGeofenceSettings(
-              initialTriggers: {GeofenceEvent.enter, GeofenceEvent.exit},
+            triggers: {
+              native_geofence.GeofenceEvent.enter,
+              native_geofence.GeofenceEvent.exit,
+            },
+            iosSettings: native_geofence.IosGeofenceSettings(
+              initialTrigger: false,
+            ),
+            androidSettings: native_geofence.AndroidGeofenceSettings(
+              initialTriggers: {
+                native_geofence.GeofenceEvent.enter,
+                native_geofence.GeofenceEvent.exit,
+              },
               notificationResponsiveness: const Duration(seconds: 0),
               loiteringDelay: const Duration(seconds: 0),
             ),
           );
 
       try {
-        await NativeGeofenceManager.instance.removeGeofence(geofence);
+        await native_geofence.NativeGeofenceManager.instance.removeGeofenceById(
+          id,
+        );
         developer.log('Successfully removed native geofence: $id');
       } catch (e) {
         developer.log(
@@ -385,10 +426,7 @@ class GeofencingService {
 
   Future<void> removeAllGeofences() async {
     try {
-      final ids = List<String>.from(_createdGeofenceIds);
-      for (final id in ids) {
-        await removeGeofence(id);
-      }
+      await native_geofence.NativeGeofenceManager.instance.removeAllGeofences();
       developer.log('All geofences removed');
     } catch (e, stackTrace) {
       developer.log(
@@ -410,7 +448,7 @@ class GeofencingService {
       // Do NOT close the port or remove the port mapping here
       // as it needs to stay alive for geofence callbacks
       // _port.close();
-      // IsolateNameServer.removePortNameMapping('geofence_send_port');
+      // IsolateNameServer.removePortNameMapping('native_geofence_send_port');
 
       _createdGeofenceIds.clear();
       _isInitialized = false;

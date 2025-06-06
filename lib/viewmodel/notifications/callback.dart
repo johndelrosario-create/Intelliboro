@@ -2,6 +2,7 @@ import 'dart:isolate';
 import 'dart:math';
 import 'dart:ui';
 import 'dart:developer' as developer;
+import 'dart:typed_data' show Int64List;
 
 import 'package:flutter/material.dart';
 
@@ -17,146 +18,144 @@ import 'package:sqflite/sqflite.dart';
 
 @pragma('vm:entry-point')
 Future<void> geofenceTriggered(GeofenceCallbackParams params) async {
-  developer.log(
-    '[GeofenceCallback] Event: ${params.event}, Geofence IDs: ${params.geofences.map((g) => g.id).toList()}, Location: ${params.location}',
-  );
-
-  final SendPort? sendPort = IsolateNameServer.lookupPortByName(
-    'geofence_send_port',
-  );
-  if (sendPort != null) {
-    sendPort.send("Callback received for event: ${params.event.name}");
-    developer.log('[GeofenceCallback] Sent message to sendPort.');
-  } else {
-    developer.log(
-      '[GeofenceCallback] Could not find sendPort "geofence_send_port".',
-    );
-  }
-
-  Database? dbForIsolate;
-  // Variables to hold notification content
-  late String notificationTitle;
-  late String notificationBody;
-  String geofenceIdForPayload = "unknown_id";
-  String? taskNameForPayload;
-
+  Database? db;
   try {
-    String geofenceId =
-        params.geofences.isNotEmpty ? params.geofences.first.id : "unknown_id";
-    geofenceIdForPayload = geofenceId; // For payload
-    String eventName = capitalize(params.event.name);
-    String? fetchedTaskName;
-    String? geofenceLocationString;
+    developer.log(
+      '[GeofenceCallback] Event: ${params.event}, Geofence IDs: ${params.geofences.map((g) => g.id).toList()}, Location: ${params.location}',
+    );
 
-    if (params.geofences.isNotEmpty) {
-      final firstGeofenceId = params.geofences.first.id;
+    // First, try to send the event through the port
+    final SendPort? sendPort = IsolateNameServer.lookupPortByName(
+      'native_geofence_send_port',
+    );
+    if (sendPort != null && params.location != null) {
+      sendPort.send({
+        'event': params.event.name,
+        'geofenceIds': params.geofences.map((g) => g.id).toList(),
+        'location': {
+          'latitude': params.location!.latitude,
+          'longitude': params.location!.longitude,
+        },
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      });
+      developer.log('[GeofenceCallback] Successfully sent event through port');
+    }
 
-      try {
-        final databaseService = DatabaseService();
-        dbForIsolate = await databaseService.openNewBackgroundConnection(
-          readOnly: true,
-        );
+    // --- Database Access for Background Isolate ---
+    // Open a new, dedicated database connection for this background task.
+    // This prevents conflicts with the main isolate's database connection.
+    db = await DatabaseService().openNewBackgroundConnection();
+    developer.log(
+      '[GeofenceCallback] Opened new background DB connection. Path: ${db.path}',
+    );
+
+    // Get geofence details from storage, passing the dedicated connection.
+    final storage = GeofenceStorage(db: db);
+    // --- End Database Access ---
+
+    // Create and initialize a new notifications plugin instance locally
+    final plugin = FlutterLocalNotificationsPlugin();
+    const AndroidInitializationSettings initializationSettingsAndroid =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const InitializationSettings initializationSettings =
+        InitializationSettings(android: initializationSettingsAndroid);
+    await plugin.initialize(
+      initializationSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) {
         developer.log(
-          "[GeofenceCallback] Opened new DB connection for isolate.",
+          '[Notifications] Notification clicked: ${response.payload}',
         );
+      },
+    );
 
-        final GeofenceStorage geofenceStorage = GeofenceStorage();
-        final GeofenceData? geofenceData = await geofenceStorage
-            .getGeofenceById(firstGeofenceId, providedDb: dbForIsolate);
+    // Create the notification channel (safe to call multiple times)
+    const AndroidNotificationChannel channel = AndroidNotificationChannel(
+      'geofence_alerts',
+      'Geofence Alerts',
+      description: 'Important alerts for location-based events',
+      importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
+      showBadge: true,
+    );
+    await plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.createNotificationChannel(channel);
 
-        if (geofenceData != null) {
-          geofenceLocationString =
-              "at ${geofenceData.latitude.toStringAsFixed(3)},${geofenceData.longitude.toStringAsFixed(3)}";
-          if (geofenceData.task != null && geofenceData.task!.isNotEmpty) {
-            fetchedTaskName = geofenceData.task!;
-            taskNameForPayload = fetchedTaskName; // For payload
-            developer.log(
-              '[GeofenceCallback] Task found: $fetchedTaskName for ID: $firstGeofenceId',
-            );
-          } else {
-            developer.log(
-              '[GeofenceCallback] GeofenceData found, but task name is missing or empty for ID: $firstGeofenceId',
-            );
-          }
-        } else {
-          developer.log(
-            '[GeofenceCallback] GeofenceData not found for ID: $firstGeofenceId',
-          );
-        }
-      } catch (e, s) {
-        developer.log(
-          '[GeofenceCallback] Error fetching GeofenceData for ID $firstGeofenceId: $e\n$s',
-        );
-        // fetchedTaskName and geofenceLocationString will remain null
+    String notificationTitle = 'Location Alert';
+    String notificationBody = '';
+
+    for (final geofence in params.geofences) {
+      final geofenceData = await storage.getGeofenceById(geofence.id);
+      if (geofenceData != null) {
+        final eventType =
+            params.event == GeofenceEvent.enter ? 'entered' : 'exited';
+        notificationBody += 'You have $eventType ${geofenceData.task}\\n';
       }
     }
 
-    // Construct Title
-    if (fetchedTaskName != null) {
-      notificationTitle = "$fetchedTaskName - Geofence $eventName";
-    } else {
-      notificationTitle = "Geofence $eventName";
+    if (notificationBody.isEmpty) {
+      notificationBody =
+          'Event: ${params.event.name} for geofences: ${params.geofences.map((g) => g.id).join(", ")}';
     }
 
-    // Construct Body
-    List<String> bodyParts = [];
-    if (fetchedTaskName != null) {
-      bodyParts.add("Task: $fetchedTaskName");
-    } else {
-      bodyParts.add("No task assigned.");
-    }
-    if (geofenceLocationString != null) {
-      bodyParts.add(geofenceLocationString);
-    } else if (params.location != null) {
-      bodyParts.add(
-        "Triggered near Lat: ${params.location!.latitude.toStringAsFixed(3)}, Lon: ${params.location!.longitude.toStringAsFixed(3)}",
-      );
-    } else {
-      bodyParts.add("Location details unavailable.");
-    }
-    notificationBody = bodyParts.join(" | ");
-
-    const AndroidNotificationDetails androidPlatformChannelSpecifics =
-        AndroidNotificationDetails(
-          'geofence_task_channel',
-          'Geofence Tasks',
-          channelDescription: 'Notifications for geofence-triggered tasks',
+    // Create the notification details with high priority
+    final AndroidNotificationDetails androidPlatformChannelSpecifics =
+        const AndroidNotificationDetails(
+          'geofence_alerts',
+          'Geofence Alerts',
+          channelDescription: 'Important alerts for location-based events',
           importance: Importance.max,
-          priority: Priority.high,
+          priority: Priority.max,
           showWhen: true,
-          styleInformation: BigTextStyleInformation(''),
+          enableVibration: true,
+          playSound: true,
+          category: AndroidNotificationCategory.alarm,
+          visibility: NotificationVisibility.public,
+          autoCancel: true,
+          fullScreenIntent: true,
+          ticker: 'New location alert',
         );
-    const NotificationDetails platformChannelSpecifics = NotificationDetails(
+
+    final NotificationDetails platformChannelSpecifics = NotificationDetails(
       android: androidPlatformChannelSpecifics,
     );
 
-    await flutterLocalNotificationsPlugin.show(
-      Random().nextInt(100000), // Unique ID for each notification
+    // Show the notification with a unique ID based on timestamp
+    final notificationId = DateTime.now().millisecondsSinceEpoch.remainder(
+      100000,
+    );
+
+    // Add a small delay to ensure the notification is shown after the geofence event
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    await plugin.show(
+      notificationId,
       notificationTitle,
       notificationBody,
       platformChannelSpecifics,
-      payload:
-          'geofence_id=$geofenceIdForPayload&task_name=${taskNameForPayload ?? "N/A"}',
+      payload: 'geofence_${params.geofences.map((g) => g.id).join("_")}',
     );
+
     developer.log(
-      '[GeofenceCallback] Notification show() called using global plugin. Title=$notificationTitle, Body=$notificationBody',
+      '[GeofenceCallback] Successfully showed notification: ID=$notificationId, Title=$notificationTitle, Body=$notificationBody',
     );
-  } catch (e, s) {
+  } catch (e, stackTrace) {
     developer.log(
-      '[GeofenceCallback] Failed to send notification: $e',
-      stackTrace: s,
+      '[GeofenceCallback] Error in geofence callback: $e\n$stackTrace',
     );
   } finally {
-    if (dbForIsolate != null && dbForIsolate!.isOpen) {
-      await dbForIsolate!.close();
+    // IMPORTANT: Always close the background database connection to prevent leaks.
+    if (db != null && db.isOpen) {
+      await db.close();
       developer.log(
-        "[GeofenceCallback] Closed isolate-specific DB connection.",
+        '[GeofenceCallback] Closed background database connection.',
       );
     }
   }
 }
 
-String capitalize(String text) {
-  if (text.isEmpty) return text;
-  return text[0].toUpperCase() + text.substring(1);
-}
+String capitalize(String s) =>
+    s[0].toUpperCase() + s.substring(1).toLowerCase();
