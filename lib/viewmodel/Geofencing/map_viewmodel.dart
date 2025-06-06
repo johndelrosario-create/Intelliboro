@@ -11,7 +11,8 @@ import 'package:intelliboro/models/geofence_data.dart';
 // Change Notifier, re-renderviews when data is changed.
 class MapboxMapViewModel extends ChangeNotifier {
   final LocationService _locationService;
-  late final GeofencingService _geofencingService;
+  // Get the singleton instance of the GeofencingService
+  final GeofencingService _geofencingService = GeofencingService();
 
   MapboxMap? mapboxMap;
   bool isMapReady = false;
@@ -39,10 +40,13 @@ class MapboxMapViewModel extends ChangeNotifier {
   String? mapInitializationError; // To store any error message during map setup
 
   MapboxMapViewModel() : _locationService = LocationService() {
-    _geofencingService = GeofencingService(this);
+    // Register this view model with the singleton service
+    _geofencingService.registerMapViewModel(this);
+    // Ensure the service is initialized. It has internal guards to run only once.
+    _geofencingService.init();
   }
 
-  Future<void> _loadSavedGeofences({bool forceNativeRecreation = true}) async {
+  Future<void> _loadSavedGeofences({bool forceNativeRecreation = false}) async {
     mapInitializationError = null; // Clear previous errors
     try {
       debugPrint('[MapViewModel] Loading saved geofences...');
@@ -55,6 +59,7 @@ class MapboxMapViewModel extends ChangeNotifier {
         await _displaySavedGeofences();
       }
 
+      // Only recreate native geofences if explicitly requested
       if (forceNativeRecreation) {
         debugPrint('[MapViewModel] Recreating geofences in native service...');
         // Recreate geofences in the native service
@@ -64,22 +69,14 @@ class MapboxMapViewModel extends ChangeNotifier {
               coordinates: Position(geofence.longitude, geofence.latitude),
             );
 
-            // Ensure geofencing service is initialized before creating geofences
-            // It might be better to have _geofencingService.init() called once
-            // explicitly, perhaps in onMapCreated or even earlier if possible.
-            // For now, createGeofence handles its own initialization if needed.
-
             await _geofencingService.createGeofence(
               geometry: point,
               radiusMeters: geofence.radiusMeters,
               customId: geofence.id,
-              fillColor:
-                  _parseColor(geofence.fillColor) ??
-                  Colors.transparent, // Use parsed color
+              fillColor: _parseColor(geofence.fillColor) ?? Colors.transparent,
               fillOpacity: geofence.fillOpacity,
               strokeColor:
-                  _parseColor(geofence.strokeColor) ??
-                  Colors.transparent, // Use parsed color
+                  _parseColor(geofence.strokeColor) ?? Colors.transparent,
               strokeWidth: geofence.strokeWidth,
             );
             debugPrint(
@@ -87,23 +84,20 @@ class MapboxMapViewModel extends ChangeNotifier {
             );
           } catch (e, stackTrace) {
             debugPrint(
-              '[MapViewModel] Error recreating geofence ${geofence.id} in native service: $e\\n$stackTrace',
+              'Error recreating native geofence ${geofence.id}: $e\n$stackTrace',
             );
-            // Optionally, collect these errors or rethrow if critical
           }
         }
         debugPrint('[MapViewModel] Finished recreating native geofences.');
       }
+
+      notifyListeners();
     } catch (e, stackTrace) {
-      debugPrint(
-        '[MapViewModel] Error loading saved geofences: $e\\n$stackTrace',
-      );
-      mapInitializationError = "Error loading geofences: ${e.toString()}";
-      notifyListeners(); // Notify to update UI with error
+      debugPrint('Error in _loadSavedGeofences: $e\n$stackTrace');
+      mapInitializationError = e.toString();
+      notifyListeners();
     }
   }
-
-  
 
   Color? _parseColor(String colorString) {
     try {
@@ -163,19 +157,25 @@ class MapboxMapViewModel extends ChangeNotifier {
     _debugTimer?.cancel();
   }
 
-  onMapCreated(MapboxMap mapboxMap) async {
-    debugPrint("[MapViewModel] onMapCreated started.");
-    mapInitializationError = null; // Clear previous errors
+  Future<void> onMapCreated(MapboxMap mapboxMap) async {
+    debugPrint('[MapViewModel] onMapCreated called.');
+    this.mapboxMap = mapboxMap;
+
     try {
-      this.mapboxMap = mapboxMap;
+      // Create annotation managers if they don't exist
+      if (geofenceZoneHelper == null) {
+        geofenceZoneHelper =
+            await mapboxMap.annotations.createCircleAnnotationManager();
+        debugPrint('[MapViewModel] Created geofence zone helper manager');
+      }
 
-      geofenceZoneHelper =
-          await mapboxMap.annotations.createCircleAnnotationManager();
-      debugPrint("[MapViewModel] CircleAnnotationManager for helper created.");
-      geofenceZoneSymbol =
-          await mapboxMap.annotations.createCircleAnnotationManager();
-      debugPrint("[MapViewModel] CircleAnnotationManager for symbols created.");
+      if (geofenceZoneSymbol == null) {
+        geofenceZoneSymbol =
+            await mapboxMap.annotations.createCircleAnnotationManager();
+        debugPrint('[MapViewModel] Created geofence zone symbol manager');
+      }
 
+      // Enable location component
       await mapboxMap.location.updateSettings(
         LocationComponentSettings(
           enabled: true,
@@ -184,27 +184,26 @@ class MapboxMapViewModel extends ChangeNotifier {
           puckBearingEnabled: true,
         ),
       );
-      debugPrint("[MapViewModel] LocationComponentSettings updated.");
+      debugPrint('[MapViewModel] Location component enabled');
 
+      // Get user's current location
       locator.Position? userPosition;
       try {
-        debugPrint("[MapViewModel] Attempting to get current location...");
+        debugPrint('[MapViewModel] Getting current location...');
         userPosition = await _locationService.getCurrentLocation();
         debugPrint(
-          "[MapViewModel] Current location obtained: ${userPosition.latitude}, ${userPosition.longitude}",
+          '[MapViewModel] Current location: ${userPosition.latitude}, ${userPosition.longitude}',
         );
       } catch (e) {
-        debugPrint("[MapViewModel] Error getting current location: $e");
+        debugPrint('[MapViewModel] Error getting location: $e');
         mapInitializationError =
-            "Failed to get current location: ${e.toString()}. Please ensure location services are enabled and permissions granted.";
-        // Do not proceed with flyTo if userPosition is null
+            'Failed to get current location: $e. Please ensure location services are enabled and permissions granted.';
       }
 
+      // Fly to user's location if available
       if (userPosition != null) {
-        debugPrint(
-          "[MapViewModel] Flying to user location: ${userPosition.longitude}, ${userPosition.latitude}",
-        );
-        await this.mapboxMap!.flyTo(
+        debugPrint('[MapViewModel] Flying to user location');
+        await mapboxMap.flyTo(
           CameraOptions(
             center: Point(
               coordinates: Position(
@@ -212,58 +211,27 @@ class MapboxMapViewModel extends ChangeNotifier {
                 userPosition.latitude,
               ),
             ),
-            zoom: 16, // Adjusted default zoom
+            zoom: 16,
             bearing: 0,
             pitch: 0,
           ),
           MapAnimationOptions(duration: 1500),
         );
-        debugPrint("[MapViewModel] Flew to user location.");
-      } else {
-        debugPrint(
-          "[MapViewModel] User position is null, cannot flyTo. Centering on a default location or doing nothing.",
-        );
-        // Optionally, center the map on a default location if userPosition is null
-        // await this.mapboxMap!.flyTo(
-        //   CameraOptions(
-        //     center: Point(coordinates: Position(0,0)).toJson(), // Default fallback
-        //     zoom: 2,
-        //   ),
-        //   MapAnimationOptions(duration: 1000),
-        // );
+        debugPrint('[MapViewModel] Camera moved to user location');
       }
 
       isMapReady = true;
-      debugPrint("[MapViewModel] Map is ready. Notifying listeners.");
-      notifyListeners(); // Notify that map is ready, UI can update (e.g. hide loading indicator for map itself)
+      debugPrint('[MapViewModel] Map is ready');
 
-      // Load saved geofences and recreate native ones after map is ready and initial view is set.
-      debugPrint(
-        "[MapViewModel] Proceeding to load saved geofences post map setup.",
-      );
-      await _loadSavedGeofences(
-        forceNativeRecreation: true,
-      ); // Await this critical step
+      // Load and display saved geofences (visually only, don't recreate native geofences)
+      await _loadSavedGeofences(forceNativeRecreation: false);
 
-      if (mapInitializationError != null) {
-        debugPrint(
-          "[MapViewModel] An error occurred during _loadSavedGeofences: $mapInitializationError",
-        );
-      }
-
-      
-      debugPrint("[MapViewModel] onMapCreated finished.");
+      debugPrint('[MapViewModel] onMapCreated finished.');
     } catch (e, stackTrace) {
-      debugPrint(
-        "[MapViewModel] CRITICAL Error in onMapCreated: $e\\n$stackTrace",
-      );
-      mapInitializationError = "Map initialization failed: ${e.toString()}";
-      isMapReady = false; // Explicitly set to false on critical error
-    } finally {
-      // Notify listeners regardless of success or failure to update UI
-      // (e.g. to show mapInitializationError if any)
-      notifyListeners();
+      debugPrint('Error in onMapCreated: $e\n$stackTrace');
+      mapInitializationError = e.toString();
     }
+    notifyListeners();
   }
 
   onCameraIdle(MapIdleEventData eventData) async {
@@ -300,9 +268,11 @@ class MapboxMapViewModel extends ChangeNotifier {
     }
   }
 
-Future<void> _displaySavedGeofences() async {
+  Future<void> _displaySavedGeofences() async {
     try {
-      debugPrint('[MapViewModel] Displaying ${_savedGeofences.length} saved geofences');
+      debugPrint(
+        '[MapViewModel] Displaying ${_savedGeofences.length} saved geofences',
+      );
 
       if (geofenceZoneSymbol == null || mapboxMap == null) {
         debugPrint(
@@ -687,10 +657,11 @@ Future<void> _displaySavedGeofences() async {
     _debugTimer?.cancel();
     _debugTimer = null;
 
-    // Dispose of the geofencing service
-    _geofencingService.dispose();
+    // IMPORTANT: Do NOT dispose the singleton geofencing service here.
+    // Instead, unregister this view model so the service knows not to use it.
+    _geofencingService.unregisterMapViewModel();
 
-    // Clear any resources
+    // Clear any resources held by this specific view model
     geofenceZoneHelper = null;
     geofenceZoneSymbol = null;
     mapboxMap = null;

@@ -20,50 +20,86 @@ import 'package:intelliboro/viewModel/notifications/callback.dart'
     show geofenceTriggered;
 
 class GeofencingService {
-  // Static reference to the current instance
-  static GeofencingService? _instance;
-  // final CircleAnnotationManager? geofenceZoneHelper;
-  // final CircleAnnotationManager? geofenceZoneSymbol;
-  final MapboxMapViewModel mapViewModel;
+  // --- Singleton implementation ---
+  static final GeofencingService _instance = GeofencingService._internal();
+
+  factory GeofencingService() {
+    return _instance;
+  }
+  // --- End Singleton implementation ---
+
+  // A reference to the MapViewModel is problematic for a singleton service.
+  // We will manage map interactions via methods instead.
+  MapboxMapViewModel? _mapViewModel;
 
   // Track created geofence IDs for management
   final Set<String> _createdGeofenceIds = {};
   bool _isInitialized = false;
   final ReceivePort _port = ReceivePort();
 
-  GeofencingService(this.mapViewModel) {
-    _instance = this;
+  // Static flag to ensure native manager is initialized only once globally
+  static bool _nativeManagerGloballyInitialized = false;
+
+  // Private internal constructor
+  GeofencingService._internal();
+
+  // Allow a view model to register itself for map updates
+  void registerMapViewModel(MapboxMapViewModel viewModel) {
+    _mapViewModel = viewModel;
+    developer.log('[GeofencingService] MapViewModel registered.');
   }
+
+  // Allow a view model to unregister itself
+  void unregisterMapViewModel() {
+    _mapViewModel = null;
+    developer.log('[GeofencingService] MapViewModel unregistered.');
+  }
+
   CircleAnnotationManager? get geofenceZoneSymbol =>
-      mapViewModel.getGeofenceZoneSymbol();
+      _mapViewModel?.getGeofenceZoneSymbol();
   CircleAnnotationManager? get geofenceZoneHelper =>
-      mapViewModel.getGeofenceZonePicker();
+      _mapViewModel?.getGeofenceZonePicker();
 
   Future<void> init() async {
+    // init() now guards against multiple executions
+    if (_isInitialized) {
+      developer.log('[GeofencingService] Already initialized, skipping.');
+      return;
+    }
     await _initialize();
   }
 
   Future<void> _initialize() async {
-    if (_isInitialized) return;
-
     try {
-      // Register the port for geofence events
+      // First, ensure any existing port mapping is removed
       IsolateNameServer.removePortNameMapping('geofence_send_port');
-      IsolateNameServer.registerPortWithName(
+
+      // Register the port for geofence events
+      final bool registered = IsolateNameServer.registerPortWithName(
         _port.sendPort,
         'geofence_send_port',
       );
 
-      // Listen for geofence events
+      if (!registered) {
+        developer.log(
+          '[GeofencingService] WARNING: Failed to register port with name "geofence_send_port"',
+        );
+      } else {
+        developer.log(
+          '[GeofencingService] Successfully registered port with name "geofence_send_port"',
+        );
+      }
+
+      // This listener will now live for the entire app lifecycle
       _port.listen((dynamic data) {
-        if (data is String) {
-          developer.log('Geofence event: $data');
-          // You can handle the event here or forward it to your UI
-        }
+        developer.log('[GeofencingService] Received on port: $data');
       });
 
       // Initialize the native geofence plugin
       await NativeGeofenceManager.instance.initialize();
+      developer.log(
+        '[GeofencingService] NativeGeofenceManager.instance.initialize() called successfully.',
+      );
 
       _isInitialized = true;
       developer.log('GeofencingService initialized');
@@ -73,6 +109,7 @@ class GeofencingService {
         error: e,
         stackTrace: stackTrace,
       );
+      _isInitialized = false; // Ensure we can retry if init fails
       rethrow;
     }
   }
@@ -100,8 +137,10 @@ class GeofencingService {
       final geofenceId =
           customId ?? 'geofence_${DateTime.now().millisecondsSinceEpoch}';
 
+      // If the geofence already exists in our tracking set, remove it first
       if (_createdGeofenceIds.contains(geofenceId)) {
-        throw Exception('Geofence with ID $geofenceId already exists');
+        developer.log('Geofence $geofenceId already exists, removing it first');
+        await removeGeofence(geofenceId);
       }
 
       // Create the visual representation on the map
@@ -146,11 +185,19 @@ class GeofencingService {
     required double strokeWidth,
   }) async {
     try {
-      final zoomLevel = await mapViewModel.currentZoomLevel();
+      // Check if a map view model is available before doing visual tasks
+      if (_mapViewModel == null) {
+        developer.log(
+          '[GeofencingService] No MapViewModel registered, skipping visual creation.',
+        );
+        return; // Can't create visual without a map
+      }
+
+      final zoomLevel = await _mapViewModel!.currentZoomLevel();
 
       // Get the conversion factor
       final metersPerPixelConversionFactor =
-          await mapViewModel.metersToPixelsAtCurrentLocationAndZoom();
+          await _mapViewModel!.metersToPixelsAtCurrentLocationAndZoom();
 
       if (metersPerPixelConversionFactor == 0.0) {
         developer.log(
@@ -188,7 +235,7 @@ class GeofencingService {
         ),
       );
 
-      mapViewModel.geofenceZoneSymbolIds.add(annotation);
+      _mapViewModel!.geofenceZoneSymbolIds.add(annotation);
       developer.log('Geofence visual created: $id');
     } catch (e, stackTrace) {
       developer.log(
@@ -289,9 +336,13 @@ class GeofencingService {
   Future<void> removeGeofence(String id) async {
     try {
       if (!_createdGeofenceIds.contains(id)) {
-        developer.log('Geofence $id not found, skipping removal');
+        developer.log(
+          'Geofence $id not found in tracking set, skipping removal',
+        );
         return;
       }
+
+      developer.log('Attempting to remove geofence: $id');
 
       // Get the geofence from cache or create a minimal one
       final geofence =
@@ -309,17 +360,26 @@ class GeofencingService {
             ),
           );
 
-      await NativeGeofenceManager.instance.removeGeofence(geofence);
+      try {
+        await NativeGeofenceManager.instance.removeGeofence(geofence);
+        developer.log('Successfully removed native geofence: $id');
+      } catch (e) {
+        developer.log(
+          'Error removing native geofence $id (this might be normal if it was already removed): $e',
+        );
+        // Don't rethrow - we want to continue with cleanup even if native removal fails
+      }
+
       _createdGeofenceIds.remove(id);
       _geofenceCache.remove(id);
-      developer.log('Geofence removed: $id');
+      developer.log('Completed removal of geofence: $id');
     } catch (e, stackTrace) {
       developer.log(
-        'Error removing geofence $id',
+        'Error in removeGeofence for $id',
         error: e,
         stackTrace: stackTrace,
       );
-      rethrow;
+      // Still don't rethrow - we want the calling code to continue even if removal fails
     }
   }
 
@@ -343,14 +403,17 @@ class GeofencingService {
   // Clean up resources
   void dispose() {
     try {
-      _port.close();
-      IsolateNameServer.removePortNameMapping('geofence_send_port');
+      developer.log(
+        '[GeofencingService] Global dispose called. This should be rare.',
+      );
+
+      // Do NOT close the port or remove the port mapping here
+      // as it needs to stay alive for geofence callbacks
+      // _port.close();
+      // IsolateNameServer.removePortNameMapping('geofence_send_port');
+
       _createdGeofenceIds.clear();
       _isInitialized = false;
-      if (_instance == this) {
-        _instance = null;
-      }
-      developer.log('GeofencingService disposed');
     } catch (e, stackTrace) {
       developer.log(
         'Error disposing GeofencingService',

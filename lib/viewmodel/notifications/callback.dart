@@ -22,26 +22,37 @@ Future<void> geofenceTriggered(GeofenceCallbackParams params) async {
   );
 
   final SendPort? sendPort = IsolateNameServer.lookupPortByName(
-    'native_geofence_send_port',
+    'geofence_send_port',
   );
-  sendPort?.send("Callback received for event: ${params.event.name}");
+  if (sendPort != null) {
+    sendPort.send("Callback received for event: ${params.event.name}");
+    developer.log('[GeofenceCallback] Sent message to sendPort.');
+  } else {
+    developer.log(
+      '[GeofenceCallback] Could not find sendPort "geofence_send_port".',
+    );
+  }
 
   Database? dbForIsolate;
+  // Variables to hold notification content
+  late String notificationTitle;
+  late String notificationBody;
+  String geofenceIdForPayload = "unknown_id";
+  String? taskNameForPayload;
+
   try {
     String geofenceId =
         params.geofences.isNotEmpty ? params.geofences.first.id : "unknown_id";
-    String taskName = "Task details not found";
-    String notificationTitle = 'Geofence ${capitalize(params.event.name)}';
-    String notificationBody =
-        'Geofence ID: $geofenceId. Event: ${params.event.name}.';
+    geofenceIdForPayload = geofenceId; // For payload
+    String eventName = capitalize(params.event.name);
+    String? fetchedTaskName;
+    String? geofenceLocationString;
 
     if (params.geofences.isNotEmpty) {
       final firstGeofenceId = params.geofences.first.id;
 
       try {
-        // 1. Get a new database connection for this isolate
         final databaseService = DatabaseService();
-        // Open read-only; background task should not write typically
         dbForIsolate = await databaseService.openNewBackgroundConnection(
           readOnly: true,
         );
@@ -49,42 +60,61 @@ Future<void> geofenceTriggered(GeofenceCallbackParams params) async {
           "[GeofenceCallback] Opened new DB connection for isolate.",
         );
 
-        // 2. Instantiate GeofenceStorage with this connection
-        // (No longer needed, we pass the db directly to getGeofenceById)
-        // final GeofenceStorage geofenceStorage = GeofenceStorage(db: dbForIsolate);
-
-        // 3. Fetch geofence data using the specific connection
-        final GeofenceStorage geofenceStorage =
-            GeofenceStorage(); // Instantiate without db for now
+        final GeofenceStorage geofenceStorage = GeofenceStorage();
         final GeofenceData? geofenceData = await geofenceStorage
-            .getGeofenceById(
-              firstGeofenceId,
-              providedDb: dbForIsolate,
-            ); // Pass the isolate-specific DB
+            .getGeofenceById(firstGeofenceId, providedDb: dbForIsolate);
 
-        if (geofenceData != null &&
-            geofenceData.task != null &&
-            geofenceData.task!.isNotEmpty) {
-          taskName = geofenceData.task!;
-          notificationBody =
-              'Task: $taskName at ${geofenceData.latitude.toStringAsFixed(3)},${geofenceData.longitude.toStringAsFixed(3)}';
-          notificationTitle =
-              '$taskName - Geofence ${capitalize(params.event.name)}';
-          developer.log(
-            '[GeofenceCallback] Task found: $taskName for ID: $firstGeofenceId',
-          );
+        if (geofenceData != null) {
+          geofenceLocationString =
+              "at ${geofenceData.latitude.toStringAsFixed(3)},${geofenceData.longitude.toStringAsFixed(3)}";
+          if (geofenceData.task != null && geofenceData.task!.isNotEmpty) {
+            fetchedTaskName = geofenceData.task!;
+            taskNameForPayload = fetchedTaskName; // For payload
+            developer.log(
+              '[GeofenceCallback] Task found: $fetchedTaskName for ID: $firstGeofenceId',
+            );
+          } else {
+            developer.log(
+              '[GeofenceCallback] GeofenceData found, but task name is missing or empty for ID: $firstGeofenceId',
+            );
+          }
         } else {
-          notificationBody = 'No task assigned to geofence $firstGeofenceId.';
           developer.log(
-            '[GeofenceCallback] GeofenceData (isNull: ${geofenceData == null}) or task (isNullOrEmpty: ${geofenceData?.task == null || geofenceData!.task!.isEmpty}) not found for ID: $firstGeofenceId',
+            '[GeofenceCallback] GeofenceData not found for ID: $firstGeofenceId',
           );
         }
       } catch (e, s) {
-        developer.log('[GeofenceCallback] Error fetching GeofenceData: $e\n$s');
-        notificationBody =
-            'Could not retrieve task for geofence $firstGeofenceId.';
+        developer.log(
+          '[GeofenceCallback] Error fetching GeofenceData for ID $firstGeofenceId: $e\n$s',
+        );
+        // fetchedTaskName and geofenceLocationString will remain null
       }
     }
+
+    // Construct Title
+    if (fetchedTaskName != null) {
+      notificationTitle = "$fetchedTaskName - Geofence $eventName";
+    } else {
+      notificationTitle = "Geofence $eventName";
+    }
+
+    // Construct Body
+    List<String> bodyParts = [];
+    if (fetchedTaskName != null) {
+      bodyParts.add("Task: $fetchedTaskName");
+    } else {
+      bodyParts.add("No task assigned.");
+    }
+    if (geofenceLocationString != null) {
+      bodyParts.add(geofenceLocationString);
+    } else if (params.location != null) {
+      bodyParts.add(
+        "Triggered near Lat: ${params.location!.latitude.toStringAsFixed(3)}, Lon: ${params.location!.longitude.toStringAsFixed(3)}",
+      );
+    } else {
+      bodyParts.add("Location details unavailable.");
+    }
+    notificationBody = bodyParts.join(" | ");
 
     const AndroidNotificationDetails androidPlatformChannelSpecifics =
         AndroidNotificationDetails(
@@ -101,11 +131,12 @@ Future<void> geofenceTriggered(GeofenceCallbackParams params) async {
     );
 
     await flutterLocalNotificationsPlugin.show(
-      Random().nextInt(100000),
+      Random().nextInt(100000), // Unique ID for each notification
       notificationTitle,
       notificationBody,
       platformChannelSpecifics,
-      payload: 'geofence_id=$geofenceId&task_name=$taskName',
+      payload:
+          'geofence_id=$geofenceIdForPayload&task_name=${taskNameForPayload ?? "N/A"}',
     );
     developer.log(
       '[GeofenceCallback] Notification show() called using global plugin. Title=$notificationTitle, Body=$notificationBody',
@@ -116,7 +147,6 @@ Future<void> geofenceTriggered(GeofenceCallbackParams params) async {
       stackTrace: s,
     );
   } finally {
-    // Ensure the database connection opened by this isolate is closed.
     if (dbForIsolate != null && dbForIsolate!.isOpen) {
       await dbForIsolate!.close();
       developer.log(
