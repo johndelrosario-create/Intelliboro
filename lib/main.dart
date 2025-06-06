@@ -17,6 +17,10 @@ import 'package:intelliboro/services/location_service.dart'; // Import LocationS
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart'; // Add this
 import 'dart:developer' as developer; // For logging
+import 'dart:convert';
+import 'package:timezone/data/latest.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
+import 'package:flutter_timezone/flutter_timezone.dart';
 
 // Define the access token
 const String accessToken = String.fromEnvironment('ACCESS_TOKEN');
@@ -25,8 +29,81 @@ const String accessToken = String.fromEnvironment('ACCESS_TOKEN');
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
 
+void _handleNotificationResponse(NotificationResponse response) async {
+  developer.log(
+    '[main] Handling notification response. ID: ${response.id}, Action: ${response.actionId}, Payload: ${response.payload}',
+  );
+
+  if (response.payload == null || response.payload!.isEmpty) {
+    developer.log('[main] Notification response has no payload.');
+    return;
+  }
+
+  final payloadData = jsonDecode(response.payload!);
+  final int notificationId = payloadData['notificationId'];
+
+  if (response.actionId == 'snooze_action') {
+    developer.log(
+      '[main] Snooze action selected for notification $notificationId',
+    );
+    // Don't cancel the original, just schedule a new one. The original will be cancelled by the system.
+    // Let's schedule a new one for 5 minutes later.
+
+    final String title = payloadData['title'];
+    final String body = payloadData['body'];
+
+    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+        AndroidNotificationDetails(
+          'geofence_alerts',
+          'Geofence Alerts',
+          channelDescription: 'Important alerts for location-based events',
+          importance: Importance.max,
+          priority: Priority.max,
+          autoCancel: false,
+          ongoing: true,
+          actions: <AndroidNotificationAction>[
+            AndroidNotificationAction('do_now_action', 'Do Now'),
+            AndroidNotificationAction('snooze_action', 'Snooze (5 min)'),
+          ],
+        );
+    const NotificationDetails platformChannelSpecifics = NotificationDetails(
+      android: androidPlatformChannelSpecifics,
+    );
+
+    await flutterLocalNotificationsPlugin.zonedSchedule(
+      notificationId, // Reuse the same ID
+      title,
+      'SNOOZED: $body', // Prepend text to indicate it was snoozed
+      tz.TZDateTime.now(tz.local).add(const Duration(minutes: 5)),
+      platformChannelSpecifics,
+      payload: response.payload, // Resend the same payload
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+    );
+    developer.log('[main] Notification $notificationId snoozed for 5 minutes.');
+  } else {
+    // This handles both the 'do_now_action' and a normal tap on the notification.
+    developer.log(
+      '[main] Do Now / Default action selected for notification $notificationId. Cancelling it.',
+    );
+    await flutterLocalNotificationsPlugin.cancel(notificationId);
+    // TODO: In the future, this is where you would trigger the task timer.
+  }
+}
+
+Future<void> _initializeTimezone() async {
+  try {
+    tz.initializeTimeZones();
+    final String timeZoneName = await FlutterTimezone.getLocalTimezone();
+    tz.setLocalLocation(tz.getLocation(timeZoneName));
+    developer.log("[main] Timezone initialized for: $timeZoneName");
+  } catch (e) {
+    developer.log("[main] Error initializing timezone: $e");
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await _initializeTimezone();
 
   // Initialize flutter_local_notifications
   try {
@@ -46,7 +123,8 @@ void main() async {
     bool? initialized = await flutterLocalNotificationsPlugin.initialize(
       initializationSettings,
       onDidReceiveNotificationResponse: (NotificationResponse response) {
-        developer.log('[main] Notification clicked: ${response.payload}');
+        developer.log('[main] Notification tapped: ${response.payload}');
+        _handleNotificationResponse(response);
       },
     );
 

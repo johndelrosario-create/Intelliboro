@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'dart:developer' as developer;
@@ -8,9 +7,10 @@ class DatabaseService {
   static final DatabaseService _instance = DatabaseService._constructor();
   static Database? _mainIsolateDatabase; // Renamed for clarity
   static const String _dbName = 'intelliboro.db';
-  static const int _dbVersion = 1;
+  static const int _dbVersion = 3;
   static const String _geofencesTableName = 'geofences';
   static const String _tasksTableName = 'tasks';
+  static const String _notificationHistoryTableName = 'notification_history';
 
   // Lock to prevent concurrent initialization from main isolate
   // static bool _isInitializingMainDB = false;
@@ -130,11 +130,20 @@ class DatabaseService {
       developer.log(
         "[DatabaseService] DB opened. Verifying '$_tasksTableName' table existence...",
       );
+      List<Map<String, dynamic>> historyTableInfo = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='$_notificationHistoryTableName'",
+      );
+      developer.log(
+        "[DatabaseService] DB opened. Verifying '$_notificationHistoryTableName' table existence...",
+      );
 
-      if (taskTableInfo.isEmpty || geofenceTableInfo.isEmpty) {
+      if (taskTableInfo.isEmpty ||
+          geofenceTableInfo.isEmpty ||
+          historyTableInfo.isEmpty) {
         String missing = "";
         if (taskTableInfo.isEmpty) missing += "$_tasksTableName ";
-        if (geofenceTableInfo.isEmpty) missing += _geofencesTableName;
+        if (geofenceTableInfo.isEmpty) missing += "$_geofencesTableName ";
+        if (historyTableInfo.isEmpty) missing += _notificationHistoryTableName;
 
         if (!readOnly) {
           developer.log(
@@ -173,7 +182,14 @@ class DatabaseService {
   // onCreate and onUpgrade remain static or top-level like as they define schema
   static Future<void> _onCreate(Database db, int version) async {
     developer.log(
-      '[DatabaseService] _onCreate: Creating table $_geofencesTableName for version $version',
+      '[DatabaseService] _onCreate: Creating tables for version $version',
+    );
+    await _createAllTables(db);
+  }
+
+  static Future<void> _createAllTables(Database db) async {
+    developer.log(
+      '[DatabaseService] _createAllTables: Creating table $_geofencesTableName',
     );
     await db.execute('''
       CREATE TABLE IF NOT EXISTS $_geofencesTableName
@@ -210,9 +226,26 @@ class DatabaseService {
       )
     ''');
     developer.log('[DatabaseService] _onCreate: $_tasksTableName created.');
+
+    developer.log(
+      '[DatabaseService] _createAllTables: Creating table $_notificationHistoryTableName',
+    );
+    await db.execute(''' 
+      CREATE TABLE IF NOT EXISTS $_notificationHistoryTableName (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        notification_id INTEGER NOT NULL,
+        geofence_id TEXT NOT NULL,
+        task_name TEXT,
+        event_type TEXT NOT NULL,
+        body TEXT NOT NULL,
+        timestamp INTEGER NOT NULL
+      )
+    ''');
+    developer.log(
+      '[DatabaseService] _onCreate: $_notificationHistoryTableName created.',
+    );
   }
 
-  // Ununsed for now
   static Future<void> _onUpgrade(
     Database db,
     int oldVersion,
@@ -221,17 +254,18 @@ class DatabaseService {
     developer.log(
       '[DatabaseService] _onUpgrade: Upgrading from $oldVersion to $newVersion',
     );
-    // if (oldVersion < 2) {
-    //   try {
-    //     // await db.execute('ALTER TABLE $_tableName ADD COLUMN task TEXT');
-    //     developer.log('[DatabaseService] _onUpgrade: task column added.');
-    //   } catch (e) {
-    //     developer.log(
-    //       '[DatabaseService] _onUpgrade: Error adding task column: $e. Attempting full onCreate.',
-    //     );
-    //     await _onCreate(db, newVersion); // Fallback if ALTER fails
-    //   }
-    // }
+
+    // Always ensure all tables exist
+    await _createAllTables(db);
+
+    // Handle specific version upgrades if needed
+    if (oldVersion < 2) {
+      // Add upgrade logic for version 2 if needed
+    }
+    
+    if (oldVersion < 3) {
+      // Add upgrade logic for version 3 if needed
+    }
   }
 
   //Handle downgrades
@@ -263,6 +297,66 @@ class DatabaseService {
       db,
       newVersion,
     ); // Recreate schema for the new (lower) version
+  }
+
+  // Notification History Methods
+  Future<void> insertNotificationHistory(
+    Database db,
+    Map<String, dynamic> notificationData,
+  ) async {
+    try {
+      await db.insert(
+        _notificationHistoryTableName,
+        notificationData,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      developer.log(
+        '[DatabaseService] Inserted notification history: $notificationData',
+      );
+    } catch (e, stackTrace) {
+      developer.log(
+        '[DatabaseService] Error inserting notification history',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getAllNotificationHistory(Database db) async {
+    try {
+      final result = await db.query(
+        _notificationHistoryTableName,
+        orderBy: 'timestamp DESC',
+      );
+      developer.log(
+        '[DatabaseService] Retrieved ${result.length} notification history records',
+      );
+      return result;
+    } catch (e, stackTrace) {
+      developer.log(
+        '[DatabaseService] Error getting notification history',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  Future<void> clearAllNotificationHistory(Database db) async {
+    try {
+      final count = await db.delete(_notificationHistoryTableName);
+      developer.log(
+        '[DatabaseService] Cleared $count notification history records',
+      );
+    } catch (e, stackTrace) {
+      developer.log(
+        '[DatabaseService] Error clearing notification history',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
   }
 
   // Instance methods for DB operations will now take a Database object

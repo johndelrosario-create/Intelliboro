@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:intelliboro/models/geofence_data.dart';
-import 'package:intelliboro/views/create_task_view.dart';
 import 'package:intelliboro/viewModel/task_list_viewmodel.dart';
 import 'dart:developer' as developer;
-
-// Placeholder for EditTaskView - will be created later
-import 'edit_task_view.dart';
+import 'package:intelliboro/views/notification_history_view.dart';
+import 'package:intelliboro/views/create_task_view.dart'; // Add this import
 
 class TaskListView extends StatefulWidget {
   const TaskListView({Key? key}) : super(key: key);
@@ -41,7 +38,23 @@ class _TaskListViewState extends State<TaskListView> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Tasks & Geofences')),
+      appBar: AppBar(
+        title: const Text('Tasks & Geofences'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.notifications),
+            tooltip: 'Notification History',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const NotificationHistoryView(),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
       body: Builder(
         builder: (context) {
           if (_viewModel.isLoading && _viewModel.tasks.isEmpty) {

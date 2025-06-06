@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as developer;
-import 'dart:isolate' show ReceivePort, SendPort;
+import 'dart:isolate' show ReceivePort;
 import 'dart:ui' show IsolateNameServer;
 
 import 'package:flutter/material.dart';
@@ -9,7 +9,6 @@ import 'package:native_geofence/native_geofence.dart' as native_geofence;
 import 'package:intelliboro/viewModel/Geofencing/map_viewmodel.dart';
 import 'package:intelliboro/viewModel/notifications/callback.dart'
     show geofenceTriggered;
-import 'package:intelliboro/models/geofence_data.dart';
 
 class GeofencingService {
   // --- Singleton implementation ---

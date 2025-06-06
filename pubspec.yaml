@@ -45,11 +45,14 @@ dependencies:
   geolocator: ^13.0.4
   mapbox_maps_flutter: ^2.7.0
   native_geofence: ^1.0.9
-  flutter_local_notifications: ^19.1.0
+  flutter_local_notifications: ^19.2.1
   sqflite: ^2.4.2
   sqflite_common_ffi: ^2.3.5
   path: ^1.9.1
   shared_preferences: ^2.5.3
+  timezone: ^0.10.1
+  timeago: ^3.7.1
+  flutter_timezone: ^4.1.1
 
 
 dev_dependencies:
