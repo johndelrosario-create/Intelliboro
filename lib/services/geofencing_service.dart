@@ -92,7 +92,7 @@ class GeofencingService {
 
       // Listen for geofence events on the port
       _port.listen((dynamic data) {
-        // developer.log('[GeofencingService] Received on port: $data'); // Temporarily commented for diagnosis
+        developer.log('[GeofencingService] Received on port: $data');
       });
 
       // Initialize the geofence plugin
