@@ -61,7 +61,7 @@ Future<void> geofenceTriggered(native_geofence.GeofenceCallbackParams params) as
       developer.log(
         '[GeofenceCallback] Attempting to open database connection...',
       );
-      database = await dbService.openNewBackgroundConnection();
+      database = await dbService.openNewBackgroundConnection(readOnly: false);
 
       if (!database.isOpen) {
         developer.log(
@@ -70,7 +70,7 @@ Future<void> geofenceTriggered(native_geofence.GeofenceCallbackParams params) as
         return;
       }
       developer.log(
-        '[GeofenceCallback] Successfully opened database connection',
+        '[GeofenceCallback] Successfully opened database connection. Path: ${database.path}',
       );
     } catch (e, stackTrace) {
       developer.log(
@@ -269,7 +269,7 @@ Future<void> geofenceTriggered(native_geofence.GeofenceCallbackParams params) as
         developer.log(
           '[GeofenceCallback] WARNING: Database connection is not open, reconnecting...',
         );
-        final newDb = await dbService.openNewBackgroundConnection();
+        final newDb = await dbService.openNewBackgroundConnection(readOnly: false);
         if (newDb == null || !newDb.isOpen) {
           developer.log(
             '[GeofenceCallback] ERROR: Failed to reopen database connection',
@@ -314,6 +314,15 @@ Future<void> geofenceTriggered(native_geofence.GeofenceCallbackParams params) as
           developer.log(
             '[GeofenceCallback] Successfully saved record for geofence ID: ${geofence.id}',
           );
+
+          // Notify the main isolate to update the UI
+          final SendPort? mainIsolateSendPort = IsolateNameServer.lookupPortByName('notification_update_port');
+          if (mainIsolateSendPort != null) {
+            mainIsolateSendPort.send('update_history');
+            developer.log('[GeofenceCallback] Sent update_history message to main isolate.');
+          } else {
+            developer.log('[GeofenceCallback] WARNING: Could not find SendPort for notification_update_port.');
+          }
         } catch (e, stackTrace) {
           developer.log(
             '[GeofenceCallback] Error saving record for geofence ${geofence.id}: $e',
@@ -346,6 +355,15 @@ Future<void> geofenceTriggered(native_geofence.GeofenceCallbackParams params) as
               developer.log(
                 '[GeofenceCallback] Successfully saved record on retry',
               );
+
+              // Notify the main isolate to update the UI
+              final SendPort? mainIsolateSendPortRetry = IsolateNameServer.lookupPortByName('notification_update_port');
+              if (mainIsolateSendPortRetry != null) {
+                mainIsolateSendPortRetry.send('update_history');
+                developer.log('[GeofenceCallback] Sent update_history message to main isolate on retry.');
+              } else {
+                developer.log('[GeofenceCallback] WARNING: Could not find SendPort for notification_update_port on retry.');
+              }
             }
           } catch (retryError, retryStack) {
             developer.log(

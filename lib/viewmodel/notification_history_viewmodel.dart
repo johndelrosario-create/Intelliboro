@@ -19,12 +19,13 @@ class NotificationHistoryViewModel extends ChangeNotifier {
   Future<void> loadHistory() async {
     _isLoading = true;
     _errorMessage = null;
-    notifyListeners();
+    // notifyListeners(); // Optional: if you want UI to react to loading state immediately
 
     try {
-      _history = await _repository.getAll();
+      final List<NotificationRecord> loadedRecords = await _repository.getAll();
+      _history = loadedRecords; // Assign to the class member
       developer.log(
-        '[NotificationHistoryViewModel] Loaded ${_history.length} history records.',
+        '[NotificationHistoryViewModel] loadHistory: Loaded ${_history.length} history records. First item ID if any: ${_history.isNotEmpty ? _history.first.id : 'N/A'}.',
       );
     } catch (e, stackTrace) {
       developer.log(
@@ -33,9 +34,12 @@ class NotificationHistoryViewModel extends ChangeNotifier {
         stackTrace: stackTrace,
       );
       _errorMessage = "Failed to load history: ${e.toString()}";
-      _history = [];
+      _history = []; // Ensure it's empty on error
     } finally {
       _isLoading = false;
+      developer.log(
+        '[NotificationHistoryViewModel] loadHistory finally: Calling notifyListeners. History count: ${_history.length}',
+      );
       notifyListeners();
     }
   }

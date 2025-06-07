@@ -3,6 +3,9 @@ import 'package:intelliboro/viewModel/task_list_viewmodel.dart';
 import 'dart:developer' as developer;
 import 'package:intelliboro/views/notification_history_view.dart';
 import 'package:intelliboro/views/create_task_view.dart'; // Add this import
+import 'package:intelliboro/viewModel/notification_history_viewmodel.dart';
+import 'dart:isolate';
+import 'dart:ui' show IsolateNameServer;
 
 class TaskListView extends StatefulWidget {
   const TaskListView({Key? key}) : super(key: key);
@@ -12,19 +15,70 @@ class TaskListView extends StatefulWidget {
 }
 
 class _TaskListViewState extends State<TaskListView> {
+  static const String _notificationUpdatePortName = 'notification_update_port';
+  ReceivePort? _notificationUpdatePort;
   late final TaskListViewModel _viewModel;
+  late final NotificationHistoryViewModel _notificationHistoryViewModel;
 
   @override
   void initState() {
     super.initState();
     _viewModel = TaskListViewModel();
-    _viewModel.addListener(_onViewModelChanged);
+    _viewModel.addListener(_onViewModelChanged); // Keep this for TaskListViewModel
     _viewModel.loadTasks(); // Initial load
+
+    _notificationHistoryViewModel = NotificationHistoryViewModel();
+    _notificationHistoryViewModel.addListener(_onNotificationHistoryViewModelChanged); // Specific listener
+    developer.log('[_TaskListViewState.initState] Calling _notificationHistoryViewModel.loadHistory()');
+    _notificationHistoryViewModel.loadHistory(); // Load notification history
+
+    // Setup ReceivePort for background updates
+    _notificationUpdatePort = ReceivePort();
+    final portRegistered = IsolateNameServer.registerPortWithName(
+      _notificationUpdatePort!.sendPort,
+      _notificationUpdatePortName,
+    );
+    if (portRegistered) {
+      developer.log('[_TaskListViewState.initState] Notification update port registered: $_notificationUpdatePortName');
+    } else {
+       // If registration fails, try removing and re-registering
+      IsolateNameServer.removePortNameMapping(_notificationUpdatePortName);
+      final retryRegistered = IsolateNameServer.registerPortWithName(
+        _notificationUpdatePort!.sendPort,
+        _notificationUpdatePortName,
+      );
+      if (retryRegistered) {
+        developer.log('[_TaskListViewState.initState] Notification update port registered on retry: $_notificationUpdatePortName');
+      } else {
+        developer.log('[_TaskListViewState.initState] CRITICAL: Failed to register notification update port even after retry: $_notificationUpdatePortName');
+      }
+    }
+
+    _notificationUpdatePort!.listen((dynamic message) {
+      developer.log('[_TaskListViewState.initState] Received message on notification update port: $message');
+      if (message == 'update_history') {
+        _notificationHistoryViewModel.loadHistory();
+      }
+    });
   }
 
-  void _onViewModelChanged() {
+  void _onViewModelChanged() { // This listener is for _viewModel (TaskListViewModel)
     if (mounted) {
+      developer.log('[_TaskListViewState._onViewModelChanged] (for TaskList) setState called.');
       setState(() {}); // Rebuild the widget when view model changes
+    }
+  }
+
+  void _onNotificationHistoryViewModelChanged() {
+    if (mounted) {
+      developer.log(
+        '[_TaskListViewState._onNotificationHistoryViewModelChanged] setState called. Notification count: ${_notificationHistoryViewModel.history.length}',
+      );
+      setState(() {});
+    } else {
+      developer.log(
+        '[_TaskListViewState._onNotificationHistoryViewModelChanged] Called but not mounted. Notification count: ${_notificationHistoryViewModel.history.length}',
+      );
     }
   }
 
@@ -32,26 +86,71 @@ class _TaskListViewState extends State<TaskListView> {
   void dispose() {
     _viewModel.removeListener(_onViewModelChanged);
     _viewModel.dispose();
+
+    _notificationHistoryViewModel.removeListener(_onNotificationHistoryViewModelChanged);
+    _notificationHistoryViewModel.dispose();
+
+    // Dispose ReceivePort
+    developer.log('[_TaskListViewState.dispose] Removing notification update port mapping: $_notificationUpdatePortName');
+    IsolateNameServer.removePortNameMapping(_notificationUpdatePortName);
+    _notificationUpdatePort?.close();
+
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    developer.log(
+      '[_TaskListViewState.build] Building. Notification count: ${_notificationHistoryViewModel.history.length}, IsLoading: ${_notificationHistoryViewModel.isLoading}',
+    );
     return Scaffold(
       appBar: AppBar(
         title: const Text('Tasks & Geofences'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.notifications),
-            tooltip: 'Notification History',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const NotificationHistoryView(),
+          Stack(
+            children: <Widget>[
+              IconButton(
+                icon: const Icon(Icons.notifications),
+                tooltip: 'Notification History',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const NotificationHistoryView(),
+                    ),
+                  ).then((_) {
+                    // Refresh history count when returning from NotificationHistoryView
+                    _notificationHistoryViewModel.loadHistory();
+                  });
+                },
+              ),
+              if (_notificationHistoryViewModel.history.isNotEmpty)
+                Positioned(
+                  right: 11,
+                  top: 11,
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    constraints: const BoxConstraints(
+                      minWidth: 12,
+                      minHeight: 12,
+                    ),
+                    child: Text(
+                      _notificationHistoryViewModel.history.length > 9
+                          ? '9+'
+                          : _notificationHistoryViewModel.history.length.toString(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 8,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
                 ),
-              );
-            },
+            ],
           ),
         ],
       ),
