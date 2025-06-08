@@ -4,8 +4,6 @@ import 'dart:developer' as developer;
 import 'package:intelliboro/views/notification_history_view.dart';
 import 'package:intelliboro/views/create_task_view.dart'; // Add this import
 import 'package:intelliboro/viewModel/notification_history_viewmodel.dart';
-import 'dart:isolate';
-import 'dart:ui' show IsolateNameServer;
 
 class TaskListView extends StatefulWidget {
   const TaskListView({Key? key}) : super(key: key);
@@ -15,8 +13,6 @@ class TaskListView extends StatefulWidget {
 }
 
 class _TaskListViewState extends State<TaskListView> {
-  static const String _notificationUpdatePortName = 'notification_update_port';
-  ReceivePort? _notificationUpdatePort;
   late final TaskListViewModel _viewModel;
   late final NotificationHistoryViewModel _notificationHistoryViewModel;
 
@@ -31,35 +27,6 @@ class _TaskListViewState extends State<TaskListView> {
     _notificationHistoryViewModel.addListener(_onNotificationHistoryViewModelChanged); // Specific listener
     developer.log('[_TaskListViewState.initState] Calling _notificationHistoryViewModel.loadHistory()');
     _notificationHistoryViewModel.loadHistory(); // Load notification history
-
-    // Setup ReceivePort for background updates
-    _notificationUpdatePort = ReceivePort();
-    final portRegistered = IsolateNameServer.registerPortWithName(
-      _notificationUpdatePort!.sendPort,
-      _notificationUpdatePortName,
-    );
-    if (portRegistered) {
-      developer.log('[_TaskListViewState.initState] Notification update port registered: $_notificationUpdatePortName');
-    } else {
-       // If registration fails, try removing and re-registering
-      IsolateNameServer.removePortNameMapping(_notificationUpdatePortName);
-      final retryRegistered = IsolateNameServer.registerPortWithName(
-        _notificationUpdatePort!.sendPort,
-        _notificationUpdatePortName,
-      );
-      if (retryRegistered) {
-        developer.log('[_TaskListViewState.initState] Notification update port registered on retry: $_notificationUpdatePortName');
-      } else {
-        developer.log('[_TaskListViewState.initState] CRITICAL: Failed to register notification update port even after retry: $_notificationUpdatePortName');
-      }
-    }
-
-    _notificationUpdatePort!.listen((dynamic message) {
-      developer.log('[_TaskListViewState.initState] Received message on notification update port: $message');
-      if (message == 'update_history') {
-        _notificationHistoryViewModel.loadHistory();
-      }
-    });
   }
 
   void _onViewModelChanged() { // This listener is for _viewModel (TaskListViewModel)
@@ -89,12 +56,6 @@ class _TaskListViewState extends State<TaskListView> {
 
     _notificationHistoryViewModel.removeListener(_onNotificationHistoryViewModelChanged);
     _notificationHistoryViewModel.dispose();
-
-    // Dispose ReceivePort
-    developer.log('[_TaskListViewState.dispose] Removing notification update port mapping: $_notificationUpdatePortName');
-    IsolateNameServer.removePortNameMapping(_notificationUpdatePortName);
-    _notificationUpdatePort?.close();
-
     super.dispose();
   }
 

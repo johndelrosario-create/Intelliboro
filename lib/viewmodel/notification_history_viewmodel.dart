@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:intelliboro/models/notification_record.dart';
 import 'package:intelliboro/repository/notification_history_repository.dart';
+import 'package:intelliboro/services/geofencing_service.dart'; // Added for background event listening
+import 'dart:async'; // Added for StreamSubscription
 import 'dart:developer' as developer;
 
 class NotificationHistoryViewModel extends ChangeNotifier {
@@ -8,9 +10,17 @@ class NotificationHistoryViewModel extends ChangeNotifier {
   List<NotificationRecord> _history = [];
   bool _isLoading = false;
   String? _errorMessage;
+  StreamSubscription? _newNotificationSubscription;
 
   NotificationHistoryViewModel({NotificationHistoryRepository? repository})
-    : _repository = repository ?? NotificationHistoryRepository();
+    : _repository = repository ?? NotificationHistoryRepository() {
+    // Listen for new notification events from the background
+    final geofencingService = GeofencingService();
+    _newNotificationSubscription = geofencingService.newNotificationEvents.listen((_) {
+      developer.log('[NotificationHistoryViewModel] Received new notification event from background. Reloading history...');
+      loadHistory();
+    });
+  }
 
   List<NotificationRecord> get history => _history;
   bool get isLoading => _isLoading;
@@ -64,5 +74,12 @@ class NotificationHistoryViewModel extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  @override
+  void dispose() {
+    developer.log('[NotificationHistoryViewModel] Disposing. Cancelling new notification subscription.');
+    _newNotificationSubscription?.cancel();
+    super.dispose();
   }
 }
