@@ -25,20 +25,20 @@ class GeofencingService {
   // Track created geofence IDs for management
   final Set<String> _createdGeofenceIds = {};
   bool _isInitialized = false;
-  final ReceivePort _port = ReceivePort(); // For native_geofence plugin if it used ports
+  final ReceivePort _port =
+      ReceivePort(); // For native_geofence plugin if it used ports
 
   // Port for our app's background->UI notification events
   final ReceivePort _newNotificationReceivePort = ReceivePort();
-  final StreamController<void> _newNotificationStreamController = StreamController<void>.broadcast();
-
-  // Static flag to ensure native manager is initialized only once globally
-  static bool _nativeManagerGloballyInitialized = false;
+  final StreamController<void> _newNotificationStreamController =
+      StreamController<void>.broadcast();
 
   // Private internal constructor
   GeofencingService._internal();
 
   // Stream for UI to listen for new notification events from background
-  Stream<void> get newNotificationEvents => _newNotificationStreamController.stream;
+  Stream<void> get newNotificationEvents =>
+      _newNotificationStreamController.stream;
 
   // Allow a view model to register itself for map updates
   void registerMapViewModel(MapboxMapViewModel viewModel) {
@@ -99,24 +99,35 @@ class GeofencingService {
 
       // Listen for geofence events on the port
       _port.listen((dynamic data) {
-        developer.log('[GeofencingService] Received on native_geofence_send_port: $data');
+        developer.log(
+          '[GeofencingService] Received on native_geofence_send_port: $data',
+        );
       });
 
       // Register and listen to our app-specific notification port
-      final String newNotificationPortName = 'intelliboro_new_notification_port';
-      IsolateNameServer.removePortNameMapping(newNotificationPortName); // Ensure clean slate
+      final String newNotificationPortName =
+          'intelliboro_new_notification_port';
+      IsolateNameServer.removePortNameMapping(
+        newNotificationPortName,
+      ); // Ensure clean slate
       if (!IsolateNameServer.registerPortWithName(
         _newNotificationReceivePort.sendPort,
         newNotificationPortName,
       )) {
-        developer.log('[GeofencingService] CRITICAL: Failed to register $newNotificationPortName');
+        developer.log(
+          '[GeofencingService] CRITICAL: Failed to register $newNotificationPortName',
+        );
         // Potentially throw an error or handle more gracefully
       } else {
-        developer.log('[GeofencingService] Successfully registered $newNotificationPortName');
+        developer.log(
+          '[GeofencingService] Successfully registered $newNotificationPortName',
+        );
       }
 
       _newNotificationReceivePort.listen((dynamic message) {
-        developer.log('[GeofencingService] Received on $newNotificationPortName: $message - forwarding to stream.');
+        developer.log(
+          '[GeofencingService] Received on $newNotificationPortName: $message - forwarding to stream.',
+        );
         _newNotificationStreamController.add(null); // Send a void event
       });
 
@@ -478,10 +489,14 @@ class GeofencingService {
       _isInitialized = false;
 
       // Clean up our app-specific notification port and stream controller
-      IsolateNameServer.removePortNameMapping('intelliboro_new_notification_port');
+      IsolateNameServer.removePortNameMapping(
+        'intelliboro_new_notification_port',
+      );
       _newNotificationReceivePort.close();
       _newNotificationStreamController.close();
-      developer.log('[GeofencingService] Cleaned up app-specific notification resources.');
+      developer.log(
+        '[GeofencingService] Cleaned up app-specific notification resources.',
+      );
     } catch (e, stackTrace) {
       developer.log(
         'Error disposing GeofencingService',
