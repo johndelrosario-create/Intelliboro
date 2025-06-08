@@ -155,7 +155,7 @@ Future<void> geofenceTriggered(native_geofence.GeofenceCallbackParams params) as
       '[GeofenceCallback] Created notification channel: $channelId',
     );
 
-    String notificationTitle = 'Location Alert';
+    String notificationTitle = 'Task reminder';
     String notificationBody = '';
 
     for (final geofence in params.geofences) {
