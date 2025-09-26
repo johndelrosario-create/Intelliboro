@@ -15,7 +15,9 @@ import 'package:intelliboro/services/geofence_storage.dart';
 import 'package:intelliboro/services/database_service.dart';
 
 @pragma('vm:entry-point')
-Future<void> geofenceTriggered(native_geofence.GeofenceCallbackParams params) async {
+Future<void> geofenceTriggered(
+  native_geofence.GeofenceCallbackParams params,
+  ) async {
   Database? database;
 
   try {

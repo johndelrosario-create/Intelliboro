@@ -25,13 +25,15 @@ class GeofencingService {
   // Track created geofence IDs for management
   final Set<String> _createdGeofenceIds = {};
   bool _isInitialized = false;
-  final ReceivePort _port =
-      ReceivePort(); // For native_geofence plugin if it used ports
+  final ReceivePort _port = ReceivePort(); // For native_geofence plugin if it used ports
 
   // Port for our app's background->UI notification events
   final ReceivePort _newNotificationReceivePort = ReceivePort();
   final StreamController<void> _newNotificationStreamController =
       StreamController<void>.broadcast();
+
+  // Ensure manager is initializzed only once globally
+  static bool _nativeManagerGloballyInitialized = false;
 
   // Private internal constructor
   GeofencingService._internal();
