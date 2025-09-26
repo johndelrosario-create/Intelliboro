@@ -165,7 +165,7 @@ Future<void> geofenceTriggered(
       if (geofenceData != null) {
         final eventType =
             params.event == native_geofence.GeofenceEvent.enter ? 'entered' : 'exited';
-        notificationBody += 'You have $eventType ${geofenceData.task}\n';
+        notificationBody += 'You have task ${geofenceData.task}\n';
       }
     }
 
