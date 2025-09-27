@@ -10,6 +10,8 @@ import 'package:intelliboro/views/task_statistics_view.dart';
 import 'package:intelliboro/viewModel/notification_history_viewmodel.dart';
 import 'package:intelliboro/widgets/task_timer_widget.dart';
 import 'dart:developer' as developer;
+import 'dart:async';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class TaskListView extends StatefulWidget {
   const TaskListView({Key? key}) : super(key: key);
@@ -30,6 +32,7 @@ class _TaskListViewState extends State<TaskListView>
   late AnimationController _fabAnimationController;
   late Animation<double> _fabAnimation;
   final Map<int, String> _taskTimeCache = {}; // Cache for task time strings
+  Timer? _pendingRefreshTimer;
 
   @override
   void initState() {
@@ -58,6 +61,16 @@ class _TaskListViewState extends State<TaskListView>
       CurvedAnimation(parent: _fabAnimationController, curve: Curves.easeInOut),
     );
     _fabAnimationController.forward();
+
+    // Start a lightweight timer to refresh UI while any task is pending so remaining snooze labels update
+    _pendingRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      // If there are any pending tasks, trigger a rebuild
+      if (_tasks.any(
+        (t) => t.id != null && _taskTimerService.isPending(t.id!),
+      )) {
+        if (mounted) setState(() {});
+      }
+    });
   }
 
   Future<void> _loadTasks() async {
@@ -142,8 +155,68 @@ class _TaskListViewState extends State<TaskListView>
     _notificationHistoryViewModel.dispose();
     _taskTimerService.removeListener(_onTaskTimerChanged);
     _taskTimerService.tasksChanged.removeListener(_onTasksChanged);
+    _pendingRefreshTimer?.cancel();
     _fabAnimationController.dispose();
     super.dispose();
+  }
+
+  Future<void> _openSnoozeSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final currentMinutes =
+        prefs.getInt('snooze_minutes') ??
+        _taskTimerService.defaultSnoozeDuration.inMinutes;
+
+    final selected = await showDialog<int>(
+      context: context,
+      builder: (context) {
+        int pick = currentMinutes;
+        return AlertDialog(
+          title: const Text('Snooze duration'),
+          content: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('Select snooze duration for pending tasks (minutes)'),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    children:
+                        [1, 3, 5, 10, 15, 30].map((m) {
+                          return ChoiceChip(
+                            label: Text('${m}m'),
+                            selected: pick == m,
+                            onSelected: (_) => setState(() => pick = m),
+                          );
+                        }).toList(),
+                  ),
+                ],
+              );
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(pick),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (selected != null) {
+      await prefs.setInt('snooze_minutes', selected);
+      _taskTimerService.setDefaultSnoozeDuration(Duration(minutes: selected));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Snooze duration set to ${selected} minutes')),
+        );
+      }
+    }
   }
 
   void _onTasksChanged() {
@@ -779,6 +852,12 @@ class _TaskListViewState extends State<TaskListView>
                 ),
               );
             },
+          ),
+          const SizedBox(width: 8),
+          IconButton.filledTonal(
+            icon: const Icon(Icons.settings_rounded),
+            tooltip: 'Snooze settings',
+            onPressed: () => _openSnoozeSettings(),
           ),
           const SizedBox(width: 8),
           // Debug helper: simulate DO_NOW notification (starts highest-priority task)
