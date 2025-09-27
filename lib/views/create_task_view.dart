@@ -10,7 +10,7 @@ import 'package:intelliboro/model/recurring_pattern.dart';
 import 'package:intelliboro/widgets/recurring_selector.dart';
 import 'package:intelliboro/services/task_timer_service.dart';
 import 'package:intelliboro/services/notification_preferences_service.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class TaskCreation extends StatefulWidget {
   final bool showMap;
@@ -50,11 +50,17 @@ class _TaskCreationState extends State<TaskCreation> {
   // Notification sound preference (app-wide default)
   String _selectedSoundKey = NotificationPreferencesService.soundDefault;
 
+  // Task-specific notification sound (overrides app default)
+  String? _taskNotificationSound;
+
   // Geofence selection state
   List<GeofenceData> _availableGeofences = [];
   String? _selectedGeofenceId;
   bool _isLoadingGeofences = false;
-  bool _useExistingGeofence = false;
+
+  // Snooze settings state
+  int _currentSnoozeDuration = 5; // Default 5 minutes
+  bool _isLoadingSnoozeSettings = false;
 
   @override
   void initState() {
@@ -72,9 +78,10 @@ class _TaskCreationState extends State<TaskCreation> {
       selectedDate = t.taskDate;
       selectedRecurringPattern = t.recurringPattern ?? RecurringPattern.none();
       _selectedGeofenceId = t.geofenceId;
-      _useExistingGeofence = t.geofenceId != null;
+      _taskNotificationSound = t.notificationSound;
     }
     _loadGeofences();
+    _loadSnoozeSettings();
     // Load default notification sound preference
     Future.microtask(() async {
       final key = await NotificationPreferencesService().getDefaultSound();
@@ -104,6 +111,40 @@ class _TaskCreationState extends State<TaskCreation> {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Error loading geofences: $e')));
+      }
+    }
+  }
+
+  Future<void> _loadSnoozeSettings() async {
+    setState(() {
+      _isLoadingSnoozeSettings = true;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final snoozeDuration =
+          prefs.getInt('snooze_minutes') ??
+          TaskTimerService().defaultSnoozeDuration.inMinutes;
+      setState(() {
+        _currentSnoozeDuration = snoozeDuration;
+        _isLoadingSnoozeSettings = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isLoadingSnoozeSettings = false;
+      });
+    }
+  }
+
+  String formatDuration(int minutes) {
+    if (minutes < 60) {
+      return '${minutes}m';
+    } else {
+      final hours = minutes ~/ 60;
+      final remainingMinutes = minutes % 60;
+      if (remainingMinutes == 0) {
+        return '${hours}h';
+      } else {
+        return '${hours}h ${remainingMinutes}m';
       }
     }
   }
@@ -372,48 +413,47 @@ class _TaskCreationState extends State<TaskCreation> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Default Notification Sound (Android)',
+              'Task Notification Sound',
               style: theme.textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(height: 8),
-            RadioListTile<String>(
-              title: const Text('System Default'),
-              value: NotificationPreferencesService.soundDefault,
-              groupValue: _selectedSoundKey,
-              onChanged: (v) => setState(() => _selectedSoundKey = v!),
-            ),
-            RadioListTile<String>(
-              title: const Text('Silent'),
-              value: NotificationPreferencesService.soundSilent,
-              groupValue: _selectedSoundKey,
-              onChanged: (v) => setState(() => _selectedSoundKey = v!),
-            ),
-            RadioListTile<String>(
-              title: const Text('Alarm style'),
-              value: NotificationPreferencesService.soundAlarm,
-              groupValue: _selectedSoundKey,
-              onChanged: (v) => setState(() => _selectedSoundKey = v!),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              'This sets the app default sound used for task reminders on Android.\nYou can change it later in Settings.',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade300),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _taskNotificationSound,
+                  hint: const Text('Use app default'),
+                  items: [
+                    const DropdownMenuItem<String>(
+                      value: null,
+                      child: Text('Use app default'),
+                    ),
+                    ...NotificationPreferencesService.getAvailableSounds().map(
+                      (sound) => DropdownMenuItem<String>(
+                        value: sound['key'],
+                        child: Text(sound['name']!),
+                      ),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    setState(() {
+                      _taskNotificationSound = value;
+                    });
+                  },
+                ),
+              ),
             ),
             const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
-                onPressed: () async {
-                  // Open the app's notification settings so the user can configure channel sound
-                  try {
-                    await openAppSettings();
-                  } catch (_) {}
-                },
-                icon: const Icon(Icons.settings_applications_outlined),
-                label: const Text('Open app notification settings'),
-              ),
+            const Text(
+              'Choose a specific notification sound for this task, or leave as "Use app default" to use the global app setting.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
           ],
         ),
@@ -525,113 +565,141 @@ class _TaskCreationState extends State<TaskCreation> {
             ),
             const SizedBox(height: 4),
             Text(
-              'Add a location reminder or leave empty for time-based notifications only.',
+              'Select an existing geofence for location reminders, or leave empty for time-based notifications only.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: RadioListTile<bool>(
-                    title: const Text('No Location Reminder'),
-                    value: false,
-                    groupValue: _useExistingGeofence,
-                    onChanged: (value) {
-                      setState(() {
-                        _useExistingGeofence = false;
-                        _selectedGeofenceId = null;
-                        _mapViewModel.clearSelectedPoint();
-                      });
-                    },
-                  ),
+            if (_availableGeofences.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'No existing geofences available. You can create new ones on the map view.',
+                  style: TextStyle(color: Colors.grey),
                 ),
-              ],
-            ),
-            Row(
-              children: [
-                Expanded(
-                  child: RadioListTile<bool>(
-                    title: const Text('Create New Location'),
-                    value: false,
-                    groupValue: _useExistingGeofence,
-                    onChanged: (value) {
-                      setState(() {
-                        _useExistingGeofence = false;
-                        _selectedGeofenceId = null;
-                      });
-                    },
-                  ),
+              )
+            else
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(
+                  labelText: 'Select Geofence (Optional)',
+                  border: OutlineInputBorder(),
                 ),
-              ],
-            ),
-            Row(
-              children: [
-                Expanded(
-                  child: RadioListTile<bool>(
-                    title: const Text('Use Existing Location'),
-                    value: true,
-                    groupValue: _useExistingGeofence,
-                    onChanged:
-                        _availableGeofences.isEmpty
-                            ? null
-                            : (value) {
-                              setState(() {
-                                _useExistingGeofence = value!;
-                              });
-                            },
+                value: _selectedGeofenceId,
+                items: [
+                  const DropdownMenuItem<String>(
+                    value: null,
+                    child: Text('No location reminder'),
                   ),
-                ),
-              ],
-            ),
-            if (_useExistingGeofence) ...[
-              const SizedBox(height: 8),
-              if (_availableGeofences.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16),
-                  child: Text(
-                    'No existing geofences available. Create a new one instead.',
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                )
-              else
-                DropdownButtonFormField<String>(
-                  decoration: const InputDecoration(
-                    labelText: 'Select Geofence',
-                    border: OutlineInputBorder(),
-                  ),
-                  value: _selectedGeofenceId,
-                  items:
-                      _availableGeofences.map((geofence) {
-                        String displayName =
-                            geofence.task != null && geofence.task!.isNotEmpty
-                                ? 'Geofence for "${geofence.task}"'
-                                : 'Geofence ${geofence.id.substring(0, 8)}';
-                        return DropdownMenuItem<String>(
-                          value: geofence.id,
-                          child: Text(displayName),
-                        );
-                      }).toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedGeofenceId = value;
-                    });
-                  },
-                  validator:
-                      _useExistingGeofence
-                          ? (value) =>
-                              value == null ? 'Please select a geofence' : null
-                          : null,
-                ),
-            ],
-            if (!_useExistingGeofence) ...[
-              const SizedBox(height: 8),
-              const Text(
-                'Long-press on the map below to select a location for the new geofence.',
-                style: TextStyle(color: Colors.grey),
+                  ..._availableGeofences.map((geofence) {
+                    String displayName =
+                        geofence.task != null && geofence.task!.isNotEmpty
+                            ? 'Geofence for "${geofence.task}"'
+                            : 'Geofence ${geofence.id.substring(0, 8)}';
+                    return DropdownMenuItem<String>(
+                      value: geofence.id,
+                      child: Text(displayName),
+                    );
+                  }),
+                ],
+                onChanged: (value) {
+                  setState(() {
+                    _selectedGeofenceId = value;
+                  });
+                },
               ),
-            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSnoozeSettingsSection() {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Card.filled(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: colorScheme.primaryContainer.withOpacity(0.7),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    Icons.snooze_rounded,
+                    color: colorScheme.onPrimaryContainer,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Snooze Settings',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Text(
+                        _isLoadingSnoozeSettings
+                            ? 'Loading...'
+                            : 'Current default: ${formatDuration(_currentSnoozeDuration)}',
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Tasks are automatically snoozed when postponed or interrupted by higher priority tasks.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Inline snooze duration selector
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children:
+                  [5, 10, 15, 30, 60, 120].map((minutes) {
+                    final isSelected = _currentSnoozeDuration == minutes;
+                    return FilterChip(
+                      label: Text(formatDuration(minutes)),
+                      selected: isSelected,
+                      onSelected: (selected) async {
+                        if (selected) {
+                          setState(() {
+                            _currentSnoozeDuration = minutes;
+                          });
+                          // Save to preferences
+                          final prefs = await SharedPreferences.getInstance();
+                          await prefs.setInt(
+                            'default_snooze_duration',
+                            minutes,
+                          );
+                          // Update TaskTimerService
+                          TaskTimerService().setDefaultSnoozeDuration(
+                            Duration(minutes: minutes),
+                          );
+                        }
+                      },
+                    );
+                  }).toList(),
+            ),
           ],
         ),
       ),
@@ -670,6 +738,8 @@ class _TaskCreationState extends State<TaskCreation> {
               const SizedBox(height: 16.0),
               _buildRecurringSelector(),
               const SizedBox(height: 16.0),
+              _buildSnoozeSettingsSection(),
+              const SizedBox(height: 16.0),
               _buildNotificationSoundSelector(),
               const SizedBox(height: 16.0),
               Row(
@@ -695,7 +765,7 @@ class _TaskCreationState extends State<TaskCreation> {
               if (widget.showMap) ...[
                 _buildGeofenceSelector(),
                 const SizedBox(height: 16.0),
-                if (!_useExistingGeofence) _buildMapSection(),
+                if (_selectedGeofenceId == null) _buildMapSection(),
               ] else
                 _buildMapDisabled(),
               const SizedBox(height: 24.0),
@@ -718,10 +788,7 @@ class _TaskCreationState extends State<TaskCreation> {
                   }
 
                   // Determine the geofence ID to use (if any)
-                  String? geofenceIdForTask;
-                  if (widget.showMap && _useExistingGeofence) {
-                    geofenceIdForTask = _selectedGeofenceId;
-                  }
+                  String? geofenceIdForTask = _selectedGeofenceId;
 
                   // Persist default notification sound preference
                   try {
@@ -736,8 +803,10 @@ class _TaskCreationState extends State<TaskCreation> {
                       TaskModel(
                         taskName: taskName,
                         taskPriority: selectedPriority,
-                        taskTime: selectedTime ?? TimeOfDay.now(),
-                        taskDate: selectedDate ?? DateTime.now(),
+                        taskTime:
+                            selectedTime, // Only set if explicitly selected
+                        taskDate:
+                            selectedDate, // Only set if explicitly selected
                         isRecurring:
                             selectedRecurringPattern.type != RecurringType.none,
                         recurringPattern:
@@ -746,6 +815,7 @@ class _TaskCreationState extends State<TaskCreation> {
                                 : null,
                         isCompleted: false,
                         geofenceId: geofenceIdForTask,
+                        notificationSound: _taskNotificationSound,
                       ),
                     );
 
@@ -768,6 +838,7 @@ class _TaskCreationState extends State<TaskCreation> {
                               : null,
                       isCompleted: existing.isCompleted,
                       geofenceId: geofenceIdForTask ?? existing.geofenceId,
+                      notificationSound: _taskNotificationSound,
                     );
                     await TaskRepository().updateTask(updated);
                     // Notify listeners that tasks changed
@@ -780,7 +851,7 @@ class _TaskCreationState extends State<TaskCreation> {
 
                   // Handle geofence creation or association
                   if (widget.showMap) {
-                    if (_useExistingGeofence && _selectedGeofenceId != null) {
+                    if (_selectedGeofenceId != null) {
                       // Task is already associated with the existing geofence via geofenceId
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
@@ -789,8 +860,7 @@ class _TaskCreationState extends State<TaskCreation> {
                           ),
                         ),
                       );
-                    } else if (!_useExistingGeofence &&
-                        _mapViewModel.selectedPoint != null) {
+                    } else if (_mapViewModel.selectedPoint != null) {
                       try {
                         await _mapViewModel.createGeofenceAtSelectedPoint(
                           context,

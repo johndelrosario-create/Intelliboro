@@ -178,65 +178,6 @@ class _TaskListViewState extends State<TaskListView>
     super.dispose();
   }
 
-  Future<void> _openSnoozeSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    final currentMinutes =
-        prefs.getInt('snooze_minutes') ??
-        _taskTimerService.defaultSnoozeDuration.inMinutes;
-
-    final selected = await showDialog<int>(
-      context: context,
-      builder: (context) {
-        int pick = currentMinutes;
-        return AlertDialog(
-          title: const Text('Snooze duration'),
-          content: StatefulBuilder(
-            builder: (context, setState) {
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('Select snooze duration for pending tasks (minutes)'),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    children:
-                        [1, 3, 5, 10, 15, 30].map((m) {
-                          return ChoiceChip(
-                            label: Text('${m}m'),
-                            selected: pick == m,
-                            onSelected: (_) => setState(() => pick = m),
-                          );
-                        }).toList(),
-                  ),
-                ],
-              );
-            },
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(pick),
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (selected != null) {
-      await prefs.setInt('snooze_minutes', selected);
-      _taskTimerService.setDefaultSnoozeDuration(Duration(minutes: selected));
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Snooze duration set to ${selected} minutes')),
-        );
-      }
-    }
-  }
-
   void _onTasksChanged() {
     if (_taskTimerService.tasksChanged.value) {
       _loadTasks();
@@ -368,11 +309,11 @@ class _TaskListViewState extends State<TaskListView>
   String _getTimeUntilTask(TaskModel task) {
     final now = DateTime.now();
     final taskDateTime = DateTime(
-      task.taskDate.year,
-      task.taskDate.month,
-      task.taskDate.day,
-      task.taskTime.hour,
-      task.taskTime.minute,
+      task.taskDate?.year ?? 0,
+      task.taskDate?.month ?? 1,
+      task.taskDate?.day ?? 1,
+      task.taskTime?.hour ?? 0,
+      task.taskTime?.minute ?? 0,
     );
 
     final difference = taskDateTime.difference(now);
@@ -626,7 +567,9 @@ class _TaskListViewState extends State<TaskListView>
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        '${task.taskTime.format(context)} • ${task.taskDate.day}/${task.taskDate.month}/${task.taskDate.year}',
+                        task.taskTime != null && task.taskDate != null
+                            ? '${task.taskTime!.format(context)} • ${task.taskDate!.day}/${task.taskDate!.month}/${task.taskDate!.year}'
+                            : 'No time set',
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -981,38 +924,39 @@ class _TaskListViewState extends State<TaskListView>
               });
               await _saveSortMode(mode);
             },
-            itemBuilder: (context) => [
-              PopupMenuItem(
-                value: TaskSortMode.priority,
-                child: Row(
-                  children: const [
-                    Icon(Icons.priority_high_rounded),
-                    SizedBox(width: 8),
-                    Text('By Priority'),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: TaskSortMode.alphabetical,
-                child: Row(
-                  children: const [
-                    Icon(Icons.sort_by_alpha_rounded),
-                    SizedBox(width: 8),
-                    Text('Alphabetical'),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: TaskSortMode.creationDate,
-                child: Row(
-                  children: const [
-                    Icon(Icons.schedule_rounded),
-                    SizedBox(width: 8),
-                    Text('Newest First'),
-                  ],
-                ),
-              ),
-            ],
+            itemBuilder:
+                (context) => [
+                  PopupMenuItem(
+                    value: TaskSortMode.priority,
+                    child: Row(
+                      children: const [
+                        Icon(Icons.priority_high_rounded),
+                        SizedBox(width: 8),
+                        Text('By Priority'),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: TaskSortMode.alphabetical,
+                    child: Row(
+                      children: const [
+                        Icon(Icons.sort_by_alpha_rounded),
+                        SizedBox(width: 8),
+                        Text('Alphabetical'),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: TaskSortMode.creationDate,
+                    child: Row(
+                      children: const [
+                        Icon(Icons.schedule_rounded),
+                        SizedBox(width: 8),
+                        Text('Newest First'),
+                      ],
+                    ),
+                  ),
+                ],
           ),
           IconButton.filledTonal(
             icon: const Icon(Icons.notifications_rounded),
@@ -1040,12 +984,6 @@ class _TaskListViewState extends State<TaskListView>
                 ),
               );
             },
-          ),
-          const SizedBox(width: 8),
-          IconButton.filledTonal(
-            icon: const Icon(Icons.settings_rounded),
-            tooltip: 'Snooze settings',
-            onPressed: () => _openSnoozeSettings(),
           ),
           const SizedBox(width: 8),
         ],
@@ -1120,15 +1058,19 @@ class _TaskListViewState extends State<TaskListView>
               }
 
               // Exclude tasks that are currently paused from the Active list
-              final pausedIds = _taskTimerService.pausedTasks
-                  .where((t) => t.id != null)
-                  .map((t) => t.id!)
-                  .toSet();
-              final activeTasks = _tasks
-                  .where(
-                    (t) => !t.isCompleted && (t.id == null || !pausedIds.contains(t.id!)),
-                  )
-                  .toList();
+              final pausedIds =
+                  _taskTimerService.pausedTasks
+                      .where((t) => t.id != null)
+                      .map((t) => t.id!)
+                      .toSet();
+              final activeTasks =
+                  _tasks
+                      .where(
+                        (t) =>
+                            !t.isCompleted &&
+                            (t.id == null || !pausedIds.contains(t.id!)),
+                      )
+                      .toList();
               final completedTasks =
                   _tasks.where((t) => t.isCompleted).toList();
 
@@ -1174,8 +1116,8 @@ class _TaskListViewState extends State<TaskListView>
                                   _sortMode == TaskSortMode.priority
                                       ? 'Priority sorted'
                                       : _sortMode == TaskSortMode.alphabetical
-                                          ? 'Alphabetical'
-                                          : 'Newest first',
+                                      ? 'Alphabetical'
+                                      : 'Newest first',
                                   style: theme.textTheme.labelSmall?.copyWith(
                                     color: theme.colorScheme.onPrimaryContainer,
                                     fontWeight: FontWeight.w500,
@@ -1219,40 +1161,40 @@ class _TaskListViewState extends State<TaskListView>
                         ),
                       ),
                       SliverList(
-                        delegate: SliverChildBuilderDelegate(
-                          (context, index) {
-                            final t = _taskTimerService.pausedTasks[index];
-                            return Card(
-                              margin: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
+                        delegate: SliverChildBuilderDelegate((context, index) {
+                          final t = _taskTimerService.pausedTasks[index];
+                          return Card(
+                            margin: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            child: ListTile(
+                              leading: const Icon(Icons.pause_rounded),
+                              title: Text(t.taskName),
+                              subtitle: const Text(
+                                'Paused due to interruption',
                               ),
-                              child: ListTile(
-                                leading: const Icon(Icons.pause_rounded),
-                                title: Text(t.taskName),
-                                subtitle: const Text('Paused due to interruption'),
-                                trailing: FilledButton.tonalIcon(
-                                  onPressed: () async {
-                                    final id = t.id;
-                                    if (id == null) return;
-                                    final ok = await _taskTimerService.resumePausedTask(id);
-                                    if (ok && mounted) {
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (_) => const ActiveTaskView(),
-                                        ),
-                                      );
-                                    }
-                                  },
-                                  icon: const Icon(Icons.play_arrow_rounded),
-                                  label: const Text('Resume'),
-                                ),
+                              trailing: FilledButton.tonalIcon(
+                                onPressed: () async {
+                                  final id = t.id;
+                                  if (id == null) return;
+                                  final ok = await _taskTimerService
+                                      .resumePausedTask(id);
+                                  if (ok && mounted) {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => const ActiveTaskView(),
+                                      ),
+                                    );
+                                  }
+                                },
+                                icon: const Icon(Icons.play_arrow_rounded),
+                                label: const Text('Resume'),
                               ),
-                            );
-                          },
-                          childCount: _taskTimerService.pausedTasks.length,
-                        ),
+                            ),
+                          );
+                        }, childCount: _taskTimerService.pausedTasks.length),
                       ),
                     ],
                     if (completedTasks.isNotEmpty) ...[
