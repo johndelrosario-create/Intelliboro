@@ -54,6 +54,10 @@ dependencies:
   timeago: ^3.7.1
   flutter_timezone: ^4.1.1
   flutter_tts: ^4.2.0
+  synchronized: ^3.1.0
+  fl_chart: ^0.70.0
+  flutter_secure_storage: ^9.2.2
+  crypto: ^3.0.3
 
 
 dev_dependencies:

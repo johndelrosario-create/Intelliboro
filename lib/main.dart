@@ -21,6 +21,10 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:intelliboro/services/text_to_speech_service.dart';
 import 'package:intelliboro/views/active_task_view.dart';
 import 'package:intelliboro/model/task_model.dart';
+import 'package:intelliboro/services/pin_service.dart';
+import 'package:intelliboro/views/pin_setup_view.dart';
+import 'package:intelliboro/views/pin_lock_view.dart';
+import 'package:intelliboro/views/settings_view.dart';
 
 // Define the access token
 const String accessToken = String.fromEnvironment('ACCESS_TOKEN');
@@ -79,6 +83,69 @@ Future<void> _showGlobalSwitchDialog(TaskSwitchRequest req) async {
     } catch (_) {}
   } finally {
     _isGlobalSwitchDialogVisible = false;
+  }
+}
+
+/// Gate that decides whether to show the first-launch PIN setup prompt, the PIN lock screen,
+/// or the main home shell depending on the user's choice and PIN enablement.
+class PinGate extends StatefulWidget {
+  const PinGate({Key? key}) : super(key: key);
+
+  @override
+  State<PinGate> createState() => _PinGateState();
+}
+
+class _PinGateState extends State<PinGate> {
+  bool _loading = true;
+  bool _promptAnswered = false;
+  bool _pinEnabled = false;
+  bool _unlocked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final answered = await PinService().isPromptAnswered();
+      final enabled = await PinService().isPinEnabled();
+      if (!mounted) return;
+      setState(() {
+        _promptAnswered = answered;
+        _pinEnabled = enabled;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _reloadAndProceed() async {
+    await _load();
+    if (mounted && !_pinEnabled) {
+      setState(() => _unlocked = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (!_promptAnswered) {
+      return PinSetupView(onCompleted: _reloadAndProceed);
+    }
+    if (_pinEnabled && !_unlocked) {
+      return PinLockView(onUnlocked: () => setState(() => _unlocked = true));
+    }
+    return const HomeShell();
   }
 }
 
@@ -796,7 +863,7 @@ class _AppInitializerState extends State<AppInitializer> {
       debugPrint(
         "[_AppInitializerState] Building: Permissions granted, showing TaskListView.",
       );
-      return const HomeShell();
+      return const PinGate();
     } else {
       debugPrint(
         "[_AppInitializerState] Building: Permissions not granted, showing fallback screen.",
@@ -851,6 +918,7 @@ class _HomeShellState extends State<HomeShell> {
     TaskListView(),
     TaskStatisticsView(),
     NotificationHistoryView(),
+    SettingsView(),
   ];
 
   void _onItemTapped(int index) {
@@ -879,6 +947,10 @@ class _HomeShellState extends State<HomeShell> {
           NavigationDestination(
             icon: const Icon(Icons.notifications_rounded),
             label: 'Notifications',
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.settings),
+            label: 'Settings',
           ),
         ],
       ),
