@@ -35,6 +35,53 @@ final TaskTimerService taskTimerService = TaskTimerService();
 // Global navigator key so notification handler can bring the app to foreground
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
+// Guard to avoid showing multiple switch dialogs simultaneously
+bool _isGlobalSwitchDialogVisible = false;
+
+Future<void> _showGlobalSwitchDialog(TaskSwitchRequest req) async {
+  if (_isGlobalSwitchDialogVisible) return;
+  final context = navigatorKey.currentContext;
+  if (context == null) return;
+  _isGlobalSwitchDialogVisible = true;
+  try {
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Higher priority task available'),
+          content: Text(
+            'Start "${req.newTask.taskName}" now or snooze it?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(ctx).pop(false);
+              },
+              child: const Text('Snooze'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(ctx).pop(true);
+              },
+              child: const Text('Start Now'),
+            ),
+          ],
+        );
+      },
+    );
+    // Default to snooze if dialog dismissed unexpectedly
+    req.respond(result == true);
+  } catch (e) {
+    developer.log('[main] Global switch dialog error: $e');
+    try {
+      req.respond(false);
+    } catch (_) {}
+  } finally {
+    _isGlobalSwitchDialogVisible = false;
+  }
+}
+
 Future<void> _onNotificationResponse(NotificationResponse response) async {
   // Unified notification response handler.
   try {
@@ -481,57 +528,59 @@ void _initializeTtsService() {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize TTS service in background (non-blocking)
-  _initializeTtsService();
-
-  await _initializeTimezone();
-
-  // Initialize centralized notification plugin
-  try {
-    await initializeNotifications();
-
-    // Register callback for responses to delegate to handler
-    await flutterLocalNotificationsPlugin.initialize(
-      const InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-        iOS: DarwinInitializationSettings(),
-      ),
-      onDidReceiveNotificationResponse: (NotificationResponse response) async {
-        developer.log(
-          '[main] Notification tapped: payload=${response.payload}, actionId=${response.actionId}, id=${response.id}',
-        );
-        await _onNotificationResponse(response);
-      },
-    );
-  } catch (e, s) {
-    developer.log('[main] Error initializing notifications: $e\n$s');
-  }
-
-  // Initialize geofencing service early so the port listener is registered
-  try {
-    await GeofencingService().init();
-    developer.log('[main] GeofencingService initialized early in main');
-  } catch (e, st) {
-    developer.log(
-      '[main] Error initializing GeofencingService early: $e',
-      error: e,
-      stackTrace: st,
-    );
-  }
-
-  // Load any pending tasks persisted by background callbacks while app wasn't active
-  try {
-    await taskTimerService.loadPersistedPending();
-  } catch (e) {
-    developer.log('[main] Failed to load persisted pending tasks: $e');
-  }
-
+  // Bring up the UI immediately to avoid long blocking on the splash.
   MapboxOptions.setAccessToken(accessToken);
   runApp(const MyApp());
 
-  // If the app was launched via a notification (cold start), handle it now
-  // so DO_NOW navigates to the ActiveTaskView on first launch.
+  // Initialize TTS service in background (non-blocking)
+  _initializeTtsService();
+
+  // Defer heavier initializations to microtasks so first frame can render.
   Future.microtask(() async {
+    await _initializeTimezone();
+
+    // Initialize centralized notification plugin and register callbacks
+    try {
+      await initializeNotifications();
+      await flutterLocalNotificationsPlugin.initialize(
+        const InitializationSettings(
+          android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+          iOS: DarwinInitializationSettings(),
+        ),
+        onDidReceiveNotificationResponse: (
+          NotificationResponse response,
+        ) async {
+          developer.log(
+            '[main] Notification tapped: payload=${response.payload}, actionId=${response.actionId}, id=${response.id}',
+          );
+          await _onNotificationResponse(response);
+        },
+      );
+    } catch (e, s) {
+      developer.log('[main] Error initializing notifications: $e\n$s');
+    }
+
+    // Initialize geofencing service early so the port listener is registered
+    try {
+      await GeofencingService().init();
+      developer.log('[main] GeofencingService initialized early in main');
+    } catch (e, st) {
+      developer.log(
+        '[main] Error initializing GeofencingService early: $e',
+        error: e,
+        stackTrace: st,
+      );
+    }
+
+    // Load any pending tasks persisted by background callbacks while app wasn't active
+    try {
+      await taskTimerService.loadPersistedPending();
+    } catch (e) {
+      developer.log('[main] Failed to load persisted pending tasks: $e');
+    }
+
+    // If the app was launched via a notification (cold start), handle it now
+    // so DO_NOW navigates to the ActiveTaskView on first launch.
     try {
       final details =
           await flutterLocalNotificationsPlugin
@@ -550,6 +599,21 @@ void main() async {
         error: e,
         stackTrace: st,
       );
+    }
+
+    // Global listener for switch requests so prompts appear regardless of current screen
+    try {
+      taskTimerService.switchRequests.listen((req) {
+        // If TaskListView also listens, this guard prevents duplicate dialogs here
+        if (_isGlobalSwitchDialogVisible) return;
+        // Defer to next frame to ensure navigator is ready
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _showGlobalSwitchDialog(req);
+        });
+      });
+      developer.log('[main] Registered global listener for switchRequests');
+    } catch (e) {
+      developer.log('[main] Failed to register global switch listener: $e');
     }
   });
 }

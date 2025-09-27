@@ -15,11 +15,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:intelliboro/services/notification_service.dart'
     show notificationPlugin;
+import 'package:intelliboro/services/text_to_speech_service.dart';
 
 /// Request emitted when a higher-priority task arrives and a user decision is needed.
 class TaskSwitchRequest {
   final TaskModel newTask;
   final Completer<bool> _completer;
+  // Optional Android notification id associated with this switch request
+  int? notificationId;
   TaskSwitchRequest(this.newTask) : _completer = Completer<bool>();
 
   /// Complete with true to start the new task now, false to snooze it.
@@ -29,6 +32,13 @@ class TaskSwitchRequest {
 
   /// Internal future used by the service to wait for decision.
   Future<bool> get future => _completer.future;
+}
+
+/// Internal container for paused task state
+class _PausedInfo {
+  final TaskModel task;
+  final Duration elapsed;
+  const _PausedInfo({required this.task, required this.elapsed});
 }
 
 /// Service responsible for managing task timers and active task tracking
@@ -96,6 +106,8 @@ class TaskTimerService extends ChangeNotifier {
       StreamController.broadcast();
   // Map of pending switch requests accessible by a generated id (for notification actions)
   final Map<String, TaskSwitchRequest> _pendingSwitchRequests = {};
+  // Track an interrupted active task id so we can resume it if the user snoozes
+  int? _interruptedTaskId;
   // Notifier to signal when task records change (completed/rescheduled/deleted)
   final ValueNotifier<bool> tasksChanged = ValueNotifier<bool>(false);
 
@@ -105,6 +117,84 @@ class TaskTimerService extends ChangeNotifier {
   Duration get elapsedTime => _elapsedTime;
   bool get isPaused => _isPaused;
   bool get hasActiveTask => _activeTask != null;
+  // Paused-by-interrupt tasks storage
+  final Map<int, _PausedInfo> _pausedTasks = {};
+
+  /// Read-only list of paused tasks (due to interruptions)
+  List<TaskModel> get pausedTasks =>
+      _pausedTasks.values.map((p) => p.task).toList(growable: false);
+
+  /// Whether a given task id is currently paused by interrupt
+  bool isPausedTask(int id) => _pausedTasks.containsKey(id);
+
+  /// Resume a task that was previously paused due to an interruption.
+  /// Returns true if resumed, false otherwise (e.g., another task is active).
+  Future<bool> resumePausedTask(int id) async {
+    // Do not disturb if another task is already active
+    if (_activeTask != null) {
+      developer.log('[TaskTimerService] Cannot resume paused task while another task is active');
+      return false;
+    }
+    final info = _pausedTasks[id];
+    if (info == null) return false;
+    try {
+      _activeTask = info.task;
+      _startTime = DateTime.now().subtract(info.elapsed);
+      _elapsedTime = info.elapsed;
+      _isPaused = false;
+      _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (_startTime != null) {
+          _elapsedTime = DateTime.now().difference(_startTime!);
+          notifyListeners();
+        }
+      });
+      _pausedTasks.remove(id);
+      await _persistActiveTaskId(_activeTask!.id);
+      developer.log('[TaskTimerService] Resumed paused task id=$id name=${_activeTask!.taskName}');
+      notifyListeners();
+      return true;
+    } catch (e) {
+      developer.log('[TaskTimerService] resumePausedTask error: $e');
+      return false;
+    }
+  }
+
+  /// Store current active task into paused map and clear active state (used before starting a higher-priority task).
+  Future<void> _storeCurrentAsPausedAndClear() async {
+    if (_activeTask == null) return;
+    try {
+      // Ensure timer state is paused and elapsed captured
+      if (!_isPaused) {
+        await pauseTask();
+      }
+      final id = _activeTask!.id;
+      if (id != null) {
+        _pausedTasks[id] = _PausedInfo(task: _activeTask!, elapsed: _elapsedTime);
+      }
+
+      // Clear UI timer and active pointers
+      _timer?.cancel();
+      _timer = null;
+      _activeTask = null;
+      _startTime = null;
+      _elapsedTime = Duration.zero;
+      _isPaused = false;
+      _interruptedTaskId = null;
+
+      // Clear persisted interrupted flags and active id
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('active_task_interrupted');
+        await prefs.remove('interrupted_task_id');
+        await prefs.remove('active_task_id');
+      } catch (_) {}
+
+      developer.log('[TaskTimerService] Stored previous active task into paused list');
+      notifyListeners();
+    } catch (e) {
+      developer.log('[TaskTimerService] _storeCurrentAsPausedAndClear error: $e');
+    }
+  }
 
   /// Stream of switch requests that UI can listen to and prompt the user.
   Stream<TaskSwitchRequest> get switchRequests => _switchController.stream;
@@ -118,6 +208,180 @@ class TaskTimerService extends ChangeNotifier {
       return true;
     } catch (e) {
       developer.log('[TaskTimerService] respondSwitchRequest error: $e');
+      return false;
+    }
+  }
+
+  /// Interrupt the currently active task: pause timer and mark as interrupted.
+  /// The active task itself remains set so it can be resumed later if needed.
+  Future<void> interruptActiveTask() async {
+    if (_activeTask == null) return;
+    try {
+      final id = _activeTask!.id;
+      await pauseTask();
+      _interruptedTaskId = id;
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        if (id != null) {
+          await prefs.setBool('active_task_interrupted', true);
+          await prefs.setInt('interrupted_task_id', id);
+        }
+      } catch (_) {}
+      developer.log(
+        '[TaskTimerService] Interrupted active task: ${_activeTask!.taskName} (id=$id)',
+      );
+      notifyListeners();
+    } catch (e) {
+      developer.log('[TaskTimerService] interruptActiveTask error: $e');
+    }
+  }
+
+  /// Resume an interrupted task if present. Returns true on success.
+  Future<bool> resumeInterruptedTask() async {
+    if (_activeTask == null) return false;
+    if (!_isPaused) return false;
+    if (_interruptedTaskId != null && _activeTask!.id == _interruptedTaskId) {
+      try {
+        await resumeTask();
+        _interruptedTaskId = null;
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.remove('active_task_interrupted');
+          await prefs.remove('interrupted_task_id');
+        } catch (_) {}
+        developer.log(
+          '[TaskTimerService] Resumed previously interrupted task: ${_activeTask!.taskName}',
+        );
+        notifyListeners();
+        return true;
+      } catch (e) {
+        developer.log('[TaskTimerService] resumeInterruptedTask error: $e');
+      }
+    }
+    return false;
+  }
+
+  /// Request a task switch: interrupts current active task immediately, then
+  /// posts a switch notification and waits for user decision. If the user
+  /// accepts, the current task is stopped/rescheduled and the new task started.
+  /// If the user snoozes/denies, the incoming task is added to pending and the
+  /// interrupted task is resumed.
+  Future<bool> requestSwitch(
+    TaskModel task, {
+    Duration timeout = const Duration(seconds: 60),
+  }) async {
+    try {
+      // If there's no active task, just start normally
+      if (_activeTask == null) {
+        final started = await startTask(task);
+        return started;
+      }
+
+      // Interrupt current active task immediately
+      await interruptActiveTask();
+
+      // Create a switch request and notify UI listeners
+      final req = TaskSwitchRequest(task);
+      final switchId =
+          '${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(9999)}';
+      _pendingSwitchRequests[switchId] = req;
+      _switchController.add(req);
+
+      // Post a local notification so the user can respond from outside the app
+      try {
+        final plugin = notificationPlugin;
+        const AndroidNotificationDetails androidDetails =
+            AndroidNotificationDetails(
+              'geofence_alerts',
+              'Geofence Alerts',
+              channelDescription: 'Switch requests for tasks',
+              importance: Importance.max,
+              priority: Priority.high,
+              playSound: true,
+              ongoing: true,
+              autoCancel: false,
+              onlyAlertOnce: true,
+              styleInformation: BigTextStyleInformation(''),
+              actions: <AndroidNotificationAction>[
+                AndroidNotificationAction(
+                  'com.intelliboro.DO_NOW',
+                  'Start Now',
+                  showsUserInterface: true,
+                  cancelNotification: true,
+                ),
+                AndroidNotificationAction(
+                  'com.intelliboro.DO_LATER',
+                  'Snooze',
+                  showsUserInterface: false,
+                  cancelNotification: true,
+                ),
+              ],
+            );
+        final details = NotificationDetails(android: androidDetails);
+        final payload = jsonEncode({
+          'switchRequestId': switchId,
+          'taskId': task.id,
+        });
+        final speakLine =
+            '${task.taskName} has a higher priority, would you like to do it now?';
+        final notifId = Random().nextInt(2147483647);
+        req.notificationId = notifId;
+        await plugin.show(
+          notifId,
+          'Higher priority task',
+          speakLine,
+          details,
+          payload: payload,
+        );
+        // Try to speak the same line via TTS
+        try {
+          final tts = TextToSpeechService();
+          await tts.init();
+          if (await tts.isAvailable() && tts.isEnabled) {
+            await tts.speakTaskNotification(speakLine, 'priority');
+          }
+        } catch (_) {}
+      } catch (e) {
+        developer.log(
+          '[TaskTimerService] Failed to post switch notification: $e',
+        );
+      }
+
+      // Wait for user decision (default to snooze)
+      final decision = await req.future.timeout(
+        timeout,
+        onTimeout: () => false,
+      );
+
+      // Ensure we cancel the persistent notification once a decision is made
+      try {
+        if (req.notificationId != null) {
+          await notificationPlugin.cancel(req.notificationId!);
+        }
+      } catch (_) {}
+
+      if (decision == true) {
+        // User chose to start new task
+        await _storeCurrentAsPausedAndClear();
+        final started = _startTaskTimer(task);
+        if (started) _persistActiveTaskId(task.id);
+        return started;
+      } else {
+        // Snooze incoming and resume interrupted task
+        await _addToPending(task, defaultSnoozeDuration);
+        await resumeInterruptedTask();
+        return false;
+      }
+    } catch (e, st) {
+      developer.log(
+        '[TaskTimerService] requestSwitch error: $e',
+        error: e,
+        stackTrace: st,
+      );
+      // On error, attempt to resume interrupted task to avoid leaving user stuck
+      try {
+        await resumeInterruptedTask();
+      } catch (_) {}
       return false;
     }
   }
@@ -170,6 +434,9 @@ class TaskTimerService extends ChangeNotifier {
                     importance: Importance.max,
                     priority: Priority.high,
                     playSound: true,
+                    ongoing: true,
+                    autoCancel: false,
+                    onlyAlertOnce: true,
                     styleInformation: BigTextStyleInformation(''),
                     actions: <AndroidNotificationAction>[
                       AndroidNotificationAction(
@@ -182,7 +449,7 @@ class TaskTimerService extends ChangeNotifier {
                         'com.intelliboro.DO_LATER',
                         'Snooze',
                         showsUserInterface: false,
-                        cancelNotification: false,
+                        cancelNotification: true,
                       ),
                     ],
                   );
@@ -191,13 +458,25 @@ class TaskTimerService extends ChangeNotifier {
                 'switchRequestId': switchId,
                 'taskId': task.id,
               });
+              final speakLine =
+                  '${task.taskName} has a higher priority, would you like to do it now?';
+              final notifId = Random().nextInt(2147483647);
+              req.notificationId = notifId;
               await plugin.show(
-                Random().nextInt(2147483647),
+                notifId,
                 'Higher priority task',
-                '"${task.taskName}" is higher priority. Start now or snooze?',
+                speakLine,
                 details,
                 payload: payload,
               );
+              // Try to speak the same line via TTS
+              try {
+                final tts = TextToSpeechService();
+                await tts.init();
+                if (await tts.isAvailable() && tts.isEnabled) {
+                  await tts.speakTaskNotification(speakLine, 'priority');
+                }
+              } catch (_) {}
             } catch (e) {
               developer.log(
                 '[TaskTimerService] Failed to post switch notification: $e',
@@ -209,9 +488,15 @@ class TaskTimerService extends ChangeNotifier {
               const Duration(seconds: 60),
               onTimeout: () => false,
             );
+            // Cancel associated notification once a decision is made
+            try {
+              if (req.notificationId != null) {
+                await notificationPlugin.cancel(req.notificationId!);
+              }
+            } catch (_) {}
             if (decision == true) {
-              // User chose to start the new task: stop current and start new
-              await _stopCurrentTaskAndReschedule();
+              // User chose to start the new task: pause current and start new
+              await _storeCurrentAsPausedAndClear();
               return _startTaskTimer(task);
             } else {
               // User chose to snooze (or timed out): add to pending using default snooze
@@ -536,35 +821,7 @@ class TaskTimerService extends ChangeNotifier {
     return completionTime;
   }
 
-  /// Stop current task and reschedule it for later
-  Future<void> _stopCurrentTaskAndReschedule() async {
-    if (_activeTask == null) return;
-
-    final taskToReschedule = _activeTask!;
-
-    // Stop the timer
-    _timer?.cancel();
-    _timer = null;
-    _activeTask = null;
-    _startTime = null;
-    _elapsedTime = Duration.zero;
-
-    // Clear persisted active task id
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('active_task_id');
-      developer.log(
-        '[TaskTimerService] Cleared persisted active_task_id (reschedule)',
-      );
-    } catch (e) {
-      developer.log(
-        '[TaskTimerService] Failed to clear persisted active_task_id: $e',
-      );
-    }
-
-    // Reschedule the interrupted task
-    await _rescheduleTask(taskToReschedule);
-  }
+  // _stopCurrentTaskAndReschedule removed (pause-and-switch flow replaces it)
 
   /// Reschedule a task to a later time
   Future<void> _rescheduleTask(TaskModel task) async {

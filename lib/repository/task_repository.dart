@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intelliboro/services/database_service.dart';
 import 'dart:developer' as developer;
 import 'package:intelliboro/services/geofencing_service.dart';
+import 'package:intelliboro/services/task_alarm_service.dart';
 
 class TaskRepository {
   static const String _tableName = 'tasks';
@@ -28,14 +29,26 @@ class TaskRepository {
       "[TaskRepository] insertTask: DB is open. Inserting task: ${task.taskName}",
     );
     try {
-      await db.insert(
+      final insertedId = await db.insert(
         _tableName,
         task.toMap()..remove('id'),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
       developer.log(
-        "[TaskRepository] insertTask: Task ${task.taskName} inserted successfully.",
+        "[TaskRepository] insertTask: Task ${task.taskName} inserted successfully with id=$insertedId.",
       );
+
+      // Schedule time-based alarm for this task
+      try {
+        final taskWithId = task.copyWith(id: insertedId);
+        await TaskAlarmService().scheduleForTask(taskWithId);
+      } catch (e, st) {
+        developer.log(
+          '[TaskRepository] insertTask: Failed to schedule alarm for new task id=$insertedId: $e',
+          error: e,
+          stackTrace: st,
+        );
+      }
     } catch (e, stacktrace) {
       developer.log(
         "[TaskRepository] insertTask: FAILED to insert. DB Path: ${db.path}, isOpen: ${db.isOpen}. Error: $e\n$stacktrace",
@@ -66,6 +79,17 @@ class TaskRepository {
       whereArgs: [task.id],
     );
     debugPrint("[TaskRepository] updateTask: Task ${task.id} updated.");
+
+    // Reschedule alarm to reflect updated date/time/recurrence
+    try {
+      await TaskAlarmService().scheduleForTask(task);
+    } catch (e, st) {
+      developer.log(
+        '[TaskRepository] updateTask: Failed to schedule alarm for task id=${task.id}: $e',
+        error: e,
+        stackTrace: st,
+      );
+    }
   }
 
   Future<TaskModel?> getTaskById(int id) async {
@@ -80,6 +104,47 @@ class TaskRepository {
     return TaskModel.fromMap(rows.first);
   }
 
+  /// Update geofence_id for a task by its database id.
+  Future<int> updateTaskGeofenceIdById(int id, String geofenceId) async {
+    final db = await DatabaseService().mainDb;
+    developer.log(
+      '[TaskRepository] updateTaskGeofenceIdById: id=$id -> geofence_id=$geofenceId',
+    );
+    final count = await db.update(
+      _tableName,
+      {'geofence_id': geofenceId},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    developer.log(
+      '[TaskRepository] updateTaskGeofenceIdById: updated $count row(s) for id=$id',
+    );
+    return count;
+  }
+
+  /// Update geofence_id for task(s) by name. Returns number of rows affected.
+  /// Note: If multiple tasks share the same name, this will update all of them.
+  Future<int> updateTaskGeofenceIdByName(
+    String taskName,
+    String geofenceId,
+  ) async {
+    final db = await DatabaseService().mainDb;
+    developer.log(
+      '[TaskRepository] updateTaskGeofenceIdByName: name="$taskName" -> geofence_id=$geofenceId',
+    );
+    final count = await db.update(
+      _tableName,
+      {'geofence_id': geofenceId},
+      where: 'taskName = ?'
+          ,
+      whereArgs: [taskName],
+    );
+    developer.log(
+      '[TaskRepository] updateTaskGeofenceIdByName: updated $count row(s) for name="$taskName"',
+    );
+    return count;
+  }
+
   /// Delete a task by id
   Future<void> deleteTask(int id) async {
     debugPrint("[TaskRepository] deleteTask: Deleting task id: $id...");
@@ -87,6 +152,13 @@ class TaskRepository {
 
     // Read the task row first to inspect geofence association
     try {
+      // Cancel any scheduled alarm for this task id
+      try {
+        await TaskAlarmService().cancelForTaskId(id);
+      } catch (e) {
+        developer.log('[TaskRepository] deleteTask: Failed to cancel alarm for task id=$id: $e');
+      }
+
       final rows = await db.query(
         _tableName,
         where: 'id = ?',
@@ -138,17 +210,4 @@ class TaskRepository {
       rethrow;
     }
   }
-
-  //TODO: Delete a task
-  // Future<void> deleteTask(int id) async {
-  //   debugPrint(
-  //     "[TaskRepository] deleteTask: Requesting DB from DatabaseService for task ID: $id...",
-  //   );
-  //   final db = await DatabaseService().mainDb;
-  //   debugPrint(
-  //     "[TaskRepository] deleteTask: DB instance received. Deleting task: $id",
-  //   );
-  //   await db.delete(_tableName, where: 'id = ?', whereArgs: [id]);
-  //   debugPrint("[TaskRepository] deleteTask: Task $id deleted.");
-  // }
 }

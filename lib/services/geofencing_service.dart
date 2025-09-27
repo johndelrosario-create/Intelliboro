@@ -261,18 +261,17 @@ class GeofencingService {
                   }
                 }
 
-                // Inform the user that tasks were added to pending and provide quick snooze actions
+                // Inform the user that tasks were added to do later and provide quick snooze actions
                 try {
                   final plugin = notificationPlugin;
                   final List<int> ids =
                       candidates.map((c) => c.id).whereType<int>().toList();
-                  final title =
-                      ids.length == 1 ? 'Task Pending ⏸️' : 'Tasks Pending ⏸️';
+                  final title = 'Added to Do Later';
                   final names = candidates.map((c) => c.taskName).join(', ');
                   final body =
                       ids.length == 1
-                          ? 'Task "${names}" was added to pending. Snooze for 5 minutes or choose later.'
-                          : '${ids.length} tasks were added to pending: ${names}. Snooze for 5 minutes or choose later.';
+                          ? '${names} added to do later. Snooze 5 minutes or choose later.'
+                          : 'Added to do later: ${names}. Snooze 5 minutes or choose later.';
 
                   final payload = jsonEncode({'taskIds': ids});
 
@@ -406,31 +405,63 @@ class GeofencingService {
                     'taskIds': ids,
                   });
 
-                  await plugin.show(
-                    uiNotifId,
-                    title,
-                    body,
-                    NotificationDetails(android: androidDetails),
-                    payload: payload,
-                  );
-                  developer.log(
-                    '[GeofencingService] Posted geofence alert notification $uiNotifId for tasks: $ids',
-                  );
-
-                  // Optional: brief TTS in UI isolate
+                  // Prefer using TaskTimerService.requestSwitch when there's an active task
                   try {
-                    final tts = TextToSpeechService();
-                    await tts.init();
-                    if (await tts.isAvailable() && tts.isEnabled) {
-                      await tts.speakTaskNotification(
-                        ids.length == 1
-                            ? 'Reminder: $names'
-                            : 'You have ${ids.length} nearby tasks.',
-                        'location',
+                    final timerService = TaskTimerService();
+                    if (hasActive) {
+                      // If incoming is higher priority, request switch which will
+                      // interrupt current task and post the switch notification.
+                      // Pick only the single highest-priority candidate to avoid
+                      // multiple overlapping switch requests.
+                      TaskModel? best;
+                      double bestPrio = -double.infinity;
+                      for (final c in candidates) {
+                        final p = c.getEffectivePriority();
+                        if (best == null || p > bestPrio) {
+                          best = c;
+                          bestPrio = p;
+                        }
+                      }
+                      if (best != null) {
+                        developer.log(
+                          '[GeofencingService] Requesting switch to highest-priority task id=${best.id}, name=${best.taskName}, prio=$bestPrio',
+                        );
+                        await timerService.requestSwitch(best);
+                      }
+                    } else {
+                      await plugin.show(
+                        uiNotifId,
+                        title,
+                        body,
+                        NotificationDetails(android: androidDetails),
+                        payload: payload,
                       );
+                      developer.log(
+                        '[GeofencingService] Posted geofence alert notification $uiNotifId for tasks: $ids',
+                      );
+
+                      // Optional: brief TTS in UI isolate
+                      try {
+                        final tts = TextToSpeechService();
+                        await tts.init();
+                        if (await tts.isAvailable() && tts.isEnabled) {
+                          await tts.speakTaskNotification(
+                            ids.length == 1
+                                ? 'Reminder: $names'
+                                : 'You have ${ids.length} nearby tasks.',
+                            'location',
+                          );
+                        }
+                      } catch (ttsErr) {
+                        developer.log(
+                          '[GeofencingService] TTS failed: $ttsErr',
+                        );
+                      }
                     }
-                  } catch (ttsErr) {
-                    developer.log('[GeofencingService] TTS failed: $ttsErr');
+                  } catch (e) {
+                    developer.log(
+                      '[GeofencingService] Error requesting switch or posting notification: $e',
+                    );
                   }
                 } catch (e) {
                   developer.log(

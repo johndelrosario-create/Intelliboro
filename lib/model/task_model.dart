@@ -21,6 +21,9 @@ class TaskModel {
 
   //Geofence location of task?
 
+  /// Optional creation timestamp (Unix seconds) from the database.
+  final int? createdAt;
+
   const TaskModel({
     this.id,
     required this.taskName,
@@ -31,6 +34,7 @@ class TaskModel {
     this.recurringPattern,
     required this.isCompleted,
     this.geofenceId,
+    this.createdAt,
   }) : assert(taskPriority >= 1 && taskPriority <= 5, 'Priority must be between 1 and 5');
 
   // Convert TaskModel to Map
@@ -45,6 +49,7 @@ class TaskModel {
       'recurring_pattern': recurringPattern?.toJson(),
       'isCompleted': isCompleted ? 1 : 0,
       'geofence_id': geofenceId,
+      // 'created_at' is intentionally omitted; DB sets it by default.
     };
   }
 
@@ -65,6 +70,7 @@ class TaskModel {
         : null,
       isCompleted: (map['isCompleted'] as int) == 1,
       geofenceId: map['geofence_id'] as String?,
+      createdAt: map['created_at'] as int?,
     );
   }
 
@@ -128,6 +134,18 @@ class TaskModel {
     return b.getEffectivePriority().compareTo(a.getEffectivePriority());
   }
 
+  /// Compare tasks alphabetically by name (A-Z, case-insensitive)
+  static int compareByName(TaskModel a, TaskModel b) {
+    return a.taskName.toLowerCase().compareTo(b.taskName.toLowerCase());
+  }
+
+  /// Compare tasks by creation timestamp (newest first). Fallback to id desc.
+  static int compareByCreatedAt(TaskModel a, TaskModel b) {
+    final aTs = a.createdAt ?? a.id ?? 0;
+    final bTs = b.createdAt ?? b.id ?? 0;
+    return bTs.compareTo(aTs);
+  }
+
   /// Get a user-friendly description of the recurring pattern
   String get recurringDescription {
     if (!isRecurring || recurringPattern == null) {
@@ -180,6 +198,7 @@ class TaskModel {
       recurringPattern: recurringPattern,
       isCompleted: false, // New instances start as incomplete
       geofenceId: geofenceId,
+      createdAt: createdAt,
     );
   }
 
@@ -194,6 +213,7 @@ class TaskModel {
     RecurringPattern? recurringPattern,
     bool? isCompleted,
     String? geofenceId,
+    int? createdAt,
   }) {
     return TaskModel(
       id: id ?? this.id,
@@ -205,11 +225,12 @@ class TaskModel {
       recurringPattern: recurringPattern ?? this.recurringPattern,
       isCompleted: isCompleted ?? this.isCompleted,
       geofenceId: geofenceId ?? this.geofenceId,
+      createdAt: createdAt ?? this.createdAt,
     );
   }
 
   @override
   String toString() {
-    return 'TaskModel{taskName: $taskName, taskPriority: $taskPriority ($priorityString), taskTime: $taskTime, taskDate: $taskDate, isRecurring: $isRecurring, recurringPattern: $recurringPattern, isCompleted: $isCompleted}';
+    return 'TaskModel{taskName: $taskName, taskPriority: $taskPriority ($priorityString), taskTime: $taskTime, taskDate: $taskDate, isRecurring: $isRecurring, recurringPattern: $recurringPattern, isCompleted: $isCompleted, createdAt: $createdAt}';
   }
 }

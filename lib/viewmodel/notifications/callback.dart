@@ -401,95 +401,23 @@ Future<void> geofenceTriggered(
               '[GeofenceCallback] (pre-check) Active priority=$activePriority, incomingHighest=$incomingHighest',
             );
 
-            if (incomingHighest <= activePriority) {
+            // If we couldn't resolve any matching task IDs from the DB, do not
+            // preemptively suppress — allow the early notification to be shown
+            // so the user still sees the Do Now/Do Later actions.
+            if (matchedTaskIds.isEmpty) {
               developer.log(
-                '[GeofenceCallback] (pre-check) Active task priority higher or equal; suppressing audible notification preemptively.',
+                '[GeofenceCallback] No matching task IDs found; will NOT preemptively suppress.',
               );
+            } else if (incomingHighest <= activePriority) {
+              developer.log(
+                '[GeofenceCallback] (pre-check) Active task priority higher or equal; suppressing audible notification preemptively (no background snooze/pending).',
+              );
+              // Only suppress the early audible notification here; we no longer
+              // persist pending state or show a fallback "Added to Do Later"
+              // notification in the background isolate. The UI isolate will
+              // decide whether to snooze or request a switch and will inform
+              // the user appropriately.
               preemptivelySuppressed = true;
-
-              // Persist pending state for matched tasks so the UI can reflect
-              // pending status even if the UI isolate doesn't receive the port message.
-              try {
-                final prefs = await SharedPreferences.getInstance();
-                final int snoozeMinutes = prefs.getInt('snooze_minutes') ?? 5;
-                final until = DateTime.now().add(
-                  Duration(minutes: snoozeMinutes),
-                );
-                final List<int> ids = List<int>.from(matchedTaskIds);
-                for (final int tid in ids) {
-                  await prefs.setInt(
-                    'pending_task_$tid',
-                    until.millisecondsSinceEpoch,
-                  );
-                }
-                developer.log(
-                  '[GeofenceCallback] Persisted pending for tasks: $ids until $until',
-                );
-
-                // Post a background pending notification to inform the user.
-                try {
-                  final title =
-                      ids.length == 1 ? 'Task Pending' : 'Tasks Pending';
-                  String namesSummary = '';
-                  try {
-                    if (ids.isNotEmpty) {
-                      final placeholders = List.filled(
-                        ids.length,
-                        '?',
-                      ).join(',');
-                      final nameRows = await database.rawQuery(
-                        'SELECT taskName FROM tasks WHERE id IN ($placeholders)',
-                        ids,
-                      );
-                      final names =
-                          nameRows
-                              .map((r) => (r['taskName'] ?? '').toString())
-                              .where((s) => s.isNotEmpty)
-                              .toList();
-                      if (names.isNotEmpty) {
-                        namesSummary = names.join(', ');
-                      }
-                    }
-                  } catch (_) {}
-                  final body =
-                      ids.length == 1
-                          ? (namesSummary.isNotEmpty
-                              ? 'Task "${namesSummary}" was added to pending.'
-                              : 'A task was added to pending.')
-                          : (namesSummary.isNotEmpty
-                              ? '${ids.length} tasks were added to pending: ${namesSummary}.'
-                              : '${ids.length} tasks were added to pending.');
-                  final int newNotifId = DateTime.now().millisecondsSinceEpoch
-                      .remainder(2147483647);
-                  final AndroidNotificationDetails androidDetails2 =
-                      AndroidNotificationDetails(
-                        'geofence_alerts',
-                        'Geofence Alerts',
-                        channelDescription:
-                            'Pending tasks (background fallback)',
-                        importance: Importance.defaultImportance,
-                        priority: Priority.defaultPriority,
-                      );
-                  await plugin.show(
-                    newNotifId,
-                    title,
-                    body,
-                    NotificationDetails(android: androidDetails2),
-                    payload: jsonEncode({'taskIds': ids}),
-                  );
-                  developer.log(
-                    '[GeofenceCallback] Posted background pending notification $newNotifId for tasks: $ids',
-                  );
-                } catch (pnErr) {
-                  developer.log(
-                    '[GeofenceCallback] Failed to post background pending notification: $pnErr',
-                  );
-                }
-              } catch (persistErr) {
-                developer.log(
-                  '[GeofenceCallback] Failed to persist pending state: $persistErr',
-                );
-              }
             }
           }
         } catch (e, st) {
@@ -516,30 +444,9 @@ Future<void> geofenceTriggered(
     final payloadJson = jsonEncode(payloadData);
     developer.log('[GeofenceCallback] Notification payload JSON: $payloadJson');
 
-    // Show an early notification immediately (unless preemptively suppressed)
-    if (!preemptivelySuppressed) {
-      try {
-        developer.log(
-          '[GeofenceCallback] Showing early notification immediately (id=$notificationId)',
-        );
-        await plugin.show(
-          notificationId,
-          notificationTitle,
-          notificationBody,
-          platformChannelSpecifics,
-          payload: payloadJson,
-        );
-        developer.log(
-          '[GeofenceCallback] Early notification shown (id=$notificationId)',
-        );
-      } catch (e, st) {
-        developer.log(
-          '[GeofenceCallback] Error showing early notification: $e',
-          error: e,
-          stackTrace: st,
-        );
-      }
-    } else {
+    // Defer showing the early notification until after waiting for UI ack to avoid duplicates.
+    // The UI isolate will cancel/suppress and post the correct UX if needed.
+    if (preemptivelySuppressed) {
       developer.log(
         '[GeofenceCallback] Preemptively suppressed; not showing early audible notification',
       );
@@ -565,7 +472,7 @@ Future<void> geofenceTriggered(
       try {
         await Future.any([
           completer.future,
-          Future.delayed(const Duration(milliseconds: 4000)),
+          Future.delayed(const Duration(milliseconds: 1000)),
         ]);
         if (completer.isCompleted) {
           ackReceived = true;
@@ -597,30 +504,33 @@ Future<void> geofenceTriggered(
       }
     }
 
-    // If ack was received, cancel the early notification (UI handled it).
+    // If ack was received, UI handled it; do not show an early notification here.
     if (ackReceived) {
+      developer.log(
+        '[GeofenceCallback] Ack received; UI will handle user-visible notification. Skipping early background notification.',
+      );
+    } else if (!preemptivelySuppressed) {
+      // No ack and not preemptively suppressed: show the early notification now.
       try {
         developer.log(
-          '[GeofenceCallback] Ack received; cancelling early notification id=$notificationId',
+          '[GeofenceCallback] No ack; showing deferred early notification (id=$notificationId)',
         );
-        await plugin.cancel(notificationId);
+        await plugin.show(
+          notificationId,
+          notificationTitle,
+          notificationBody,
+          platformChannelSpecifics,
+          payload: payloadJson,
+        );
       } catch (e, st) {
         developer.log(
-          '[GeofenceCallback] Error cancelling notification: $e',
+          '[GeofenceCallback] Error showing deferred early notification: $e',
           error: e,
           stackTrace: st,
         );
       }
-    } else if (preemptivelySuppressed) {
-      developer.log(
-        '[GeofenceCallback] Preemptively suppressed: background persisted pending and posted fallback notification.',
-      );
-    } else {
-      developer.log(
-        '[GeofenceCallback] No ack received; leaving early notification shown and proceeding with TTS.',
-      );
       // Small delay to allow system audio to settle before TTS
-      await Future.delayed(const Duration(milliseconds: 1500));
+      await Future.delayed(const Duration(milliseconds: 300));
     }
 
     // --- Then Trigger Text-to-Speech Notifications AFTER notification sound ---
@@ -681,6 +591,12 @@ Future<void> geofenceTriggered(
             final bool wasPersistedPending =
                 geofenceTaskId != null &&
                 persistedPendingIds.contains(geofenceTaskId);
+            // Also treat as pending if this task is among matchedTaskIds
+            final bool matchedAsPending =
+                geofenceTaskId != null &&
+                matchedTaskIds.contains(geofenceTaskId);
+            final bool shouldAnnouncePending =
+                wasPersistedPending || matchedAsPending;
 
             // Try direct TTS service approach first
             try {
@@ -706,8 +622,8 @@ Future<void> geofenceTriggered(
 
               if (isAvailable && ttsService.isEnabled) {
                 final speakText =
-                    wasPersistedPending
-                        ? '${geofenceData.task} was added to pending tasks.'
+                    shouldAnnouncePending
+                        ? '${geofenceData.task} added to pending queue.'
                         : geofenceData.task!;
                 developer.log(
                   '[GeofenceCallback] Attempting to speak: "$speakText"',
@@ -749,7 +665,7 @@ Future<void> geofenceTriggered(
                 }
 
                 // Add additional delay to ensure audio system is free
-                await Future.delayed(const Duration(milliseconds: 1000));
+                await Future.delayed(const Duration(milliseconds: 200));
               } else {
                 developer.log(
                   '[GeofenceCallback] TTS not available or disabled. Available: $isAvailable, Enabled: ${ttsService.isEnabled}',

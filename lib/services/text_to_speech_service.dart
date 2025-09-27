@@ -156,6 +156,8 @@ class TextToSpeechService {
 
     // Create contextual messages based on the type of context
     switch (context.toLowerCase()) {
+      case 'priority':
+        return cleanTaskName;
       case 'location':
       case 'geofence':
         return "You have task: $cleanTaskName";

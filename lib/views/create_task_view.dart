@@ -354,31 +354,64 @@ class _TaskCreationState extends State<TaskCreation> {
     return ListenableBuilder(
       listenable: _mapViewModel,
       builder: (context, child) {
-        return SizedBox(
-          height: MediaQuery.of(context).size.height * 0.3,
-          width: MediaQuery.of(context).size.width,
-          child: Stack(
-            children: [
-              MapWidget(
-                key: const ValueKey("embedded_mapwidget"),
-                onMapCreated: _mapViewModel.onMapCreated,
-                onLongTapListener: _mapViewModel.onLongTap,
-                onZoomListener: _mapViewModel.onZoom,
-                onMapIdleListener: _mapViewModel.onCameraIdle,
-              ),
-              if (!_mapViewModel.isMapReady)
-                const Center(child: CircularProgressIndicator()),
-              if (_mapViewModel.selectedPoint != null)
-                Positioned(
-                  top: 10,
-                  left: 10,
-                  child: Chip(
-                    label: Text('Location Selected for Geofence'),
-                    backgroundColor: Colors.greenAccent,
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              height: MediaQuery.of(context).size.height * 0.3,
+              width: MediaQuery.of(context).size.width,
+              child: Stack(
+                children: [
+                  MapWidget(
+                    key: const ValueKey("embedded_mapwidget"),
+                    onMapCreated: _mapViewModel.onMapCreated,
+                    onLongTapListener: _mapViewModel.onLongTap,
+                    onZoomListener: _mapViewModel.onZoom,
+                    onMapIdleListener: _mapViewModel.onCameraIdle,
                   ),
-                ),
-            ],
-          ),
+                  if (!_mapViewModel.isMapReady)
+                    const Center(child: CircularProgressIndicator()),
+                  if (_mapViewModel.selectedPoint != null)
+                    Positioned(
+                      top: 10,
+                      left: 10,
+                      child: Chip(
+                        label: Text('Location Selected for Geofence'),
+                        backgroundColor: Colors.greenAccent,
+                      ),
+                    ),
+                  Positioned(
+                    top: 10,
+                    right: 10,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'Saved: ${_mapViewModel.savedGeofences.length}',
+                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Radius: ${_mapViewModel.pendingRadiusMeters.toStringAsFixed(0)} m',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            Slider(
+              value: _mapViewModel.pendingRadiusMeters.clamp(1.0, 1000.0),
+              min: 1,
+              max: 1000,
+              divisions: 999,
+              label: '${_mapViewModel.pendingRadiusMeters.toStringAsFixed(0)} m',
+              onChanged: (v) => _mapViewModel.setPendingRadius(v),
+            ),
+          ],
         );
       },
     );
