@@ -6,6 +6,7 @@ import 'package:intelliboro/services/task_timer_service.dart';
 import 'package:intelliboro/views/notification_history_view.dart';
 import 'package:intelliboro/views/create_task_view.dart';
 import 'package:intelliboro/views/active_task_view.dart';
+import 'package:intelliboro/views/task_statistics_view.dart';
 import 'package:intelliboro/viewModel/notification_history_viewmodel.dart';
 import 'package:intelliboro/widgets/task_timer_widget.dart';
 import 'dart:developer' as developer;
@@ -46,6 +47,8 @@ class _TaskListViewState extends State<TaskListView>
 
     // Listen to task timer service for UI updates
     _taskTimerService.addListener(_onTaskTimerChanged);
+    // Listen for persisted task changes and refresh list
+    _taskTimerService.tasksChanged.addListener(_onTasksChanged);
 
     _fabAnimationController = AnimationController(
       duration: const Duration(milliseconds: 300),
@@ -138,8 +141,16 @@ class _TaskListViewState extends State<TaskListView>
     );
     _notificationHistoryViewModel.dispose();
     _taskTimerService.removeListener(_onTaskTimerChanged);
+    _taskTimerService.tasksChanged.removeListener(_onTasksChanged);
     _fabAnimationController.dispose();
     super.dispose();
+  }
+
+  void _onTasksChanged() {
+    if (_taskTimerService.tasksChanged.value) {
+      _loadTasks();
+      _taskTimerService.tasksChanged.value = false;
+    }
   }
 
   Color _getPriorityColor(int priority) {
@@ -478,18 +489,22 @@ class _TaskListViewState extends State<TaskListView>
                         ),
                       ),
                     IconButton.filledTonal(
-                      onPressed: () {
-                        // TODO: Toggle completion status
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              task.isCompleted
-                                  ? 'Mark as incomplete - Coming soon!'
-                                  : 'Mark as complete - Coming soon!',
+                      onPressed: () async {
+                        // Toggle completion status and update DB
+                        try {
+                          final updated = task.copyWith(
+                            isCompleted: !task.isCompleted,
+                          );
+                          await TaskRepository().updateTask(updated);
+                          // Notify service that tasks changed so lists refresh
+                          _taskTimerService.tasksChanged.value = true;
+                        } catch (e) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Failed to update task: $e'),
                             ),
-                            behavior: SnackBarBehavior.floating,
-                          ),
-                        );
+                          );
+                        }
                       },
                       icon: Icon(
                         task.isCompleted
@@ -499,6 +514,72 @@ class _TaskListViewState extends State<TaskListView>
                             task.isCompleted
                                 ? theme.colorScheme.primary
                                 : theme.colorScheme.outline,
+                      ),
+                      iconSize: 20,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    const SizedBox(width: 4),
+                    IconButton.filledTonal(
+                      onPressed: () async {
+                        // Confirm delete
+                        final confirm = await showDialog<bool>(
+                          context: context,
+                          builder: (context) {
+                            return AlertDialog(
+                              title: const Text('Delete task?'),
+                              content: Text(
+                                'Are you sure you want to delete "${task.taskName}"? This cannot be undone.',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed:
+                                      () => Navigator.of(context).pop(false),
+                                  child: const Text('Cancel'),
+                                ),
+                                TextButton(
+                                  onPressed:
+                                      () => Navigator.of(context).pop(true),
+                                  child: const Text('Delete'),
+                                ),
+                              ],
+                            );
+                          },
+                        );
+
+                        if (confirm == true) {
+                          try {
+                            // Stop any in-memory running timer for this task
+                            if (task.id != null &&
+                                _taskTimerService.isRunning(task.id!)) {
+                              await _taskTimerService.stopTimerForTask(
+                                task.id!,
+                              );
+                            }
+                            if (task.id != null) {
+                              await TaskRepository().deleteTask(task.id!);
+                            }
+                            // Notify listeners to refresh
+                            _taskTimerService.tasksChanged.value = true;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Deleted "${task.taskName}"'),
+                              ),
+                            );
+                          } catch (e) {
+                            developer.log(
+                              '[TaskListView] Error deleting task: $e',
+                            );
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Failed to delete task: $e'),
+                              ),
+                            );
+                          }
+                        }
+                      },
+                      icon: Icon(
+                        Icons.delete_outline_rounded,
+                        color: theme.colorScheme.error,
                       ),
                       iconSize: 20,
                       visualDensity: VisualDensity.compact,
@@ -603,6 +684,19 @@ class _TaskListViewState extends State<TaskListView>
               ).then((_) {
                 _notificationHistoryViewModel.loadHistory();
               });
+            },
+          ),
+          const SizedBox(width: 8),
+          IconButton.filledTonal(
+            icon: const Icon(Icons.bar_chart_rounded),
+            tooltip: 'Task Statistics',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const TaskStatisticsView(),
+                ),
+              );
             },
           ),
           const SizedBox(width: 8),
@@ -839,21 +933,3 @@ class _TaskListViewState extends State<TaskListView>
     );
   }
 }
-
-// Dummy EditTaskView for now, to be replaced later
-// class EditTaskView extends StatelessWidget {
-//   final String geofenceId;
-//   const EditTaskView({Key? key, required this.geofenceId}) : super(key: key);
-
-//   @override
-//   Widget build(BuildContext context) {
-//     return Scaffold(
-//       appBar: AppBar(title: Text('Edit Task $geofenceId')),
-//       body: Center(
-//         child: Text(
-//           'Editing details for geofence ID: $geofenceId.\nImplementation pending.',
-//         ),
-//       ),
-//     );
-//   }
-// }

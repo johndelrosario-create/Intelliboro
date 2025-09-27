@@ -79,6 +79,14 @@ class TaskRepository {
     return TaskModel.fromMap(rows.first);
   }
 
+  /// Delete a task by id
+  Future<void> deleteTask(int id) async {
+    debugPrint("[TaskRepository] deleteTask: Deleting task id: $id...");
+    final db = await DatabaseService().mainDb;
+    await db.delete(_tableName, where: 'id = ?', whereArgs: [id]);
+    debugPrint("[TaskRepository] deleteTask: Task $id deleted.");
+  }
+
   //TODO: Delete a task
   // Future<void> deleteTask(int id) async {
   //   debugPrint(

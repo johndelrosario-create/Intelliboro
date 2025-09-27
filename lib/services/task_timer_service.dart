@@ -22,6 +22,8 @@ class TaskTimerService extends ChangeNotifier {
 
   final Map<int, Stopwatch> _runningTimers = {};
   final TaskHistoryRepository _historyRepo = TaskHistoryRepository();
+  // Notifier to signal when task records change (completed/rescheduled/deleted)
+  final ValueNotifier<bool> tasksChanged = ValueNotifier<bool>(false);
 
   // Getters
   TaskModel? get activeTask => _activeTask;
@@ -309,6 +311,10 @@ class TaskTimerService extends ChangeNotifier {
           '[TaskTimerService] Marked task as completed: ${task.taskName}, Time taken: ${_formatDuration(completionTime)}',
         );
       }
+      // Signal listeners that persisted task records changed (so UI can refresh lists)
+      try {
+        tasksChanged.value = true;
+      } catch (_) {}
     } catch (e, stackTrace) {
       developer.log(
         '[TaskTimerService] Error marking task as completed',

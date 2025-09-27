@@ -4,6 +4,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'dart:async';
 import 'package:intelliboro/views/task_list_view.dart';
+import 'package:intelliboro/views/task_statistics_view.dart';
+import 'package:intelliboro/views/notification_history_view.dart';
 import 'package:intelliboro/services/location_service.dart';
 import 'package:intelliboro/services/task_timer_service.dart';
 import 'package:intelliboro/repository/task_repository.dart';
@@ -662,7 +664,7 @@ class _AppInitializerState extends State<AppInitializer> {
       debugPrint(
         "[_AppInitializerState] Building: Permissions granted, showing TaskListView.",
       );
-      return const TaskListView();
+      return const HomeShell();
     } else {
       debugPrint(
         "[_AppInitializerState] Building: Permissions not granted, showing fallback screen.",
@@ -699,5 +701,55 @@ class _AppInitializerState extends State<AppInitializer> {
         ),
       );
     }
+  }
+}
+
+/// Simple bottom navigation shell using Material 3 NavigationBar.
+class HomeShell extends StatefulWidget {
+  const HomeShell({Key? key}) : super(key: key);
+
+  @override
+  State<HomeShell> createState() => _HomeShellState();
+}
+
+class _HomeShellState extends State<HomeShell> {
+  int _selectedIndex = 0;
+
+  static const List<Widget> _pages = <Widget>[
+    TaskListView(),
+    TaskStatisticsView(),
+    NotificationHistoryView(),
+  ];
+
+  void _onItemTapped(int index) {
+    setState(() {
+      _selectedIndex = index;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: IndexedStack(index: _selectedIndex, children: _pages),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: _onItemTapped,
+        height: 72,
+        destinations: [
+          NavigationDestination(
+            icon: const Icon(Icons.list_rounded),
+            label: 'Tasks',
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.bar_chart_rounded),
+            label: 'Statistics',
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.notifications_rounded),
+            label: 'Notifications',
+          ),
+        ],
+      ),
+    );
   }
 }
