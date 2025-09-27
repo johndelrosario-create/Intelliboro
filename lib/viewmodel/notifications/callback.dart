@@ -11,13 +11,14 @@ import 'package:sqflite/sqflite.dart';
 import 'package:sqflite/sqlite_api.dart';
 import 'package:meta/meta.dart';
 
+
 import 'package:intelliboro/services/geofence_storage.dart';
 import 'package:intelliboro/services/database_service.dart';
 
 @pragma('vm:entry-point')
 Future<void> geofenceTriggered(
   native_geofence.GeofenceCallbackParams params,
-  ) async {
+) async {
   Database? database;
 
   try {
@@ -35,20 +36,28 @@ Future<void> geofenceTriggered(
 
     // Filter for 'enter' events before proceeding
     if (params.event != native_geofence.GeofenceEvent.enter) {
-      developer.log('[GeofenceCallback] Received event: ${params.event.name}, which is not an ENTER event. Skipping notification and history saving.');
+      developer.log(
+        '[GeofenceCallback] Received event: ${params.event.name}, which is not an ENTER event. Skipping notification and history saving.',
+      );
       // Close the database if it was opened, as we are returning early.
       if (database != null && database.isOpen) {
         try {
           await database.close();
-          developer.log('[GeofenceCallback] Closed database connection after skipping non-enter event.');
+          developer.log(
+            '[GeofenceCallback] Closed database connection after skipping non-enter event.',
+          );
         } catch (e) {
-          developer.log('[GeofenceCallback] Error closing database after skipping non-enter event: $e');
+          developer.log(
+            '[GeofenceCallback] Error closing database after skipping non-enter event: $e',
+          );
         }
       }
       return;
     }
 
-    developer.log('[GeofenceCallback] Processing ENTER event for geofence(s): ${params.geofences.map((g) => g.id).join(', ')}');
+    developer.log(
+      '[GeofenceCallback] Processing ENTER event for geofence(s): ${params.geofences.map((g) => g.id).join(', ')}',
+    );
 
     // Log geofence details (now only for enter events)
     for (final geofence in params.geofences) {
@@ -271,7 +280,9 @@ Future<void> geofenceTriggered(
         developer.log(
           '[GeofenceCallback] WARNING: Database connection is not open, reconnecting...',
         );
-        final newDb = await dbService.openNewBackgroundConnection(readOnly: false);
+        final newDb = await dbService.openNewBackgroundConnection(
+          readOnly: false,
+        );
         if (newDb == null || !newDb.isOpen) {
           developer.log(
             '[GeofenceCallback] ERROR: Failed to reopen database connection',
@@ -314,12 +325,18 @@ Future<void> geofenceTriggered(
           );
 
           // Notify the main UI isolate that a new notification was saved
-          final SendPort? uiSendPort = IsolateNameServer.lookupPortByName('intelliboro_new_notification_port');
+          final SendPort? uiSendPort = IsolateNameServer.lookupPortByName(
+            'intelliboro_new_notification_port',
+          );
           if (uiSendPort != null) {
-            developer.log('[GeofenceCallback] Found UI SendPort, sending notification update signal.');
+            developer.log(
+              '[GeofenceCallback] Found UI SendPort, sending notification update signal.',
+            );
             uiSendPort.send('new_notification_saved');
           } else {
-            developer.log('[GeofenceCallback] WARNING: Could not find UI SendPort \'intelliboro_new_notification_port\'. UI will not be updated immediately.');
+            developer.log(
+              '[GeofenceCallback] WARNING: Could not find UI SendPort \'intelliboro_new_notification_port\'. UI will not be updated immediately.',
+            );
           }
         } catch (e, stackTrace) {
           developer.log(
@@ -334,7 +351,9 @@ Future<void> geofenceTriggered(
               '[GeofenceCallback] Retrying with fresh database connection...',
             );
             // Ensure the retry connection is writable
-            final retryDb = await dbService.openNewBackgroundConnection(readOnly: false);
+            final retryDb = await dbService.openNewBackgroundConnection(
+              readOnly: false,
+            );
             if (retryDb.isOpen) {
               final geofenceData = await storage.getGeofenceById(geofence.id);
               final now = DateTime.now();
@@ -355,12 +374,19 @@ Future<void> geofenceTriggered(
               );
 
               // Notify the main UI isolate that a new notification was saved (after retry)
-              final SendPort? uiSendPortRetry = IsolateNameServer.lookupPortByName('intelliboro_new_notification_port');
+              final SendPort? uiSendPortRetry =
+                  IsolateNameServer.lookupPortByName(
+                    'intelliboro_new_notification_port',
+                  );
               if (uiSendPortRetry != null) {
-                developer.log('[GeofenceCallback] Found UI SendPort (after retry), sending notification update signal.');
+                developer.log(
+                  '[GeofenceCallback] Found UI SendPort (after retry), sending notification update signal.',
+                );
                 uiSendPortRetry.send('new_notification_saved_after_retry');
               } else {
-                developer.log('[GeofenceCallback] WARNING: Could not find UI SendPort \'intelliboro_new_notification_port\' (after retry). UI will not be updated immediately.');
+                developer.log(
+                  '[GeofenceCallback] WARNING: Could not find UI SendPort \'intelliboro_new_notification_port\' (after retry). UI will not be updated immediately.',
+                );
               }
             }
           } catch (retryError, retryStack) {

@@ -1,17 +1,20 @@
 import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
+import 'package:intelliboro/model/recurring_pattern.dart';
 
 class TaskModel {
   final int? id;
   //TaskName
   final String taskName;
-  final int taskPriority;
+  final int taskPriority; // 1-5 scale (1=low, 5=high)
   // Stores selected time
   final TimeOfDay taskTime;
   // Stores selected date
   final DateTime taskDate;
 
   final bool isRecurring;
+  final RecurringPattern? recurringPattern;
+  final String? geofenceId;
   final bool isCompleted;
 
   // Task notification type?
@@ -25,11 +28,10 @@ class TaskModel {
     required this.taskTime,
     required this.taskDate,
     required this.isRecurring,
+    this.recurringPattern,
     required this.isCompleted,
-  }) : assert(
-         taskPriority >= 1 && taskPriority <= 5,
-         'Priority must be between 1 and 5',
-       );
+    this.geofenceId,
+  }) : assert(taskPriority >= 1 && taskPriority <= 5, 'Priority must be between 1 and 5');
 
   // Convert TaskModel to Map
   Map<String, dynamic> toMap() {
@@ -37,10 +39,12 @@ class TaskModel {
       'id': id,
       'taskName': taskName,
       'taskPriority': taskPriority,
-      'taskTime': taskTime.hour.toString() + ':' + taskTime.minute.toString(),
+      'taskTime': '${taskTime.hour}:${taskTime.minute}',
       'taskDate': DateFormat('yyyy-MM-dd').format(taskDate),
       'isRecurring': isRecurring ? 1 : 0,
+      'recurring_pattern': recurringPattern?.toJson(),
       'isCompleted': isCompleted ? 1 : 0,
+      'geofence_id': geofenceId,
     };
   }
 
@@ -56,7 +60,11 @@ class TaskModel {
       ),
       taskDate: DateTime.parse(map['taskDate'] as String),
       isRecurring: (map['isRecurring'] as int) == 1,
+      recurringPattern: map['recurring_pattern'] != null 
+        ? RecurringPattern.fromJson(map['recurring_pattern'] as String)
+        : null,
       isCompleted: (map['isCompleted'] as int) == 1,
+      geofenceId: map['geofence_id'] as String?,
     );
   }
 
@@ -89,13 +97,13 @@ class TaskModel {
       taskTime.hour,
       taskTime.minute,
     );
-
+    
     // Calculate hours until task
     final hoursUntilTask = taskDateTime.difference(now).inHours;
-
+    
     // Base priority from user (1-5 scale)
     double effectivePriority = taskPriority.toDouble();
-
+    
     // Add urgency multiplier based on time proximity
     if (hoursUntilTask <= 0) {
       // Task is overdue or happening now - maximum urgency
@@ -111,7 +119,7 @@ class TaskModel {
       effectivePriority += 0.5;
     }
     // Tasks more than 24 hours away get no urgency bonus
-
+    
     return effectivePriority;
   }
 
@@ -120,8 +128,88 @@ class TaskModel {
     return b.getEffectivePriority().compareTo(a.getEffectivePriority());
   }
 
+  /// Get a user-friendly description of the recurring pattern
+  String get recurringDescription {
+    if (!isRecurring || recurringPattern == null) {
+      return 'One-time task';
+    }
+    return recurringPattern!.description;
+  }
+
+  /// Get a short description of the recurring pattern for UI
+  String get recurringShortDescription {
+    if (!isRecurring || recurringPattern == null) {
+      return 'Once';
+    }
+    return recurringPattern!.shortDescription;
+  }
+
+  /// Check if this task should occur on a specific date
+  bool shouldOccurOn(DateTime date) {
+    if (!isRecurring || recurringPattern == null) {
+      // For one-time tasks, check if it matches the exact date
+      return taskDate.year == date.year && 
+             taskDate.month == date.month && 
+             taskDate.day == date.day;
+    }
+    return recurringPattern!.shouldOccurOn(date);
+  }
+
+  /// Get the next occurrence of this task after the given date
+  DateTime? getNextOccurrence(DateTime after) {
+    if (!isRecurring || recurringPattern == null) {
+      // For one-time tasks, return the task date if it's after the given date
+      final taskDateTime = DateTime(
+        taskDate.year, taskDate.month, taskDate.day,
+        taskTime.hour, taskTime.minute,
+      );
+      return taskDateTime.isAfter(after) ? taskDate : null;
+    }
+    return recurringPattern!.getNextOccurrence(after);
+  }
+
+  /// Create a copy of this task with a new date (for recurring task instances)
+  TaskModel copyWithDate(DateTime newDate) {
+    return TaskModel(
+      id: null, // New instance gets a new ID
+      taskName: taskName,
+      taskPriority: taskPriority,
+      taskTime: taskTime,
+      taskDate: newDate,
+      isRecurring: isRecurring,
+      recurringPattern: recurringPattern,
+      isCompleted: false, // New instances start as incomplete
+      geofenceId: geofenceId,
+    );
+  }
+
+  /// Create a copy with modified values
+  TaskModel copyWith({
+    int? id,
+    String? taskName,
+    int? taskPriority,
+    TimeOfDay? taskTime,
+    DateTime? taskDate,
+    bool? isRecurring,
+    RecurringPattern? recurringPattern,
+    bool? isCompleted,
+    String? geofenceId,
+  }) {
+    return TaskModel(
+      id: id ?? this.id,
+      taskName: taskName ?? this.taskName,
+      taskPriority: taskPriority ?? this.taskPriority,
+      taskTime: taskTime ?? this.taskTime,
+      taskDate: taskDate ?? this.taskDate,
+      isRecurring: isRecurring ?? this.isRecurring,
+      recurringPattern: recurringPattern ?? this.recurringPattern,
+      isCompleted: isCompleted ?? this.isCompleted,
+      geofenceId: geofenceId ?? this.geofenceId,
+    );
+  }
+
   @override
   String toString() {
-    return 'TaskModel{taskName: $taskName, taskPriority: $taskPriority ($priorityString), taskTime: $taskTime, taskDate: $taskDate, isRecurring: $isRecurring, isCompleted: $isCompleted}';
+    return 'TaskModel{taskName: $taskName, taskPriority: $taskPriority ($priorityString), taskTime: $taskTime, taskDate: $taskDate, isRecurring: $isRecurring, recurringPattern: $recurringPattern, isCompleted: $isCompleted}';
   }
 }

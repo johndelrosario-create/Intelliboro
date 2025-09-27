@@ -7,10 +7,11 @@ class DatabaseService {
   static final DatabaseService _instance = DatabaseService._constructor();
   static Database? _mainIsolateDatabase; // Renamed for clarity
   static const String _dbName = 'intelliboro.db';
-  static const int _dbVersion = 3;
+  static const int _dbVersion = 6;
   static const String _geofencesTableName = 'geofences';
   static const String _tasksTableName = 'tasks';
   static const String _notificationHistoryTableName = 'notification_history';
+  static const String _taskHistoryTableName = 'task_history';
 
   // Lock to prevent concurrent initialization from main isolate
   // static bool _isInitializingMainDB = false;
@@ -222,10 +223,18 @@ class DatabaseService {
         taskDate TEXT NOT NULL,
         isRecurring INTEGER NOT NULL,
         isCompleted INTEGER NOT NULL,
-        created_at INTEGER DEFAULT (strftime('%s', 'now'))
+        recurring_pattern TEXT,
+        geofence_id TEXT,
+        created_at INTEGER DEFAULT (strftime('%s', 'now')),
+        FOREIGN KEY (geofence_id) REFERENCES $_geofencesTableName(id) ON DELETE SET NULL
       )
     ''');
     developer.log('[DatabaseService] _onCreate: $_tasksTableName created.');
+
+    // Create index for geofence_id for better query performance
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_${_tasksTableName}_geofence_id ON $_tasksTableName (geofence_id)',
+    );
 
     developer.log(
       '[DatabaseService] _createAllTables: Creating table $_notificationHistoryTableName',
@@ -243,6 +252,29 @@ class DatabaseService {
     ''');
     developer.log(
       '[DatabaseService] _onCreate: $_notificationHistoryTableName created.',
+    );
+
+    developer.log(
+      '[DatabaseService] _createAllTables: Creating table $_taskHistoryTableName',
+    );
+    await db.execute(''' 
+      CREATE TABLE IF NOT EXISTS $_taskHistoryTableName (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER,
+        task_name TEXT NOT NULL,
+        task_priority INTEGER NOT NULL,
+        start_time INTEGER NOT NULL,
+        end_time INTEGER NOT NULL,
+        duration_seconds INTEGER NOT NULL,
+        completion_date TEXT NOT NULL,
+        geofence_id TEXT,
+        created_at INTEGER DEFAULT (strftime('%s', 'now')),
+        FOREIGN KEY (task_id) REFERENCES $_tasksTableName(id) ON DELETE SET NULL,
+        FOREIGN KEY (geofence_id) REFERENCES $_geofencesTableName(id) ON DELETE SET NULL
+      )
+    ''');
+    developer.log(
+      '[DatabaseService] _onCreate: $_taskHistoryTableName created.',
     );
   }
 
@@ -265,6 +297,67 @@ class DatabaseService {
     
     if (oldVersion < 3) {
       // Add upgrade logic for version 3 if needed
+    }
+    
+    if (oldVersion < 4) {
+      // Add geofence_id column to tasks table
+      try {
+        await db.execute('ALTER TABLE tasks ADD COLUMN geofence_id TEXT');
+        developer.log('[DatabaseService] Added geofence_id column to tasks table');
+      } catch (e) {
+        developer.log('[DatabaseService] Note: geofence_id column may already exist: $e');
+      }
+      
+      // Create index for geofence_id for better query performance
+      try {
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_tasks_geofence_id ON tasks (geofence_id)',
+        );
+        developer.log('[DatabaseService] Created index for geofence_id column');
+      } catch (e) {
+        developer.log('[DatabaseService] Error creating geofence_id index: $e');
+      }
+    }
+    
+    if (oldVersion < 5) {
+      // Add task_history table
+      try {
+        await db.execute(''' 
+          CREATE TABLE IF NOT EXISTS $_taskHistoryTableName (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER,
+            task_name TEXT NOT NULL,
+            task_priority INTEGER NOT NULL,
+            start_time INTEGER NOT NULL,
+            end_time INTEGER NOT NULL,
+            duration_seconds INTEGER NOT NULL,
+            completion_date TEXT NOT NULL,
+            geofence_id TEXT,
+            created_at INTEGER DEFAULT (strftime('%s', 'now')),
+            FOREIGN KEY (task_id) REFERENCES $_tasksTableName(id) ON DELETE SET NULL,
+            FOREIGN KEY (geofence_id) REFERENCES $_geofencesTableName(id) ON DELETE SET NULL
+          )
+        ''');
+        developer.log('[DatabaseService] Added task_history table');
+        
+        // Create index for performance
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_task_history_completion_date ON $_taskHistoryTableName (completion_date)',
+        );
+        developer.log('[DatabaseService] Created index for task_history table');
+      } catch (e) {
+        developer.log('[DatabaseService] Error creating task_history table: $e');
+      }
+    }
+    
+    if (oldVersion < 6) {
+      // Add recurring_pattern column to tasks table
+      try {
+        await db.execute('ALTER TABLE $_tasksTableName ADD COLUMN recurring_pattern TEXT');
+        developer.log('[DatabaseService] Added recurring_pattern column to tasks table');
+      } catch (e) {
+        developer.log('[DatabaseService] Note: recurring_pattern column may already exist: $e');
+      }
     }
   }
 
@@ -352,6 +445,157 @@ class DatabaseService {
     } catch (e, stackTrace) {
       developer.log(
         '[DatabaseService] Error clearing notification history',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  // Task History Methods
+  Future<void> insertTaskHistory(
+    Database db,
+    Map<String, dynamic> historyData,
+  ) async {
+    try {
+      await db.insert(
+        _taskHistoryTableName,
+        historyData,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      developer.log(
+        '[DatabaseService] Inserted task history: ${historyData['task_name']}',
+      );
+    } catch (e, stackTrace) {
+      developer.log(
+        '[DatabaseService] Error inserting task history',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getAllTaskHistory(Database db) async {
+    try {
+      final result = await db.query(
+        _taskHistoryTableName,
+        orderBy: 'completion_date DESC, end_time DESC',
+      );
+      developer.log(
+        '[DatabaseService] Retrieved ${result.length} task history records',
+      );
+      return result;
+    } catch (e, stackTrace) {
+      developer.log(
+        '[DatabaseService] Error getting task history',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getTaskHistoryByDateRange(
+    Database db,
+    String startDate,
+    String endDate,
+  ) async {
+    try {
+      final result = await db.query(
+        _taskHistoryTableName,
+        where: 'completion_date >= ? AND completion_date <= ?',
+        whereArgs: [startDate, endDate],
+        orderBy: 'completion_date DESC, end_time DESC',
+      );
+      developer.log(
+        '[DatabaseService] Retrieved ${result.length} task history records for date range $startDate to $endDate',
+      );
+      return result;
+    } catch (e, stackTrace) {
+      developer.log(
+        '[DatabaseService] Error getting task history by date range',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getTaskHistoryByTaskId(
+    Database db,
+    int taskId,
+  ) async {
+    try {
+      final result = await db.query(
+        _taskHistoryTableName,
+        where: 'task_id = ?',
+        whereArgs: [taskId],
+        orderBy: 'end_time DESC',
+      );
+      developer.log(
+        '[DatabaseService] Retrieved ${result.length} task history records for task ID $taskId',
+      );
+      return result;
+    } catch (e, stackTrace) {
+      developer.log(
+        '[DatabaseService] Error getting task history by task ID',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>?> getTaskStatistics(Database db) async {
+    try {
+      // Get total completed tasks
+      final totalResult = await db.rawQuery(
+        'SELECT COUNT(*) as total_tasks FROM $_taskHistoryTableName',
+      );
+      
+      // Get total time spent
+      final timeResult = await db.rawQuery(
+        'SELECT SUM(duration_seconds) as total_seconds FROM $_taskHistoryTableName',
+      );
+      
+      // Get average task duration
+      final avgResult = await db.rawQuery(
+        'SELECT AVG(duration_seconds) as avg_seconds FROM $_taskHistoryTableName',
+      );
+      
+      // Get tasks completed today
+      final today = DateTime.now().toIso8601String().split('T')[0];
+      final todayResult = await db.rawQuery(
+        'SELECT COUNT(*) as today_tasks FROM $_taskHistoryTableName WHERE completion_date = ?',
+        [today],
+      );
+      
+      return {
+        'total_tasks': totalResult.first['total_tasks'] ?? 0,
+        'total_seconds': timeResult.first['total_seconds'] ?? 0,
+        'avg_seconds': avgResult.first['avg_seconds'] ?? 0,
+        'today_tasks': todayResult.first['today_tasks'] ?? 0,
+      };
+    } catch (e, stackTrace) {
+      developer.log(
+        '[DatabaseService] Error getting task statistics',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  Future<void> clearAllTaskHistory(Database db) async {
+    try {
+      final count = await db.delete(_taskHistoryTableName);
+      developer.log(
+        '[DatabaseService] Cleared $count task history records',
+      );
+    } catch (e, stackTrace) {
+      developer.log(
+        '[DatabaseService] Error clearing task history',
         error: e,
         stackTrace: stackTrace,
       );
