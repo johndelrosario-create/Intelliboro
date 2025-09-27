@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intelliboro/services/pin_service.dart';
+import 'package:intelliboro/services/offline_map_service.dart';
+import 'package:intelliboro/services/geofence_storage.dart';
 
 class SettingsView extends StatefulWidget {
   const SettingsView({super.key});
@@ -12,6 +14,7 @@ class _SettingsViewState extends State<SettingsView> {
   bool _loading = true;
   bool _pinEnabled = false;
   String? _status;
+  bool _offlineBusy = false;
 
   @override
   void initState() {
@@ -113,6 +116,87 @@ class _SettingsViewState extends State<SettingsView> {
             title: const Text('Change PIN'),
             subtitle: const Text('Requires current PIN'),
             onTap: _pinEnabled ? _changePin : null,
+          ),
+          const Divider(height: 32),
+          ListTile(
+            leading: const Icon(Icons.download_for_offline_outlined),
+            title: const Text('Offline Maps'),
+            subtitle: const Text('Download tiles for offline use (Mapbox)'),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                FilledButton.icon(
+                  onPressed: _offlineBusy
+                      ? null
+                      : () async {
+                          setState(() {
+                            _offlineBusy = true;
+                            _status = 'Initializing offline service...';
+                          });
+                          try {
+                            await OfflineMapService().init(styleUri: 'mapbox://styles/mapbox/streets-v12');
+                            await OfflineMapService().ensureHomeRegion();
+                            setState(() => _status = 'Home region (25km, z8-16) queued.');
+                          } catch (e) {
+                            setState(() => _status = 'Offline init/download failed: $e');
+                          } finally {
+                            setState(() => _offlineBusy = false);
+                          }
+                        },
+                  icon: const Icon(Icons.home_work_outlined),
+                  label: const Text('Download Home Region (25 km)'),
+                ),
+                const SizedBox(height: 8),
+                FilledButton.icon(
+                  onPressed: _offlineBusy
+                      ? null
+                      : () async {
+                          setState(() {
+                            _offlineBusy = true;
+                            _status = 'Queuing geofence regions...';
+                          });
+                          try {
+                            await OfflineMapService().init(styleUri: 'mapbox://styles/mapbox/streets-v12');
+                            final gfs = await GeofenceStorage().loadGeofences();
+                            for (final g in gfs) {
+                              await OfflineMapService().ensureRegionForGeofence(g);
+                            }
+                            setState(() => _status = 'Queued ${gfs.length} geofence regions (3km, z10-17).');
+                          } catch (e) {
+                            setState(() => _status = 'Failed to queue geofence regions: $e');
+                          } finally {
+                            setState(() => _offlineBusy = false);
+                          }
+                        },
+                  icon: const Icon(Icons.where_to_vote_outlined),
+                  label: const Text('Download Regions for All Geofences'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: _offlineBusy
+                      ? null
+                      : () async {
+                          setState(() {
+                            _offlineBusy = true;
+                            _status = 'Clearing offline data...';
+                          });
+                          try {
+                            await OfflineMapService().clearAll();
+                            setState(() => _status = 'Requested offline data clear.');
+                          } catch (e) {
+                            setState(() => _status = 'Failed to clear offline data: $e');
+                          } finally {
+                            setState(() => _offlineBusy = false);
+                          }
+                        },
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('Clear Offline Data'),
+                ),
+              ],
+            ),
           ),
           if (_status != null)
             Padding(

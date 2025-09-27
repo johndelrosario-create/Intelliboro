@@ -7,6 +7,7 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart' as locator;
 import 'package:intelliboro/services/location_service.dart';
 import 'package:intelliboro/services/geofence_storage.dart';
+import 'package:intelliboro/services/offline_map_service.dart';
 import 'package:intelliboro/repository/task_repository.dart';
 import 'package:intelliboro/models/geofence_data.dart';
 
@@ -197,6 +198,15 @@ class MapboxMapViewModel extends ChangeNotifier {
   Future<void> onMapCreated(MapboxMap mapboxMap) async {
     debugPrint('[MapViewModel] onMapCreated called.');
     this.mapboxMap = mapboxMap;
+    // Initialize offline map service with a default style
+    try {
+      await OfflineMapService().init(styleUri: 'mapbox://styles/mapbox/streets-v12');
+      // Kick off home region caching in background
+      // ignore: unawaited_futures
+      OfflineMapService().ensureHomeRegion();
+    } catch (e) {
+      debugPrint('[MapViewModel] OfflineMapService init error: $e');
+    }
 
     try {
       // Create annotation managers if they don't exist
@@ -569,6 +579,9 @@ class MapboxMapViewModel extends ChangeNotifier {
 
           geofenceZoneSymbolIds.add(annotation);
           debugPrint('Added geofence ${geofence.id} to map (px=${pixelRadius.toStringAsFixed(2)}, opacity=$visibleOpacity, strokeW=$visibleStrokeWidth)');
+          // Queue offline region caching for this geofence (non-blocking)
+          // ignore: unawaited_futures
+          OfflineMapService().ensureRegionForGeofence(geofence);
         } catch (e, stackTrace) {
           debugPrint(
             'Error displaying geofence ${geofence.id}: $e\n$stackTrace',
@@ -946,6 +959,14 @@ class MapboxMapViewModel extends ChangeNotifier {
     );
     geofenceZoneHelperIds.add(helperAnnotation);
     isGeofenceHelperPlaced = true;
+
+    // Also, ensure the persistent symbol for this geofence would be displayed correctly.
+    // _displaySavedGeofences will handle drawing all persistent symbols,
+    // but we need to ensure the helper reflects the one being edited.
+    // No, _displaySavedGeofences shows ALL. For an edit view, we might want to show only the one being edited,
+    // or highlight it. For now, the helper represents the editable area.
+    // The persistent ones are handled by _loadSavedGeofences -> _displaySavedGeofences
+    // which is fine, as the edit view will have its own map and won't call _displaySavedGeofences for *all* geofences.
 
     debugPrint(
       "Helper for existing geofence placed at ${point.coordinates} with radius ${_currentHelperRadiusInPixels}px for ${radiusMeters}m",

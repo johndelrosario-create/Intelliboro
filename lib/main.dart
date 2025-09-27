@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:intelliboro/views/task_list_view.dart';
 import 'package:intelliboro/views/task_statistics_view.dart';
 import 'package:intelliboro/views/notification_history_view.dart';
+import 'package:intelliboro/services/location_service.dart';
 import 'package:intelliboro/services/geofencing_service.dart';
 import 'package:intelliboro/services/task_timer_service.dart';
 import 'package:intelliboro/repository/task_repository.dart';
@@ -24,8 +25,8 @@ import 'package:intelliboro/services/pin_service.dart';
 import 'package:intelliboro/views/pin_setup_view.dart';
 import 'package:intelliboro/views/pin_lock_view.dart';
 import 'package:intelliboro/views/settings_view.dart';
-import 'package:permission_handler/permission_handler.dart' show openAppSettings;
-import 'package:intelliboro/services/location_service.dart';
+import 'package:permission_handler/permission_handler.dart'
+    show openAppSettings;
 
 // Define the access token
 const String accessToken = String.fromEnvironment('ACCESS_TOKEN');
@@ -55,9 +56,7 @@ Future<void> _showGlobalSwitchDialog(TaskSwitchRequest req) async {
       builder: (ctx) {
         return AlertDialog(
           title: const Text('Higher priority task available'),
-          content: Text(
-            'Start "${req.newTask.taskName}" now or snooze it?',
-          ),
+          content: Text('Start "${req.newTask.taskName}" now or snooze it?'),
           actions: [
             TextButton(
               onPressed: () {
@@ -137,9 +136,7 @@ class _PinGateState extends State<PinGate> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     if (!_promptAnswered) {
       return PinSetupView(onCompleted: _reloadAndProceed);
@@ -467,7 +464,9 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
       // SNOOZE_LATER: bring app to foreground so user can pick a snooze duration
       try {
         navigatorKey.currentState?.pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const HomeShell()),
+          MaterialPageRoute(
+            builder: (_) => const HomeShell(locationEnabled: true),
+          ),
           (r) => false,
         );
       } catch (e) {
@@ -763,7 +762,8 @@ class _AppInitializerState extends State<AppInitializer> {
       setState(() {
         _locationAllowed = locationGranted;
         // Proceed if notifications are allowed, even if location is denied
-        _permissionsGranted = (notificationStatus.isGranted || notificationStatus.isLimited);
+        _permissionsGranted =
+            (notificationStatus.isGranted || notificationStatus.isLimited);
       });
 
       if (!_permissionsGranted) {
@@ -982,7 +982,8 @@ class _HomeShellState extends State<HomeShell> {
                 onPressed: () async {
                   // Attempt a re-check/ask
                   try {
-                    final granted = await LocationService().requestLocationPermission();
+                    final granted =
+                        await LocationService().requestLocationPermission();
                     if (!mounted) return;
                     if (granted) {
                       setState(() {
