@@ -74,6 +74,21 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
     // Parse JSON payload created by the geofence background callback
     final Map<String, dynamic> data =
         jsonDecode(payload) as Map<String, dynamic>;
+    // If this payload contains a switchRequestId (from TaskTimerService), allow quick response
+    if (data.containsKey('switchRequestId')) {
+      final switchId = data['switchRequestId'] as String?;
+      if (switchId != null) {
+        // If action is DO_NOW we respond true, DO_LATER responds false
+        if (response.actionId == 'com.intelliboro.DO_NOW') {
+          taskTimerService.respondSwitchRequest(switchId, true);
+          return;
+        }
+        if (response.actionId == 'com.intelliboro.DO_LATER') {
+          taskTimerService.respondSwitchRequest(switchId, false);
+          return;
+        }
+      }
+    }
     final dynamic nid = data['notificationId'];
     final int? notificationIdFromPayload =
         nid is int ? nid : (nid is String ? int.tryParse(nid) : null);

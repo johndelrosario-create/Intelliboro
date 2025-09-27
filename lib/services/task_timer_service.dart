@@ -9,6 +9,25 @@ import 'package:intelliboro/repository/task_history_repository.dart';
 import 'package:intelliboro/services/geofence_storage.dart';
 import 'package:intelliboro/services/geofencing_service.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
+import 'dart:math';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+/// Request emitted when a higher-priority task arrives and a user decision is needed.
+class TaskSwitchRequest {
+  final TaskModel newTask;
+  final Completer<bool> _completer;
+  TaskSwitchRequest(this.newTask) : _completer = Completer<bool>();
+
+  /// Complete with true to start the new task now, false to snooze it.
+  void respond(bool startNow) {
+    if (!_completer.isCompleted) _completer.complete(startNow);
+  }
+
+  /// Internal future used by the service to wait for decision.
+  Future<bool> get future => _completer.future;
+}
 
 /// Service responsible for managing task timers and active task tracking
 class TaskTimerService extends ChangeNotifier {
@@ -31,6 +50,11 @@ class TaskTimerService extends ChangeNotifier {
   /// Can be changed by the user via UI.
   Duration defaultSnoozeDuration = const Duration(minutes: 5);
   final TaskHistoryRepository _historyRepo = TaskHistoryRepository();
+  // Stream controller for switch requests (broadcast so multiple listeners may observe)
+  final StreamController<TaskSwitchRequest> _switchController =
+      StreamController.broadcast();
+  // Map of pending switch requests accessible by a generated id (for notification actions)
+  final Map<String, TaskSwitchRequest> _pendingSwitchRequests = {};
   // Notifier to signal when task records change (completed/rescheduled/deleted)
   final ValueNotifier<bool> tasksChanged = ValueNotifier<bool>(false);
 
@@ -40,6 +64,22 @@ class TaskTimerService extends ChangeNotifier {
   Duration get elapsedTime => _elapsedTime;
   bool get isPaused => _isPaused;
   bool get hasActiveTask => _activeTask != null;
+
+  /// Stream of switch requests that UI can listen to and prompt the user.
+  Stream<TaskSwitchRequest> get switchRequests => _switchController.stream;
+
+  /// Respond to a pending switch request by id (used by notification handler).
+  bool respondSwitchRequest(String id, bool startNow) {
+    final req = _pendingSwitchRequests.remove(id);
+    if (req == null) return false;
+    try {
+      req.respond(startNow);
+      return true;
+    } catch (e) {
+      developer.log('[TaskTimerService] respondSwitchRequest error: $e');
+      return false;
+    }
+  }
 
   /// Start timing a task
   Future<bool> startTask(TaskModel task) async {
@@ -63,11 +103,84 @@ class TaskTimerService extends ChangeNotifier {
             '[TaskTimerService] New task has higher priority ($newPriority vs $currentPriority), switching tasks',
           );
 
-          // Stop current task and reschedule it
-          await _stopCurrentTaskAndReschedule();
+          // Emit a switch request and wait for user's decision.
+          try {
+            final req = TaskSwitchRequest(task);
+            // register request and notify UI listeners
+            final switchId =
+                '${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(9999)}';
+            _pendingSwitchRequests[switchId] = req;
+            _switchController.add(req);
 
-          // Start the new higher priority task
-          return _startTaskTimer(task);
+            // Post a local notification so user can respond from background
+            try {
+              final plugin = FlutterLocalNotificationsPlugin();
+              const AndroidNotificationDetails androidDetails =
+                  AndroidNotificationDetails(
+                    'geofence_alerts',
+                    'Geofence Alerts',
+                    channelDescription: 'Switch requests for tasks',
+                    importance: Importance.max,
+                    priority: Priority.high,
+                    playSound: true,
+                    styleInformation: BigTextStyleInformation(''),
+                    actions: <AndroidNotificationAction>[
+                      AndroidNotificationAction(
+                        'com.intelliboro.DO_NOW',
+                        'Start Now',
+                        showsUserInterface: true,
+                        cancelNotification: true,
+                      ),
+                      AndroidNotificationAction(
+                        'com.intelliboro.DO_LATER',
+                        'Snooze',
+                        showsUserInterface: false,
+                        cancelNotification: false,
+                      ),
+                    ],
+                  );
+              final details = NotificationDetails(android: androidDetails);
+              final payload = jsonEncode({
+                'switchRequestId': switchId,
+                'taskId': task.id,
+              });
+              await plugin.show(
+                Random().nextInt(2147483647),
+                'Higher priority task',
+                '"${task.taskName}" is higher priority. Start now or snooze?',
+                details,
+                payload: payload,
+              );
+            } catch (e) {
+              developer.log(
+                '[TaskTimerService] Failed to post switch notification: $e',
+              );
+            }
+
+            // Wait up to 60 seconds for user decision; default to snooze if none.
+            final decision = await req.future.timeout(
+              const Duration(seconds: 60),
+              onTimeout: () => false,
+            );
+            if (decision == true) {
+              // User chose to start the new task: stop current and start new
+              await _stopCurrentTaskAndReschedule();
+              return _startTaskTimer(task);
+            } else {
+              // User chose to snooze (or timed out): add to pending using default snooze
+              await _addToPending(task, defaultSnoozeDuration);
+              return false;
+            }
+          } catch (e, st) {
+            developer.log(
+              '[TaskTimerService] Error handling switch request: $e',
+              error: e,
+              stackTrace: st,
+            );
+            // On error: safe fallback is to snooze the incoming task
+            await _addToPending(task, defaultSnoozeDuration);
+            return false;
+          }
         } else {
           developer.log(
             '[TaskTimerService] Current task has higher/equal priority ($currentPriority vs $newPriority), rescheduling new task',
@@ -101,6 +214,23 @@ class TaskTimerService extends ChangeNotifier {
       );
       return;
     }
+    // Allow per-task snooze override via SharedPreferences: 'snooze_minutes_task_{id}'
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = 'snooze_minutes_task_$id';
+      final override = prefs.getInt(key);
+      if (override != null && override > 0) {
+        snoozeDuration = Duration(minutes: override);
+        developer.log(
+          '[TaskTimerService] Using per-task snooze override for task $id: ${override}m',
+        );
+      }
+    } catch (e) {
+      developer.log(
+        '[TaskTimerService] Failed to read per-task snooze override: $e',
+      );
+    }
+
     final until = DateTime.now().add(snoozeDuration);
     _pendingUntil[id] = until;
     developer.log(

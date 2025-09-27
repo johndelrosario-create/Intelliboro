@@ -33,6 +33,7 @@ class _TaskListViewState extends State<TaskListView>
   late Animation<double> _fabAnimation;
   final Map<int, String> _taskTimeCache = {}; // Cache for task time strings
   Timer? _pendingRefreshTimer;
+  StreamSubscription? _switchSubscription;
 
   @override
   void initState() {
@@ -70,6 +71,12 @@ class _TaskListViewState extends State<TaskListView>
       )) {
         if (mounted) setState(() {});
       }
+    });
+
+    // Subscribe to switch requests coming from TaskTimerService
+    _switchSubscription = _taskTimerService.switchRequests.listen((req) {
+      if (!mounted) return;
+      _showSwitchDialog(req);
     });
   }
 
@@ -156,6 +163,7 @@ class _TaskListViewState extends State<TaskListView>
     _taskTimerService.removeListener(_onTaskTimerChanged);
     _taskTimerService.tasksChanged.removeListener(_onTasksChanged);
     _pendingRefreshTimer?.cancel();
+    _switchSubscription?.cancel();
     _fabAnimationController.dispose();
     super.dispose();
   }
@@ -223,6 +231,92 @@ class _TaskListViewState extends State<TaskListView>
     if (_taskTimerService.tasksChanged.value) {
       _loadTasks();
       _taskTimerService.tasksChanged.value = false;
+    }
+  }
+
+  Future<void> _showSwitchDialog(dynamic reqDynamic) async {
+    // Accept TaskSwitchRequest or any object implementing newTask & respond
+    try {
+      final req =
+          reqDynamic as dynamic; // keep loose typing to avoid import cycles
+      final newTask = req.newTask as TaskModel;
+      final active = _taskTimerService.activeTask;
+
+      final choice = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          return AlertDialog(
+            title: Text('Switch to "${newTask.taskName}"?'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (active != null)
+                  Text(
+                    'Current: ${active.taskName} (priority ${active.taskPriority})',
+                  ),
+                const SizedBox(height: 8),
+                Text(
+                  'Incoming: ${newTask.taskName} (priority ${newTask.taskPriority})',
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Do you want to start the incoming task now or snooze it?',
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Snooze'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Start Now'),
+              ),
+            ],
+          );
+        },
+      );
+
+      final startNow = choice == true;
+      // Respond to the request
+      try {
+        req.respond(startNow);
+      } catch (e) {
+        developer.log('[TaskListView] Failed to respond to switch request: $e');
+      }
+
+      if (startNow) {
+        try {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const ActiveTaskView()),
+            (r) => false,
+          );
+        } catch (_) {}
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Switched to "${newTask.taskName}"')),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Snoozed "${newTask.taskName}" for ${_taskTimerService.defaultSnoozeDuration.inMinutes} minutes',
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e, st) {
+      developer.log(
+        '[TaskListView] _showSwitchDialog error: $e',
+        error: e,
+        stackTrace: st,
+      );
     }
   }
 
