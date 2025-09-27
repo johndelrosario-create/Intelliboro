@@ -26,7 +26,10 @@ class TaskModel {
     required this.taskDate,
     required this.isRecurring,
     required this.isCompleted,
-  });
+  }) : assert(
+         taskPriority >= 1 && taskPriority <= 5,
+         'Priority must be between 1 and 5',
+       );
 
   // Convert TaskModel to Map
   Map<String, dynamic> toMap() {
@@ -57,8 +60,68 @@ class TaskModel {
     );
   }
 
+  /// Get priority as human-readable string
+  String get priorityString {
+    switch (taskPriority) {
+      case 1:
+        return 'Very Low';
+      case 2:
+        return 'Low';
+      case 3:
+        return 'Medium';
+      case 4:
+        return 'High';
+      case 5:
+        return 'Very High';
+      default:
+        return 'Unknown';
+    }
+  }
+
+  /// Calculate effective priority based on user priority and urgency
+  /// Urgency is calculated based on how close the task time is to now
+  double getEffectivePriority() {
+    final now = DateTime.now();
+    final taskDateTime = DateTime(
+      taskDate.year,
+      taskDate.month,
+      taskDate.day,
+      taskTime.hour,
+      taskTime.minute,
+    );
+
+    // Calculate hours until task
+    final hoursUntilTask = taskDateTime.difference(now).inHours;
+
+    // Base priority from user (1-5 scale)
+    double effectivePriority = taskPriority.toDouble();
+
+    // Add urgency multiplier based on time proximity
+    if (hoursUntilTask <= 0) {
+      // Task is overdue or happening now - maximum urgency
+      effectivePriority += 2.0;
+    } else if (hoursUntilTask <= 1) {
+      // Task is within 1 hour - high urgency
+      effectivePriority += 1.5;
+    } else if (hoursUntilTask <= 3) {
+      // Task is within 3 hours - medium urgency
+      effectivePriority += 1.0;
+    } else if (hoursUntilTask <= 24) {
+      // Task is within 24 hours - low urgency
+      effectivePriority += 0.5;
+    }
+    // Tasks more than 24 hours away get no urgency bonus
+
+    return effectivePriority;
+  }
+
+  /// Compare tasks by effective priority (higher is more important)
+  static int compareByEffectivePriority(TaskModel a, TaskModel b) {
+    return b.getEffectivePriority().compareTo(a.getEffectivePriority());
+  }
+
   @override
   String toString() {
-    return 'TaskModel{taskName: $taskName, taskPriority: $taskPriority, taskTime: $taskTime, taskDate: $taskDate, isRecurring: $isRecurring, isCompleted: $isCompleted}';
+    return 'TaskModel{taskName: $taskName, taskPriority: $taskPriority ($priorityString), taskTime: $taskTime, taskDate: $taskDate, isRecurring: $isRecurring, isCompleted: $isCompleted}';
   }
 }

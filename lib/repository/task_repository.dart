@@ -7,6 +7,9 @@ import 'dart:developer' as developer;
 
 class TaskRepository {
   static const String _tableName = 'tasks';
+  final Database? db;
+
+  TaskRepository({this.db});
 
   // Function for inserting task into database
   Future<void> insertTask(TaskModel task) async {
@@ -72,6 +75,38 @@ class TaskRepository {
     ];
   }
 
+  /// Get a task by name (returns the first match)
+  Future<TaskModel?> getTaskByName(String taskName) async {
+    final database = db ?? await DatabaseService().mainDb;
+
+    try {
+      final List<Map<String, dynamic>> maps = await database.query(
+        _tableName,
+        where: 'taskName = ?',
+        whereArgs: [taskName],
+        limit: 1,
+      );
+
+      if (maps.isEmpty) return null;
+
+      final map = maps.first;
+      return TaskModel(
+        id: map['id'] as int?,
+        taskName: map['taskName'] as String,
+        taskPriority: map['taskPriority'] as int,
+        taskTime: TimeOfDay(
+          hour: int.parse((map['taskTime'] as String).split(':')[0]),
+          minute: int.parse((map['taskTime'] as String).split(':')[1]),
+        ),
+        taskDate: DateTime.parse(map['taskDate'] as String),
+        isRecurring: (map['isRecurring'] as int) == 1,
+        isCompleted: (map['isCompleted'] as int) == 1,
+      );
+    } catch (e) {
+      developer.log('[TaskRepository] Error getting task by name: $e');
+      return null;
+    }
+  }
   // TODO: Edit a task
   // Future<void> updateTask(TaskModel task) async {
   //   debugPrint(
