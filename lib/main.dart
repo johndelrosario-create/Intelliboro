@@ -6,7 +6,6 @@ import 'dart:async';
 import 'package:intelliboro/views/task_list_view.dart';
 import 'package:intelliboro/views/task_statistics_view.dart';
 import 'package:intelliboro/views/notification_history_view.dart';
-import 'package:intelliboro/services/location_service.dart';
 import 'package:intelliboro/services/geofencing_service.dart';
 import 'package:intelliboro/services/task_timer_service.dart';
 import 'package:intelliboro/repository/task_repository.dart';
@@ -25,6 +24,8 @@ import 'package:intelliboro/services/pin_service.dart';
 import 'package:intelliboro/views/pin_setup_view.dart';
 import 'package:intelliboro/views/pin_lock_view.dart';
 import 'package:intelliboro/views/settings_view.dart';
+import 'package:permission_handler/permission_handler.dart' show openAppSettings;
+import 'package:intelliboro/services/location_service.dart';
 
 // Define the access token
 const String accessToken = String.fromEnvironment('ACCESS_TOKEN');
@@ -89,7 +90,8 @@ Future<void> _showGlobalSwitchDialog(TaskSwitchRequest req) async {
 /// Gate that decides whether to show the first-launch PIN setup prompt, the PIN lock screen,
 /// or the main home shell depending on the user's choice and PIN enablement.
 class PinGate extends StatefulWidget {
-  const PinGate({Key? key}) : super(key: key);
+  final bool locationEnabled;
+  const PinGate({Key? key, required this.locationEnabled}) : super(key: key);
 
   @override
   State<PinGate> createState() => _PinGateState();
@@ -145,7 +147,7 @@ class _PinGateState extends State<PinGate> {
     if (_pinEnabled && !_unlocked) {
       return PinLockView(onUnlocked: () => setState(() => _unlocked = true));
     }
-    return const HomeShell();
+    return HomeShell(locationEnabled: widget.locationEnabled);
   }
 }
 
@@ -726,6 +728,7 @@ class _AppInitializerState extends State<AppInitializer> {
   bool _isLoadingPermissions = true;
   String? _permissionError; // To store any error message
   final LocationService _locationService = LocationService();
+  bool _locationAllowed = false;
 
   @override
   void initState() {
@@ -758,9 +761,9 @@ class _AppInitializerState extends State<AppInitializer> {
 
       if (!mounted) return;
       setState(() {
-        _permissionsGranted =
-            locationGranted &&
-            (notificationStatus.isGranted || notificationStatus.isLimited);
+        _locationAllowed = locationGranted;
+        // Proceed if notifications are allowed, even if location is denied
+        _permissionsGranted = (notificationStatus.isGranted || notificationStatus.isLimited);
       });
 
       if (!_permissionsGranted) {
@@ -863,7 +866,7 @@ class _AppInitializerState extends State<AppInitializer> {
       debugPrint(
         "[_AppInitializerState] Building: Permissions granted, showing TaskListView.",
       );
-      return const PinGate();
+      return PinGate(locationEnabled: _locationAllowed);
     } else {
       debugPrint(
         "[_AppInitializerState] Building: Permissions not granted, showing fallback screen.",
@@ -905,7 +908,8 @@ class _AppInitializerState extends State<AppInitializer> {
 
 /// Simple bottom navigation shell using Material 3 NavigationBar.
 class HomeShell extends StatefulWidget {
-  const HomeShell({Key? key}) : super(key: key);
+  final bool locationEnabled;
+  const HomeShell({Key? key, required this.locationEnabled}) : super(key: key);
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -913,6 +917,7 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   int _selectedIndex = 0;
+  bool _bannerDismissed = false;
 
   static const List<Widget> _pages = <Widget>[
     TaskListView(),
@@ -929,7 +934,8 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final showLocationBanner = !widget.locationEnabled && !_bannerDismissed;
+    final scaffold = Scaffold(
       body: IndexedStack(index: _selectedIndex, children: _pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
@@ -955,5 +961,51 @@ class _HomeShellState extends State<HomeShell> {
         ],
       ),
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.hideCurrentMaterialBanner();
+      if (showLocationBanner) {
+        messenger.showMaterialBanner(
+          MaterialBanner(
+            content: const Text(
+              'Location permission is off. Geofenced reminders and map features are disabled. Time-based reminders still work.',
+            ),
+            leading: const Icon(Icons.location_off),
+            actions: [
+              TextButton(
+                onPressed: () async {
+                  await openAppSettings();
+                },
+                child: const Text('Open Settings'),
+              ),
+              TextButton(
+                onPressed: () async {
+                  // Attempt a re-check/ask
+                  try {
+                    final granted = await LocationService().requestLocationPermission();
+                    if (!mounted) return;
+                    if (granted) {
+                      setState(() {
+                        _bannerDismissed = false;
+                      });
+                      messenger.hideCurrentMaterialBanner();
+                    }
+                  } catch (_) {}
+                },
+                child: const Text('Refresh'),
+              ),
+              TextButton(
+                onPressed: () {
+                  setState(() => _bannerDismissed = true);
+                  ScaffoldMessenger.of(context).hideCurrentMaterialBanner();
+                },
+                child: const Text('Dismiss'),
+              ),
+            ],
+          ),
+        );
+      }
+    });
+    return scaffold;
   }
 }
