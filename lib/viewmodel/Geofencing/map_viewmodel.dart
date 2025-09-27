@@ -52,25 +52,45 @@ class MapboxMapViewModel extends ChangeNotifier {
   List<GeofenceData> get savedGeofences => List.unmodifiable(_savedGeofences);
   bool get isEditing => _editingGeofenceId != null;
   String? get editingGeofenceId => _editingGeofenceId;
-  GeofenceData? get editingGeofence => _editingGeofenceId == null
-      ? null
-      : _savedGeofences.firstWhere(
-          (g) => g.id == _editingGeofenceId,
-          orElse: () => GeofenceData(
-            id: _editingGeofenceId!,
-            latitude: latitude?.toDouble() ?? 0,
-            longitude: longitude?.toDouble() ?? 0,
-            radiusMeters: pendingRadiusMeters,
-            fillColor: Colors.amberAccent.value
-                .toRadixString(16)
-                .padLeft(8, '0'),
-            fillOpacity: 0.5,
-            strokeColor:
-                Colors.white.value.toRadixString(16).padLeft(8, '0'),
-            strokeWidth: 2.0,
-            task: null,
-          ),
-        );
+  GeofenceData? get editingGeofence =>
+      _editingGeofenceId == null
+          ? null
+          : _savedGeofences.firstWhere(
+            (g) => g.id == _editingGeofenceId,
+            orElse:
+                () => GeofenceData(
+                  id: _editingGeofenceId!,
+                  latitude: latitude?.toDouble() ?? 0,
+                  longitude: longitude?.toDouble() ?? 0,
+                  radiusMeters: pendingRadiusMeters,
+                  fillColor: Colors.amberAccent.value
+                      .toRadixString(16)
+                      .padLeft(8, '0'),
+                  fillOpacity: 0.5,
+                  strokeColor: Colors.white.value
+                      .toRadixString(16)
+                      .padLeft(8, '0'),
+                  strokeWidth: 2.0,
+                  task: null,
+                ),
+          );
+
+  /// Clears the currently selected point and removes the helper geofence circle from the map.
+  /// This also resets the geofence helper placement state.
+  Future<void> clearSelectedPoint() async {
+    selectedPoint = null;
+    latitude = null;
+    longitude = null;
+    isGeofenceHelperPlaced = false;
+
+    // Clear any existing helper annotation
+    if (geofenceZoneHelper != null) {
+      await geofenceZoneHelper!.deleteAll();
+      geofenceZoneHelperIds.clear();
+    }
+
+    notifyListeners();
+  }
 
   MapboxMapViewModel() : _locationService = LocationService() {
     // Register this view model with the singleton service
@@ -198,97 +218,120 @@ class MapboxMapViewModel extends ChangeNotifier {
   Future<void> onMapCreated(MapboxMap mapboxMap) async {
     debugPrint('[MapViewModel] onMapCreated called.');
     this.mapboxMap = mapboxMap;
-    // Initialize offline map service with a default style
+    mapInitializationError = null;
+
+    // Mark map as ready early so UI can hide the spinner. Remaining setup
+    // tasks are executed in the background and errors are logged but do not
+    // prevent the map from being displayed.
     try {
-      await OfflineMapService().init(styleUri: 'mapbox://styles/mapbox/streets-v12');
-      // Kick off home region caching in background
-      // ignore: unawaited_futures
-      OfflineMapService().ensureHomeRegion();
-    } catch (e) {
-      debugPrint('[MapViewModel] OfflineMapService init error: $e');
-    }
-
-    try {
-      // Create annotation managers if they don't exist
-      if (geofenceZoneHelper == null) {
-        geofenceZoneHelper =
-            await mapboxMap.annotations.createCircleAnnotationManager();
-        debugPrint('[MapViewModel] Created geofence zone helper manager');
-      }
-
-      if (geofenceZoneSymbol == null) {
-        geofenceZoneSymbol =
-            await mapboxMap.annotations.createCircleAnnotationManager();
-        debugPrint('[MapViewModel] Created geofence zone symbol manager');
-      }
-
-      // Enable location component
-      await mapboxMap.location.updateSettings(
-        LocationComponentSettings(
-          enabled: true,
-          pulsingEnabled: true,
-          showAccuracyRing: true,
-          puckBearingEnabled: true,
-        ),
-      );
-      debugPrint('[MapViewModel] Location component enabled');
-
-      // Get user's current location
-      locator.Position? userPosition;
-      try {
-        debugPrint('[MapViewModel] Getting current location...');
-        userPosition = await _locationService.getCurrentLocation();
-        debugPrint(
-          '[MapViewModel] Current location: ${userPosition.latitude}, ${userPosition.longitude}',
-        );
-      } catch (e) {
-        debugPrint('[MapViewModel] Error getting location: $e');
-        mapInitializationError =
-            'Failed to get current location: $e. Please ensure location services are enabled and permissions granted.';
-      }
-
-      // Fly to user's location if available
-      if (userPosition != null) {
-        debugPrint('[MapViewModel] Flying to user location');
-        await mapboxMap.flyTo(
-          CameraOptions(
-            center: Point(
-              coordinates: Position(
-                userPosition.longitude,
-                userPosition.latitude,
-              ),
-            ),
-            zoom: 16,
-            bearing: 0,
-            pitch: 0,
-          ),
-          MapAnimationOptions(duration: 1500),
-        );
-        debugPrint('[MapViewModel] Camera moved to user location');
-      }
-
       isMapReady = true;
-      debugPrint('[MapViewModel] Map is ready');
+      debugPrint('[MapViewModel] Map marked ready (early).');
+      notifyListeners();
 
-      // Defer initial display until camera is idle so zoom is final
-      _initialDisplayPending = true;
-
-      debugPrint('[MapViewModel] onMapCreated finished.');
-
-      // Fallback: if camera idle doesn't trigger promptly, ensure we render once
-      // with the current camera center/zoom so sizes are accurate enough.
-      Future.delayed(const Duration(milliseconds: 600), () async {
-        if (_initialDisplayPending && isMapReady && !_isDisposed) {
-          debugPrint('[MapViewModel] Fallback initial display after delay.');
-          _initialDisplayPending = false;
-          await _loadSavedGeofences(forceNativeRecreation: false);
+      // Run remaining initialization without blocking the UI.
+      () async {
+        try {
+          await OfflineMapService().init(
+            styleUri: 'mapbox://styles/mapbox/streets-v12',
+          );
+          // Kick off home region caching in background
+          // ignore: unawaited_futures
+          OfflineMapService().ensureHomeRegion();
+        } catch (e) {
+          debugPrint('[MapViewModel] OfflineMapService init error: $e');
         }
-      });
+
+        try {
+          // Create annotation managers if they don't exist
+          if (geofenceZoneHelper == null) {
+            geofenceZoneHelper =
+                await mapboxMap.annotations.createCircleAnnotationManager();
+            debugPrint('[MapViewModel] Created geofence zone helper manager');
+          }
+
+          if (geofenceZoneSymbol == null) {
+            geofenceZoneSymbol =
+                await mapboxMap.annotations.createCircleAnnotationManager();
+            debugPrint('[MapViewModel] Created geofence zone symbol manager');
+          }
+        } catch (e, st) {
+          debugPrint('[MapViewModel] Annotation managers init error: $e\n$st');
+        }
+
+        try {
+          // Enable location component
+          await mapboxMap.location.updateSettings(
+            LocationComponentSettings(
+              enabled: true,
+              pulsingEnabled: true,
+              showAccuracyRing: true,
+              puckBearingEnabled: true,
+            ),
+          );
+          debugPrint('[MapViewModel] Location component enabled');
+        } catch (e) {
+          debugPrint('[MapViewModel] Location component enable error: $e');
+        }
+
+        // Get user's current location
+        locator.Position? userPosition;
+        try {
+          debugPrint('[MapViewModel] Getting current location...');
+          userPosition = await _locationService.getCurrentLocation();
+          debugPrint(
+            '[MapViewModel] Current location: ${userPosition.latitude}, ${userPosition.longitude}',
+          );
+        } catch (e) {
+          debugPrint('[MapViewModel] Error getting location: $e');
+          mapInitializationError =
+              'Failed to get current location: $e. Please ensure location services are enabled and permissions granted.';
+          notifyListeners();
+        }
+
+        try {
+          // Fly to user's location if available
+          if (userPosition != null) {
+            debugPrint('[MapViewModel] Flying to user location');
+            await mapboxMap.flyTo(
+              CameraOptions(
+                center: Point(
+                  coordinates: Position(
+                    userPosition.longitude,
+                    userPosition.latitude,
+                  ),
+                ),
+                zoom: 16,
+                bearing: 0,
+                pitch: 0,
+              ),
+              MapAnimationOptions(duration: 1500),
+            );
+            debugPrint('[MapViewModel] Camera moved to user location');
+          }
+        } catch (e) {
+          debugPrint('[MapViewModel] FlyTo error: $e');
+        }
+
+        // Defer initial display until camera is idle so zoom is final
+        _initialDisplayPending = true;
+
+        debugPrint('[MapViewModel] Background onMapCreated setup finished.');
+
+        // Fallback: if camera idle doesn't trigger promptly, ensure we render once
+        // with the current camera center/zoom so sizes are accurate enough.
+        Future.delayed(const Duration(milliseconds: 600), () async {
+          if (_initialDisplayPending && isMapReady && !_isDisposed) {
+            debugPrint('[MapViewModel] Fallback initial display after delay.');
+            _initialDisplayPending = false;
+            await _loadSavedGeofences(forceNativeRecreation: false);
+          }
+        });
+      }();
     } catch (e, stackTrace) {
-      debugPrint('Error in onMapCreated: $e\n$stackTrace');
+      debugPrint('Error in onMapCreated outer: $e\n$stackTrace');
       mapInitializationError = e.toString();
+      notifyListeners();
     }
-    notifyListeners();
   }
 
   // Update pending radius from UI slider and refresh helper circle. Auto-adjust center if needed.
@@ -296,7 +339,9 @@ class MapboxMapViewModel extends ChangeNotifier {
     pendingRadiusMeters = meters.clamp(1.0, 1000.0);
     // Use the helper's own latitude for accurate visual radius
     final lat = selectedPoint?.coordinates.lat.toDouble();
-    final mpp = await metersToPixelsAtCurrentLocationAndZoom(latitudeOverride: lat);
+    final mpp = await metersToPixelsAtCurrentLocationAndZoom(
+      latitudeOverride: lat,
+    );
     if (mpp > 0) {
       _currentHelperRadiusInPixels = pendingRadiusMeters / mpp;
     }
@@ -325,9 +370,7 @@ class MapboxMapViewModel extends ChangeNotifier {
       orElse: () => throw StateError('Geofence not found: $geofenceId'),
     );
     _editingGeofenceId = geofenceId;
-    final point = Point(
-      coordinates: Position(gf.longitude, gf.latitude),
-    );
+    final point = Point(coordinates: Position(gf.longitude, gf.latitude));
     await displayExistingGeofence(point, gf.radiusMeters);
   }
 
@@ -392,9 +435,9 @@ class MapboxMapViewModel extends ChangeNotifier {
     final dLon = _deg2rad(lon2 - lon1);
     final a =
         (math.sin(dLat / 2) * math.sin(dLat / 2)) +
-            math.cos(_deg2rad(lat1)) *
-                math.cos(_deg2rad(lat2)) *
-                (math.sin(dLon / 2) * math.sin(dLon / 2));
+        math.cos(_deg2rad(lat1)) *
+            math.cos(_deg2rad(lat2)) *
+            (math.sin(dLon / 2) * math.sin(dLon / 2));
     final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
     return R * c;
   }
@@ -408,15 +451,20 @@ class MapboxMapViewModel extends ChangeNotifier {
     const R = 6371000.0;
     final dr = meters / R;
     final newLat = math.asin(
-      math.sin(lat) * math.cos(dr) + math.cos(lat) * math.sin(dr) * math.cos(bearingRad),
+      math.sin(lat) * math.cos(dr) +
+          math.cos(lat) * math.sin(dr) * math.cos(bearingRad),
     );
-    final newLon = lon + math.atan2(
-      math.sin(bearingRad) * math.sin(dr) * math.cos(lat),
-      math.cos(dr) - math.sin(lat) * math.sin(newLat),
-    );
+    final newLon =
+        lon +
+        math.atan2(
+          math.sin(bearingRad) * math.sin(dr) * math.cos(lat),
+          math.cos(dr) - math.sin(lat) * math.sin(newLat),
+        );
     return Point(
-      coordinates: Position(newLon * 180.0 / 3.141592653589793,
-          newLat * 180.0 / 3.141592653589793),
+      coordinates: Position(
+        newLon * 180.0 / 3.141592653589793,
+        newLat * 180.0 / 3.141592653589793,
+      ),
     );
   }
 
@@ -450,7 +498,8 @@ class MapboxMapViewModel extends ChangeNotifier {
     final dy = (start.coordinates.lat.toDouble() - nearest.latitude);
     final dx = (start.coordinates.lng.toDouble() - nearest.longitude);
     double bearing = math.atan2(
-      math.sin(_deg2rad(dx)) * math.cos(_deg2rad(start.coordinates.lat.toDouble())),
+      math.sin(_deg2rad(dx)) *
+          math.cos(_deg2rad(start.coordinates.lat.toDouble())),
       math.cos(_deg2rad(nearest.latitude)) *
               math.sin(_deg2rad(start.coordinates.lat.toDouble())) -
           math.sin(_deg2rad(nearest.latitude)) *
@@ -463,7 +512,7 @@ class MapboxMapViewModel extends ChangeNotifier {
     }
     final needed =
         (nearest.radiusMeters + radiusMeters + _overlapPaddingMeters) -
-            nearestDist;
+        nearestDist;
     final adjusted = _offsetPoint(start, needed, bearing);
     return adjusted;
   }
@@ -484,8 +533,7 @@ class MapboxMapViewModel extends ChangeNotifier {
         debugPrint("[MapViewModel] Line 338 meters per Pixel: $metersPerPixel");
 
         if (metersPerPixel > 0) {
-          _currentHelperRadiusInPixels =
-              pendingRadiusMeters / metersPerPixel;
+          _currentHelperRadiusInPixels = pendingRadiusMeters / metersPerPixel;
           debugPrint(
             "[MapViewModel] onCameraIdle: Helper radius updated to: $_currentHelperRadiusInPixels px for ${pendingRadiusMeters} m (lat: $centerLat, zoom: $zoomLevel)",
           );
@@ -522,7 +570,9 @@ class MapboxMapViewModel extends ChangeNotifier {
 
       // If nothing to display, do NOT clear existing visuals to avoid a flash-then-gone effect
       if (_savedGeofences.isEmpty) {
-        debugPrint('No saved geofences to display; preserving existing annotations.');
+        debugPrint(
+          'No saved geofences to display; preserving existing annotations.',
+        );
         return;
       }
 
@@ -546,8 +596,10 @@ class MapboxMapViewModel extends ChangeNotifier {
           );
 
           // Parse colors; fall back to defaults if unrecognized so geofence remains visible
-          final parsedFill = _parseColor(geofence.fillColor) ?? Colors.amberAccent;
-          final parsedStroke = _parseColor(geofence.strokeColor) ?? Colors.white;
+          final parsedFill =
+              _parseColor(geofence.fillColor) ?? Colors.amberAccent;
+          final parsedStroke =
+              _parseColor(geofence.strokeColor) ?? Colors.white;
 
           // Compute pixel radius using the geofence's latitude at the current zoom
           double mpp = await mapboxMap!.projection.getMetersPerPixelAtLatitude(
@@ -563,8 +615,10 @@ class MapboxMapViewModel extends ChangeNotifier {
           // Maintain a visibility floor without distorting too much
           if (pixelRadius < 2.5) pixelRadius = 2.5;
 
-          final double visibleOpacity = geofence.fillOpacity.clamp(0.2, 1.0).toDouble();
-          final visibleStrokeWidth = geofence.strokeWidth < 1.0 ? 1.0 : geofence.strokeWidth;
+          final double visibleOpacity =
+              geofence.fillOpacity.clamp(0.2, 1.0).toDouble();
+          final visibleStrokeWidth =
+              geofence.strokeWidth < 1.0 ? 1.0 : geofence.strokeWidth;
 
           final annotation = await geofenceZoneSymbol!.create(
             CircleAnnotationOptions(
@@ -578,7 +632,9 @@ class MapboxMapViewModel extends ChangeNotifier {
           );
 
           geofenceZoneSymbolIds.add(annotation);
-          debugPrint('Added geofence ${geofence.id} to map (px=${pixelRadius.toStringAsFixed(2)}, opacity=$visibleOpacity, strokeW=$visibleStrokeWidth)');
+          debugPrint(
+            'Added geofence ${geofence.id} to map (px=${pixelRadius.toStringAsFixed(2)}, opacity=$visibleOpacity, strokeW=$visibleStrokeWidth)',
+          );
           // Queue offline region caching for this geofence (non-blocking)
           // ignore: unawaited_futures
           OfflineMapService().ensureRegionForGeofence(geofence);
@@ -599,8 +655,11 @@ class MapboxMapViewModel extends ChangeNotifier {
   onLongTap(MapContentGestureContext context) async {
     try {
       // Place selection and auto-adjust to avoid overlaps
-      selectedPoint = await _autoAdjustCenter(context.point, pendingRadiusMeters,
-          excludeId: _editingGeofenceId);
+      selectedPoint = await _autoAdjustCenter(
+        context.point,
+        pendingRadiusMeters,
+        excludeId: _editingGeofenceId,
+      );
       latitude = context.point.coordinates.lat;
       longitude = context.point.coordinates.lng;
 
@@ -771,7 +830,9 @@ class MapboxMapViewModel extends ChangeNotifier {
     }
   }
 
-  Future<double> metersToPixelsAtCurrentLocationAndZoom({double? latitudeOverride}) async {
+  Future<double> metersToPixelsAtCurrentLocationAndZoom({
+    double? latitudeOverride,
+  }) async {
     if (mapboxMap == null) {
       debugPrint(
         "MapboxMap not initialized in metersToPixelsAtCurrentLocationAndZoom",
@@ -780,14 +841,12 @@ class MapboxMapViewModel extends ChangeNotifier {
     }
     try {
       final cameraState = await mapboxMap!.getCameraState();
-      final double lat = (latitudeOverride ?? cameraState.center.coordinates.lat).toDouble();
+      final double lat =
+          (latitudeOverride ?? cameraState.center.coordinates.lat).toDouble();
       final double zoomLevel = cameraState.zoom;
 
       debugPrint("METERS TO PIX lat:$lat, at zoom:$zoomLevel");
-      return mapboxMap!.projection.getMetersPerPixelAtLatitude(
-        lat,
-        zoomLevel,
-      );
+      return mapboxMap!.projection.getMetersPerPixelAtLatitude(lat, zoomLevel);
     } catch (e) {
       debugPrint("Error in metersToPixelsAtCurrentLocationAndZoom: $e");
       return 0.0;
@@ -846,8 +905,10 @@ class MapboxMapViewModel extends ChangeNotifier {
 
       // Link this geofence to the corresponding task by name in tasks table
       try {
-        final affected = await TaskRepository()
-            .updateTaskGeofenceIdByName(taskName, geofenceId);
+        final affected = await TaskRepository().updateTaskGeofenceIdByName(
+          taskName,
+          geofenceId,
+        );
         debugPrint(
           '[MapViewModel] Linked geofence "$geofenceId" to taskName="$taskName" (rows updated: $affected).',
         );
@@ -892,7 +953,9 @@ class MapboxMapViewModel extends ChangeNotifier {
 
       // After creation, perform a full refresh to ensure correct sizing immediately
       if (mapboxMap != null && !_isDisposed) {
-        debugPrint('Refreshing geofence display after creation to ensure correct sizing.');
+        debugPrint(
+          'Refreshing geofence display after creation to ensure correct sizing.',
+        );
         await _displaySavedGeofences();
       }
 
@@ -904,7 +967,7 @@ class MapboxMapViewModel extends ChangeNotifier {
       if (!_isDisposed) {
         notifyListeners();
       }
-      
+
       // Return the created geofence ID
       return createdGeofenceId;
     } catch (e, stackTrace) {
@@ -1003,4 +1066,3 @@ class MapboxMapViewModel extends ChangeNotifier {
     super.dispose();
   }
 }
-

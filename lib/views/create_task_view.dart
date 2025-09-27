@@ -10,6 +10,7 @@ import 'package:intelliboro/model/recurring_pattern.dart';
 import 'package:intelliboro/widgets/recurring_selector.dart';
 import 'package:intelliboro/services/task_timer_service.dart';
 import 'package:intelliboro/services/notification_preferences_service.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class TaskCreation extends StatefulWidget {
   final bool showMap;
@@ -49,9 +50,6 @@ class _TaskCreationState extends State<TaskCreation> {
   // Notification sound preference (app-wide default)
   String _selectedSoundKey = NotificationPreferencesService.soundDefault;
 
-  // Task-specific notification sound (overrides app default)
-  String? _taskNotificationSound;
-
   // Geofence selection state
   List<GeofenceData> _availableGeofences = [];
   String? _selectedGeofenceId;
@@ -75,7 +73,6 @@ class _TaskCreationState extends State<TaskCreation> {
       selectedRecurringPattern = t.recurringPattern ?? RecurringPattern.none();
       _selectedGeofenceId = t.geofenceId;
       _useExistingGeofence = t.geofenceId != null;
-      _taskNotificationSound = t.notificationSound;
     }
     _loadGeofences();
     // Load default notification sound preference
@@ -375,47 +372,48 @@ class _TaskCreationState extends State<TaskCreation> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Task Notification Sound',
+              'Default Notification Sound (Android)',
               style: theme.textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(height: 8),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.shade300),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: _taskNotificationSound,
-                  hint: const Text('Use app default'),
-                  items: [
-                    const DropdownMenuItem<String>(
-                      value: null,
-                      child: Text('Use app default'),
-                    ),
-                    ...NotificationPreferencesService.getAvailableSounds().map(
-                      (sound) => DropdownMenuItem<String>(
-                        value: sound['key'],
-                        child: Text(sound['name']!),
-                      ),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    setState(() {
-                      _taskNotificationSound = value;
-                    });
-                  },
-                ),
-              ),
+            RadioListTile<String>(
+              title: const Text('System Default'),
+              value: NotificationPreferencesService.soundDefault,
+              groupValue: _selectedSoundKey,
+              onChanged: (v) => setState(() => _selectedSoundKey = v!),
+            ),
+            RadioListTile<String>(
+              title: const Text('Silent'),
+              value: NotificationPreferencesService.soundSilent,
+              groupValue: _selectedSoundKey,
+              onChanged: (v) => setState(() => _selectedSoundKey = v!),
+            ),
+            RadioListTile<String>(
+              title: const Text('Alarm style'),
+              value: NotificationPreferencesService.soundAlarm,
+              groupValue: _selectedSoundKey,
+              onChanged: (v) => setState(() => _selectedSoundKey = v!),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'This sets the app default sound used for task reminders on Android.\nYou can change it later in Settings.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Choose a specific notification sound for this task, or leave as "Use app default" to use the global app setting.',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: () async {
+                  // Open the app's notification settings so the user can configure channel sound
+                  try {
+                    await openAppSettings();
+                  } catch (_) {}
+                },
+                icon: const Icon(Icons.settings_applications_outlined),
+                label: const Text('Open app notification settings'),
+              ),
             ),
           ],
         ),
@@ -738,10 +736,8 @@ class _TaskCreationState extends State<TaskCreation> {
                       TaskModel(
                         taskName: taskName,
                         taskPriority: selectedPriority,
-                        taskTime:
-                            selectedTime, // Only set if explicitly selected
-                        taskDate:
-                            selectedDate, // Only set if explicitly selected
+                        taskTime: selectedTime ?? TimeOfDay.now(),
+                        taskDate: selectedDate ?? DateTime.now(),
                         isRecurring:
                             selectedRecurringPattern.type != RecurringType.none,
                         recurringPattern:
@@ -750,7 +746,6 @@ class _TaskCreationState extends State<TaskCreation> {
                                 : null,
                         isCompleted: false,
                         geofenceId: geofenceIdForTask,
-                        notificationSound: _taskNotificationSound,
                       ),
                     );
 
@@ -773,7 +768,6 @@ class _TaskCreationState extends State<TaskCreation> {
                               : null,
                       isCompleted: existing.isCompleted,
                       geofenceId: geofenceIdForTask ?? existing.geofenceId,
-                      notificationSound: _taskNotificationSound,
                     );
                     await TaskRepository().updateTask(updated);
                     // Notify listeners that tasks changed
