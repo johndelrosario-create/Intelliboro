@@ -8,14 +8,21 @@ import 'package:intelliboro/models/geofence_data.dart';
 import 'package:intelliboro/services/geofence_storage.dart';
 import 'package:intelliboro/model/recurring_pattern.dart';
 import 'package:intelliboro/widgets/recurring_selector.dart';
+import 'package:intelliboro/services/task_timer_service.dart';
 
 class TaskCreation extends StatefulWidget {
   final bool showMap;
   final String? name;
+  final TaskModel? initialTask;
 
   // Call this function when submit
   //final Function(Task) onSubmit;
-  const TaskCreation({super.key, required this.showMap, this.name});
+  const TaskCreation({
+    super.key,
+    required this.showMap,
+    this.name,
+    this.initialTask,
+  });
   @override
   State<TaskCreation> createState() => _TaskCreationState();
 }
@@ -37,7 +44,7 @@ class _TaskCreationState extends State<TaskCreation> {
   final TextEditingController _nameController = TextEditingController();
 
   late final MapboxMapViewModel _mapViewModel;
-  
+
   // Geofence selection state
   List<GeofenceData> _availableGeofences = [];
   String? _selectedGeofenceId;
@@ -50,6 +57,17 @@ class _TaskCreationState extends State<TaskCreation> {
     _mapViewModel = MapboxMapViewModel();
     if (widget.name != null) {
       _nameController.text = widget.name!;
+    }
+    // If editing, prefill fields from initialTask
+    if (widget.initialTask != null) {
+      final t = widget.initialTask!;
+      _nameController.text = t.taskName;
+      selectedPriority = t.taskPriority;
+      selectedTime = t.taskTime;
+      selectedDate = t.taskDate;
+      selectedRecurringPattern = t.recurringPattern ?? RecurringPattern.none();
+      _selectedGeofenceId = t.geofenceId;
+      _useExistingGeofence = t.geofenceId != null;
     }
     _loadGeofences();
   }
@@ -70,9 +88,9 @@ class _TaskCreationState extends State<TaskCreation> {
         _isLoadingGeofences = false;
       });
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading geofences: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error loading geofences: $e')));
       }
     }
   }
@@ -151,7 +169,7 @@ class _TaskCreationState extends State<TaskCreation> {
   Widget _buildPrioritySelector() {
     final theme = Theme.of(context);
     final priorityColor = _getPriorityColor(selectedPriority);
-    
+
     return Card.filled(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -251,7 +269,7 @@ class _TaskCreationState extends State<TaskCreation> {
       ),
     );
   }
-  
+
   IconData _getPriorityIcon(int priority) {
     switch (priority) {
       case 1:
@@ -390,9 +408,9 @@ class _TaskCreationState extends State<TaskCreation> {
           children: [
             Text(
               'Geofence Location',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 16),
             Row(
@@ -419,13 +437,14 @@ class _TaskCreationState extends State<TaskCreation> {
                     title: const Text('Use Existing Geofence'),
                     value: true,
                     groupValue: _useExistingGeofence,
-                    onChanged: _availableGeofences.isEmpty
-                        ? null
-                        : (value) {
-                            setState(() {
-                              _useExistingGeofence = value!;
-                            });
-                          },
+                    onChanged:
+                        _availableGeofences.isEmpty
+                            ? null
+                            : (value) {
+                              setState(() {
+                                _useExistingGeofence = value!;
+                              });
+                            },
                   ),
                 ),
               ],
@@ -447,23 +466,27 @@ class _TaskCreationState extends State<TaskCreation> {
                     border: OutlineInputBorder(),
                   ),
                   value: _selectedGeofenceId,
-                  items: _availableGeofences.map((geofence) {
-                    String displayName = geofence.task != null && geofence.task!.isNotEmpty
-                        ? 'Geofence for "${geofence.task}"'
-                        : 'Geofence ${geofence.id.substring(0, 8)}';
-                    return DropdownMenuItem<String>(
-                      value: geofence.id,
-                      child: Text(displayName),
-                    );
-                  }).toList(),
+                  items:
+                      _availableGeofences.map((geofence) {
+                        String displayName =
+                            geofence.task != null && geofence.task!.isNotEmpty
+                                ? 'Geofence for "${geofence.task}"'
+                                : 'Geofence ${geofence.id.substring(0, 8)}';
+                        return DropdownMenuItem<String>(
+                          value: geofence.id,
+                          child: Text(displayName),
+                        );
+                      }).toList(),
                   onChanged: (value) {
                     setState(() {
                       _selectedGeofenceId = value;
                     });
                   },
-                  validator: _useExistingGeofence
-                      ? (value) => value == null ? 'Please select a geofence' : null
-                      : null,
+                  validator:
+                      _useExistingGeofence
+                          ? (value) =>
+                              value == null ? 'Please select a geofence' : null
+                          : null,
                 ),
             ],
             if (!_useExistingGeofence) ...[
@@ -491,7 +514,7 @@ class _TaskCreationState extends State<TaskCreation> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Create Task'),
+        title: Text(widget.initialTask == null ? 'Create Task' : 'Edit Task'),
         leading: IconButton(
           onPressed: () => Navigator.of(context).pop(),
           icon: const Icon(Icons.arrow_back),
@@ -561,15 +584,20 @@ class _TaskCreationState extends State<TaskCreation> {
                     if (_useExistingGeofence && _selectedGeofenceId == null) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('Please select an existing geofence or create a new one.'),
+                          content: Text(
+                            'Please select an existing geofence or create a new one.',
+                          ),
                         ),
                       );
                       return;
                     }
-                    if (!_useExistingGeofence && _mapViewModel.selectedPoint == null) {
+                    if (!_useExistingGeofence &&
+                        _mapViewModel.selectedPoint == null) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('Please select a location on the map for the new geofence.'),
+                          content: Text(
+                            'Please select a location on the map for the new geofence.',
+                          ),
                         ),
                       );
                       return;
@@ -585,25 +613,53 @@ class _TaskCreationState extends State<TaskCreation> {
                     // For new geofences, we'll get the ID after creating it
                   }
 
-                  // Create the task with the geofence ID
-                  await TaskRepository().insertTask(
-                    TaskModel(
+                  // Create or update the task
+                  if (widget.initialTask == null) {
+                    await TaskRepository().insertTask(
+                      TaskModel(
+                        taskName: taskName,
+                        taskPriority: selectedPriority,
+                        taskTime: selectedTime ?? TimeOfDay.now(),
+                        taskDate: selectedDate ?? DateTime.now(),
+                        isRecurring:
+                            selectedRecurringPattern.type != RecurringType.none,
+                        recurringPattern:
+                            selectedRecurringPattern.type != RecurringType.none
+                                ? selectedRecurringPattern
+                                : null,
+                        isCompleted: false,
+                        geofenceId: geofenceIdForTask,
+                      ),
+                    );
+
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Task "$taskName" created.')),
+                    );
+                  } else {
+                    // Update existing task
+                    final existing = widget.initialTask!;
+                    final updated = existing.copyWith(
                       taskName: taskName,
                       taskPriority: selectedPriority,
-                      taskTime: selectedTime ?? TimeOfDay.now(),
-                      taskDate: selectedDate ?? DateTime.now(),
-                      isRecurring: selectedRecurringPattern.type != RecurringType.none,
-                      recurringPattern: selectedRecurringPattern.type != RecurringType.none 
-                        ? selectedRecurringPattern 
-                        : null,
-                      isCompleted: false,
-                      geofenceId: geofenceIdForTask,
-                    ),
-                  );
+                      taskTime: selectedTime ?? existing.taskTime,
+                      taskDate: selectedDate ?? existing.taskDate,
+                      isRecurring:
+                          selectedRecurringPattern.type != RecurringType.none,
+                      recurringPattern:
+                          selectedRecurringPattern.type != RecurringType.none
+                              ? selectedRecurringPattern
+                              : null,
+                      isCompleted: existing.isCompleted,
+                      geofenceId: geofenceIdForTask ?? existing.geofenceId,
+                    );
+                    await TaskRepository().updateTask(updated);
+                    // Notify listeners that tasks changed
+                    TaskTimerService().tasksChanged.value = true;
 
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Task "$taskName" created.')),
-                  );
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Task "$taskName" updated.')),
+                    );
+                  }
 
                   // Handle geofence creation or association
                   if (widget.showMap) {
@@ -616,7 +672,8 @@ class _TaskCreationState extends State<TaskCreation> {
                           ),
                         ),
                       );
-                    } else if (!_useExistingGeofence && _mapViewModel.selectedPoint != null) {
+                    } else if (!_useExistingGeofence &&
+                        _mapViewModel.selectedPoint != null) {
                       try {
                         await _mapViewModel.createGeofenceAtSelectedPoint(
                           context,

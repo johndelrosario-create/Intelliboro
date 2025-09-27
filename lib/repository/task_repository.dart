@@ -3,6 +3,7 @@ import 'package:intelliboro/model/task_model.dart';
 import 'package:flutter/material.dart';
 import 'package:intelliboro/services/database_service.dart';
 import 'dart:developer' as developer;
+import 'package:intelliboro/services/geofencing_service.dart';
 
 class TaskRepository {
   static const String _tableName = 'tasks';
@@ -83,8 +84,59 @@ class TaskRepository {
   Future<void> deleteTask(int id) async {
     debugPrint("[TaskRepository] deleteTask: Deleting task id: $id...");
     final db = await DatabaseService().mainDb;
-    await db.delete(_tableName, where: 'id = ?', whereArgs: [id]);
-    debugPrint("[TaskRepository] deleteTask: Task $id deleted.");
+
+    // Read the task row first to inspect geofence association
+    try {
+      final rows = await db.query(
+        _tableName,
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+
+      String? geofenceId;
+      if (rows.isNotEmpty) {
+        final row = rows.first;
+        geofenceId = row['geofence_id'] as String?;
+        developer.log(
+          '[TaskRepository] deleteTask: Found geofence_id=$geofenceId for task $id',
+        );
+      }
+
+      // Delete the task row
+      await db.delete(_tableName, where: 'id = ?', whereArgs: [id]);
+      debugPrint("[TaskRepository] deleteTask: Task $id deleted.");
+
+      // If there was an associated geofence, remove it from DB and native service
+      if (geofenceId != null && geofenceId.isNotEmpty) {
+        try {
+          developer.log(
+            '[TaskRepository] deleteTask: Removing associated geofence $geofenceId',
+          );
+          // Remove DB row for geofence using the same DB connection
+          await DatabaseService().deleteGeofence(db, geofenceId);
+          // Also instruct the native geofence service to stop monitoring it
+          await GeofencingService().removeGeofence(geofenceId);
+          developer.log(
+            '[TaskRepository] deleteTask: Removed geofence $geofenceId',
+          );
+        } catch (e, st) {
+          developer.log(
+            '[TaskRepository] deleteTask: Failed to remove associated geofence $geofenceId: $e',
+            error: e,
+            stackTrace: st,
+          );
+          // Don't rethrow - geofence removal failure shouldn't block task deletion
+        }
+      }
+    } catch (e, st) {
+      developer.log(
+        '[TaskRepository] deleteTask: Error during deletion flow for task $id: $e',
+        error: e,
+        stackTrace: st,
+      );
+      rethrow;
+    }
   }
 
   //TODO: Delete a task

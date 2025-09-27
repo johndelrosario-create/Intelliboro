@@ -251,13 +251,14 @@ class _TaskListViewState extends State<TaskListView>
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
           onTap: () {
-            // TODO: Navigate to task details/edit
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Edit "${task.taskName}" - Coming soon!'),
-                behavior: SnackBarBehavior.floating,
+            // Open editor for the task
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder:
+                    (context) => TaskCreation(showMap: true, initialTask: task),
               ),
-            );
+            ).then((_) => _loadTasks());
           },
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -548,6 +549,9 @@ class _TaskListViewState extends State<TaskListView>
 
                         if (confirm == true) {
                           try {
+                            // Keep a copy for undo (new insert will get a new ID)
+                            final deletedCopy = task.copyWith(id: null);
+
                             // Stop any in-memory running timer for this task
                             if (task.id != null &&
                                 _taskTimerService.isRunning(task.id!)) {
@@ -560,9 +564,33 @@ class _TaskListViewState extends State<TaskListView>
                             }
                             // Notify listeners to refresh
                             _taskTimerService.tasksChanged.value = true;
+
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text('Deleted "${task.taskName}"'),
+                                action: SnackBarAction(
+                                  label: 'Undo',
+                                  onPressed: () async {
+                                    try {
+                                      await TaskRepository().insertTask(
+                                        deletedCopy,
+                                      );
+                                      _taskTimerService.tasksChanged.value =
+                                          true;
+                                    } catch (e) {
+                                      developer.log(
+                                        '[TaskListView] Undo insert failed: $e',
+                                      );
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text('Undo failed: $e'),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                ),
                               ),
                             );
                           } catch (e) {
@@ -933,3 +961,21 @@ class _TaskListViewState extends State<TaskListView>
     );
   }
 }
+
+// Dummy EditTaskView for now, to be replaced later
+// class EditTaskView extends StatelessWidget {
+//   final String geofenceId;
+//   const EditTaskView({Key? key, required this.geofenceId}) : super(key: key);
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return Scaffold(
+//       appBar: AppBar(title: Text('Edit Task $geofenceId')),
+//       body: Center(
+//         child: Text(
+//           'Editing details for geofence ID: $geofenceId.\nImplementation pending.',
+//         ),
+//       ),
+//     );
+//   }
+// }
