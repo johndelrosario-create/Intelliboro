@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intelliboro/services/pin_service.dart';
+import 'dart:async';
 
 /// Simple lock screen that asks for a 6-digit PIN before allowing access.
 class PinLockView extends StatefulWidget {
@@ -14,12 +15,76 @@ class _PinLockViewState extends State<PinLockView> {
   final _pinCtrl = TextEditingController();
   final _formKey = GlobalKey<FormState>();
   String? _error;
-  int _attempts = 0;
-  static const int _maxAttempts = 8;
   bool _verifying = false;
+  bool _lockedOut = false;
+  Duration _remaining = Duration.zero;
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkLockout();
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _checkLockout() async {
+    final svc = PinService();
+    final locked = await svc.isLockedOut();
+    if (!mounted) return;
+    if (locked) {
+      final remain = await svc.lockoutRemaining();
+      setState(() {
+        _lockedOut = true;
+        _remaining = remain;
+        _error = _formatLockoutMsg(remain);
+      });
+      _startTicker();
+    } else {
+      setState(() {
+        _lockedOut = false;
+        _remaining = Duration.zero;
+      });
+    }
+  }
+
+  void _startTicker() {
+    _ticker?.cancel();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) async {
+      final remain = await PinService().lockoutRemaining();
+      if (!mounted) return;
+      if (remain <= Duration.zero) {
+        _ticker?.cancel();
+        setState(() {
+          _lockedOut = false;
+          _remaining = Duration.zero;
+          _error = null;
+        });
+      } else {
+        setState(() {
+          _remaining = remain;
+          _error = _formatLockoutMsg(remain);
+        });
+      }
+    });
+  }
+
+  String _formatLockoutMsg(Duration d) {
+    final m = d.inMinutes;
+    final s = d.inSeconds % 60;
+    final mm = m.toString().padLeft(2, '0');
+    final ss = s.toString().padLeft(2, '0');
+    return 'Too many incorrect attempts. Try again in $mm:$ss';
+  }
 
   Future<void> _verify() async {
     setState(() => _error = null);
+    await _checkLockout();
+    if (_lockedOut) return;
     if (!_formKey.currentState!.validate()) return;
     if (_verifying) return;
     setState(() => _verifying = true);
@@ -29,10 +94,12 @@ class _PinLockViewState extends State<PinLockView> {
       if (ok) {
         widget.onUnlocked();
       } else {
-        setState(() {
-          _attempts += 1;
-          _error = 'Incorrect PIN. Attempts: $_attempts/$_maxAttempts';
-        });
+        await _checkLockout();
+        if (!_lockedOut) {
+          setState(() {
+            _error = 'Incorrect PIN. Please try again.';
+          });
+        }
       }
     } finally {
       if (mounted) setState(() => _verifying = false);
@@ -73,12 +140,12 @@ class _PinLockViewState extends State<PinLockView> {
                       counterText: '',
                     ),
                     validator: (v) {
+                      if (_lockedOut) {
+                        return _error ?? 'Locked out temporarily. Please wait.';
+                      }
                       if (v == null || v.isEmpty) return 'Enter your PIN';
                       if (!RegExp(r'^\d{6}$').hasMatch(v)) {
                         return 'PIN must be exactly 6 digits';
-                      }
-                      if (_attempts >= _maxAttempts) {
-                        return 'Too many attempts. Please wait a bit and try again.';
                       }
                       return null;
                     },
@@ -89,9 +156,11 @@ class _PinLockViewState extends State<PinLockView> {
                     Text(_error!, style: const TextStyle(color: Colors.red)),
                   const SizedBox(height: 8),
                   FilledButton.icon(
-                    onPressed: _verifying ? null : _verify,
+                    onPressed: (_verifying || _lockedOut) ? null : _verify,
                     icon: const Icon(Icons.arrow_forward),
-                    label: _verifying ? const Text('Verifying...') : const Text('Unlock'),
+                    label: _verifying
+                        ? const Text('Verifying...')
+                        : (_lockedOut ? const Text('Locked') : const Text('Unlock')),
                   ),
                 ],
               ),

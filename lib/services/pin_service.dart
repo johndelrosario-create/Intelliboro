@@ -13,6 +13,8 @@ class PinService {
   static const _prefsKeyPromptAnswered = 'pin_prompt_answered';
   static const _secureKeyPinHash = 'pin_hash';
   static const _secureKeyPinSalt = 'pin_salt';
+  static const _prefsKeyFailedAttempts = 'pin_failed_attempts';
+  static const _prefsKeyLockoutUntilMs = 'pin_lockout_until_ms';
 
   static final PinService _instance = PinService._internal();
   factory PinService() => _instance;
@@ -56,17 +58,68 @@ class PinService {
 
   Future<bool> verifyPin(String pin) async {
     try {
+      // If locked out, short-circuit
+      if (await isLockedOut()) {
+        return false;
+      }
       final salt = await _secure.read(key: _secureKeyPinSalt);
       final storedHash = await _secure.read(key: _secureKeyPinHash);
       if (salt == null || storedHash == null) return false;
       final incoming = _hashPin(pin, salt);
-      return _constantTimeEquals(storedHash, incoming);
+      final ok = _constantTimeEquals(storedHash, incoming);
+      if (ok) {
+        await _resetFailedAttempts();
+        return true;
+      }
+      await _recordFailedAttemptAndMaybeLock();
+      return false;
     } catch (e) {
       if (kDebugMode) {
         print('[PinService] verifyPin error: $e');
       }
       return false;
     }
+  }
+
+  Future<void> _resetFailedAttempts() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_prefsKeyFailedAttempts, 0);
+    await prefs.remove(_prefsKeyLockoutUntilMs);
+  }
+
+  Future<void> _recordFailedAttemptAndMaybeLock() async {
+    final prefs = await SharedPreferences.getInstance();
+    int attempts = prefs.getInt(_prefsKeyFailedAttempts) ?? 0;
+    attempts += 1;
+    await prefs.setInt(_prefsKeyFailedAttempts, attempts);
+    if (attempts >= 4) {
+      final lockoutUntil = DateTime.now().add(const Duration(minutes: 10)).millisecondsSinceEpoch;
+      await prefs.setInt(_prefsKeyLockoutUntilMs, lockoutUntil);
+      // Reset attempts after initiating lock
+      await prefs.setInt(_prefsKeyFailedAttempts, 0);
+    }
+  }
+
+  Future<bool> isLockedOut() async {
+    final prefs = await SharedPreferences.getInstance();
+    final until = prefs.getInt(_prefsKeyLockoutUntilMs);
+    if (until == null) return false;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now >= until) {
+      // Lockout expired, clear
+      await prefs.remove(_prefsKeyLockoutUntilMs);
+      return false;
+    }
+    return true;
+  }
+
+  Future<Duration> lockoutRemaining() async {
+    final prefs = await SharedPreferences.getInstance();
+    final until = prefs.getInt(_prefsKeyLockoutUntilMs);
+    if (until == null) return Duration.zero;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final remainingMs = until - now;
+    return remainingMs > 0 ? Duration(milliseconds: remainingMs) : Duration.zero;
   }
 
   String _generateSalt({int length = 16}) {
