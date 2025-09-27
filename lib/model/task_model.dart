@@ -7,15 +7,18 @@ class TaskModel {
   //TaskName
   final String taskName;
   final int taskPriority; // 1-5 scale (1=low, 5=high)
-  // Stores selected time
-  final TimeOfDay taskTime;
-  // Stores selected date
-  final DateTime taskDate;
+  // Stores selected time (null means no specific time set)
+  final TimeOfDay? taskTime;
+  // Stores selected date (null means no specific date set)
+  final DateTime? taskDate;
 
   final bool isRecurring;
   final RecurringPattern? recurringPattern;
   final String? geofenceId;
   final bool isCompleted;
+
+  // Notification sound for this specific task (overrides app default)
+  final String? notificationSound;
 
   // Task notification type?
 
@@ -35,7 +38,11 @@ class TaskModel {
     required this.isCompleted,
     this.geofenceId,
     this.createdAt,
-  }) : assert(taskPriority >= 1 && taskPriority <= 5, 'Priority must be between 1 and 5');
+    this.notificationSound,
+  }) : assert(
+         taskPriority >= 1 && taskPriority <= 5,
+         'Priority must be between 1 and 5',
+       );
 
   // Convert TaskModel to Map
   Map<String, dynamic> toMap() {
@@ -43,33 +50,43 @@ class TaskModel {
       'id': id,
       'taskName': taskName,
       'taskPriority': taskPriority,
-      'taskTime': '${taskTime.hour}:${taskTime.minute}',
-      'taskDate': DateFormat('yyyy-MM-dd').format(taskDate),
+      'taskTime':
+          taskTime != null ? '${taskTime!.hour}:${taskTime!.minute}' : null,
+      'taskDate':
+          taskDate != null ? DateFormat('yyyy-MM-dd').format(taskDate!) : null,
       'isRecurring': isRecurring ? 1 : 0,
       'recurring_pattern': recurringPattern?.toJson(),
       'isCompleted': isCompleted ? 1 : 0,
       'geofence_id': geofenceId,
+      'notification_sound': notificationSound,
       // 'created_at' is intentionally omitted; DB sets it by default.
     };
   }
 
   factory TaskModel.fromMap(Map<String, dynamic> map) {
+    final timeStr = map['taskTime'] as String?;
+    final dateStr = map['taskDate'] as String?;
+
     return TaskModel(
       id: map['id'] as int?,
       taskName: map['taskName'] as String,
       taskPriority: map['taskPriority'] as int,
-      taskTime: TimeOfDay(
-        // Ensure robust parsing
-        hour: int.parse((map['taskTime'] as String).split(':')[0]),
-        minute: int.parse((map['taskTime'] as String).split(':')[1]),
-      ),
-      taskDate: DateTime.parse(map['taskDate'] as String),
+      taskTime:
+          timeStr != null
+              ? TimeOfDay(
+                hour: int.parse(timeStr.split(':')[0]),
+                minute: int.parse(timeStr.split(':')[1]),
+              )
+              : null,
+      taskDate: dateStr != null ? DateTime.parse(dateStr) : null,
       isRecurring: (map['isRecurring'] as int) == 1,
-      recurringPattern: map['recurring_pattern'] != null 
-        ? RecurringPattern.fromJson(map['recurring_pattern'] as String)
-        : null,
+      recurringPattern:
+          map['recurring_pattern'] != null
+              ? RecurringPattern.fromJson(map['recurring_pattern'] as String)
+              : null,
       isCompleted: (map['isCompleted'] as int) == 1,
       geofenceId: map['geofence_id'] as String?,
+      notificationSound: map['notification_sound'] as String?,
       createdAt: map['created_at'] as int?,
     );
   }
@@ -95,21 +112,26 @@ class TaskModel {
   /// Calculate effective priority based on user priority and urgency
   /// Urgency is calculated based on how close the task time is to now
   double getEffectivePriority() {
-    final now = DateTime.now();
-    final taskDateTime = DateTime(
-      taskDate.year,
-      taskDate.month,
-      taskDate.day,
-      taskTime.hour,
-      taskTime.minute,
-    );
-    
-    // Calculate hours until task
-    final hoursUntilTask = taskDateTime.difference(now).inHours;
-    
     // Base priority from user (1-5 scale)
     double effectivePriority = taskPriority.toDouble();
-    
+
+    // If no time is set, return base priority only
+    if (taskTime == null || taskDate == null) {
+      return effectivePriority;
+    }
+
+    final now = DateTime.now();
+    final taskDateTime = DateTime(
+      taskDate!.year,
+      taskDate!.month,
+      taskDate!.day,
+      taskTime!.hour,
+      taskTime!.minute,
+    );
+
+    // Calculate hours until task
+    final hoursUntilTask = taskDateTime.difference(now).inHours;
+
     // Add urgency multiplier based on time proximity
     if (hoursUntilTask <= 0) {
       // Task is overdue or happening now - maximum urgency
@@ -125,7 +147,7 @@ class TaskModel {
       effectivePriority += 0.5;
     }
     // Tasks more than 24 hours away get no urgency bonus
-    
+
     return effectivePriority;
   }
 
@@ -166,9 +188,10 @@ class TaskModel {
   bool shouldOccurOn(DateTime date) {
     if (!isRecurring || recurringPattern == null) {
       // For one-time tasks, check if it matches the exact date
-      return taskDate.year == date.year && 
-             taskDate.month == date.month && 
-             taskDate.day == date.day;
+      if (taskDate == null) return false;
+      return taskDate!.year == date.year &&
+          taskDate!.month == date.month &&
+          taskDate!.day == date.day;
     }
     return recurringPattern!.shouldOccurOn(date);
   }
@@ -177,9 +200,13 @@ class TaskModel {
   DateTime? getNextOccurrence(DateTime after) {
     if (!isRecurring || recurringPattern == null) {
       // For one-time tasks, return the task date if it's after the given date
+      if (taskDate == null || taskTime == null) return null;
       final taskDateTime = DateTime(
-        taskDate.year, taskDate.month, taskDate.day,
-        taskTime.hour, taskTime.minute,
+        taskDate!.year,
+        taskDate!.month,
+        taskDate!.day,
+        taskTime!.hour,
+        taskTime!.minute,
       );
       return taskDateTime.isAfter(after) ? taskDate : null;
     }
@@ -199,6 +226,7 @@ class TaskModel {
       isCompleted: false, // New instances start as incomplete
       geofenceId: geofenceId,
       createdAt: createdAt,
+      notificationSound: notificationSound,
     );
   }
 
@@ -214,6 +242,7 @@ class TaskModel {
     bool? isCompleted,
     String? geofenceId,
     int? createdAt,
+    String? notificationSound,
   }) {
     return TaskModel(
       id: id ?? this.id,
@@ -226,6 +255,7 @@ class TaskModel {
       isCompleted: isCompleted ?? this.isCompleted,
       geofenceId: geofenceId ?? this.geofenceId,
       createdAt: createdAt ?? this.createdAt,
+      notificationSound: notificationSound ?? this.notificationSound,
     );
   }
 

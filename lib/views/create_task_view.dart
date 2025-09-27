@@ -9,6 +9,7 @@ import 'package:intelliboro/services/geofence_storage.dart';
 import 'package:intelliboro/model/recurring_pattern.dart';
 import 'package:intelliboro/widgets/recurring_selector.dart';
 import 'package:intelliboro/services/task_timer_service.dart';
+import 'package:intelliboro/services/notification_preferences_service.dart';
 
 class TaskCreation extends StatefulWidget {
   final bool showMap;
@@ -45,6 +46,12 @@ class _TaskCreationState extends State<TaskCreation> {
 
   late final MapboxMapViewModel _mapViewModel;
 
+  // Notification sound preference (app-wide default)
+  String _selectedSoundKey = NotificationPreferencesService.soundDefault;
+
+  // Task-specific notification sound (overrides app default)
+  String? _taskNotificationSound;
+
   // Geofence selection state
   List<GeofenceData> _availableGeofences = [];
   String? _selectedGeofenceId;
@@ -68,8 +75,17 @@ class _TaskCreationState extends State<TaskCreation> {
       selectedRecurringPattern = t.recurringPattern ?? RecurringPattern.none();
       _selectedGeofenceId = t.geofenceId;
       _useExistingGeofence = t.geofenceId != null;
+      _taskNotificationSound = t.notificationSound;
     }
     _loadGeofences();
+    // Load default notification sound preference
+    Future.microtask(() async {
+      final key = await NotificationPreferencesService().getDefaultSound();
+      if (!mounted) return;
+      setState(() {
+        _selectedSoundKey = key;
+      });
+    });
   }
 
   Future<void> _loadGeofences() async {
@@ -350,6 +366,63 @@ class _TaskCreationState extends State<TaskCreation> {
     );
   }
 
+  Widget _buildNotificationSoundSelector() {
+    final theme = Theme.of(context);
+    return Card.filled(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Task Notification Sound',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade300),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _taskNotificationSound,
+                  hint: const Text('Use app default'),
+                  items: [
+                    const DropdownMenuItem<String>(
+                      value: null,
+                      child: Text('Use app default'),
+                    ),
+                    ...NotificationPreferencesService.getAvailableSounds().map(
+                      (sound) => DropdownMenuItem<String>(
+                        value: sound['key'],
+                        child: Text(sound['name']!),
+                      ),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    setState(() {
+                      _taskNotificationSound = value;
+                    });
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Choose a specific notification sound for this task, or leave as "Use app default" to use the global app setting.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildMapSection() {
     return ListenableBuilder(
       listenable: _mapViewModel,
@@ -384,14 +457,20 @@ class _TaskCreationState extends State<TaskCreation> {
                     top: 10,
                     right: 10,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.black54,
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
                         'Saved: ${_mapViewModel.savedGeofences.length}',
-                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
                   ),
@@ -408,7 +487,8 @@ class _TaskCreationState extends State<TaskCreation> {
               min: 1,
               max: 1000,
               divisions: 999,
-              label: '${_mapViewModel.pendingRadiusMeters.toStringAsFixed(0)} m',
+              label:
+                  '${_mapViewModel.pendingRadiusMeters.toStringAsFixed(0)} m',
               onChanged: (v) => _mapViewModel.setPendingRadius(v),
             ),
           ],
@@ -440,22 +520,47 @@ class _TaskCreationState extends State<TaskCreation> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Geofence Location',
+              'Location-based Reminder (Optional)',
               style: Theme.of(
                 context,
               ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Add a location reminder or leave empty for time-based notifications only.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
             const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
                   child: RadioListTile<bool>(
-                    title: const Text('Create New Geofence'),
+                    title: const Text('No Location Reminder'),
                     value: false,
                     groupValue: _useExistingGeofence,
                     onChanged: (value) {
                       setState(() {
-                        _useExistingGeofence = value!;
+                        _useExistingGeofence = false;
+                        _selectedGeofenceId = null;
+                        _mapViewModel.clearSelectedPoint();
+                      });
+                    },
+                  ),
+                ),
+              ],
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: RadioListTile<bool>(
+                    title: const Text('Create New Location'),
+                    value: false,
+                    groupValue: _useExistingGeofence,
+                    onChanged: (value) {
+                      setState(() {
+                        _useExistingGeofence = false;
                         _selectedGeofenceId = null;
                       });
                     },
@@ -467,7 +572,7 @@ class _TaskCreationState extends State<TaskCreation> {
               children: [
                 Expanded(
                   child: RadioListTile<bool>(
-                    title: const Text('Use Existing Geofence'),
+                    title: const Text('Use Existing Location'),
                     value: true,
                     groupValue: _useExistingGeofence,
                     onChanged:
@@ -567,6 +672,8 @@ class _TaskCreationState extends State<TaskCreation> {
               const SizedBox(height: 16.0),
               _buildRecurringSelector(),
               const SizedBox(height: 16.0),
+              _buildNotificationSoundSelector(),
+              const SizedBox(height: 16.0),
               Row(
                 children: [
                   Expanded(
@@ -612,39 +719,18 @@ class _TaskCreationState extends State<TaskCreation> {
                     return;
                   }
 
-                  // Validate geofence selection if map is enabled
-                  if (widget.showMap) {
-                    if (_useExistingGeofence && _selectedGeofenceId == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Please select an existing geofence or create a new one.',
-                          ),
-                        ),
-                      );
-                      return;
-                    }
-                    if (!_useExistingGeofence &&
-                        _mapViewModel.selectedPoint == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Please select a location on the map for the new geofence.',
-                          ),
-                        ),
-                      );
-                      return;
-                    }
+                  // Determine the geofence ID to use (if any)
+                  String? geofenceIdForTask;
+                  if (widget.showMap && _useExistingGeofence) {
+                    geofenceIdForTask = _selectedGeofenceId;
                   }
 
-                  // Determine the geofence ID to use
-                  String? geofenceIdForTask;
-                  if (widget.showMap) {
-                    if (_useExistingGeofence) {
-                      geofenceIdForTask = _selectedGeofenceId;
-                    }
-                    // For new geofences, we'll get the ID after creating it
-                  }
+                  // Persist default notification sound preference
+                  try {
+                    await NotificationPreferencesService().setDefaultSound(
+                      _selectedSoundKey,
+                    );
+                  } catch (_) {}
 
                   // Create or update the task
                   if (widget.initialTask == null) {
@@ -652,8 +738,10 @@ class _TaskCreationState extends State<TaskCreation> {
                       TaskModel(
                         taskName: taskName,
                         taskPriority: selectedPriority,
-                        taskTime: selectedTime ?? TimeOfDay.now(),
-                        taskDate: selectedDate ?? DateTime.now(),
+                        taskTime:
+                            selectedTime, // Only set if explicitly selected
+                        taskDate:
+                            selectedDate, // Only set if explicitly selected
                         isRecurring:
                             selectedRecurringPattern.type != RecurringType.none,
                         recurringPattern:
@@ -662,6 +750,7 @@ class _TaskCreationState extends State<TaskCreation> {
                                 : null,
                         isCompleted: false,
                         geofenceId: geofenceIdForTask,
+                        notificationSound: _taskNotificationSound,
                       ),
                     );
 
@@ -684,6 +773,7 @@ class _TaskCreationState extends State<TaskCreation> {
                               : null,
                       isCompleted: existing.isCompleted,
                       geofenceId: geofenceIdForTask ?? existing.geofenceId,
+                      notificationSound: _taskNotificationSound,
                     );
                     await TaskRepository().updateTask(updated);
                     // Notify listeners that tasks changed
