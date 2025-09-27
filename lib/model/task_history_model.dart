@@ -24,7 +24,10 @@ class TaskHistoryModel {
     required this.completionDate,
     this.geofenceId,
     this.createdAt,
-  }) : assert(taskPriority >= 1 && taskPriority <= 5, 'Priority must be between 1 and 5');
+  }) : assert(
+         taskPriority >= 1 && taskPriority <= 5,
+         'Priority must be between 1 and 5',
+       );
 
   /// Convert TaskHistoryModel to Map for database storage
   Map<String, dynamic> toMap() {
@@ -33,36 +36,56 @@ class TaskHistoryModel {
       'task_id': taskId,
       'task_name': taskName,
       'task_priority': taskPriority,
-      'start_time': startTime.millisecondsSinceEpoch ~/ 1000, // Store as seconds
+      'start_time':
+          startTime.millisecondsSinceEpoch ~/ 1000, // Store as seconds
       'end_time': endTime.millisecondsSinceEpoch ~/ 1000,
       'duration_seconds': duration.inSeconds,
-      'completion_date': completionDate.toIso8601String().split('T')[0], // YYYY-MM-DD format
+      'completion_date':
+          completionDate.toIso8601String().split('T')[0], // YYYY-MM-DD format
       'geofence_id': geofenceId,
-      'created_at': createdAt?.millisecondsSinceEpoch ?? DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      'created_at':
+          createdAt?.millisecondsSinceEpoch ??
+          DateTime.now().millisecondsSinceEpoch ~/ 1000,
     };
   }
 
   /// Create TaskHistoryModel from database Map
   factory TaskHistoryModel.fromMap(Map<String, dynamic> map) {
-    final startTimeSeconds = map['start_time'] as int;
-    final endTimeSeconds = map['end_time'] as int;
-    final durationSeconds = map['duration_seconds'] as int;
-    final completionDateString = map['completion_date'] as String;
+    final startTimeSec = map['start_time'] as int?;
+    final endTimeSec = map['end_time'] as int?;
+    final durationSeconds = map['duration_seconds'] as int?;
+    final completionDateString = map['completion_date'] as String?;
     final createdAtSeconds = map['created_at'] as int?;
+
+    final startTime =
+        startTimeSec != null
+            ? DateTime.fromMillisecondsSinceEpoch(startTimeSec * 1000)
+            : DateTime.now();
+    final endTime =
+        endTimeSec != null
+            ? DateTime.fromMillisecondsSinceEpoch(endTimeSec * 1000)
+            : startTime; // if null, set equal to start for open sessions
+    final duration = Duration(seconds: durationSeconds ?? 0);
+    final completionDate =
+        completionDateString != null
+            ? DateTime.parse(completionDateString)
+            : DateTime(startTime.year, startTime.month, startTime.day);
+    final createdAt =
+        createdAtSeconds != null
+            ? DateTime.fromMillisecondsSinceEpoch(createdAtSeconds * 1000)
+            : null;
 
     return TaskHistoryModel(
       id: map['id'] as int?,
       taskId: map['task_id'] as int?,
-      taskName: map['task_name'] as String,
-      taskPriority: map['task_priority'] as int,
-      startTime: DateTime.fromMillisecondsSinceEpoch(startTimeSeconds * 1000),
-      endTime: DateTime.fromMillisecondsSinceEpoch(endTimeSeconds * 1000),
-      duration: Duration(seconds: durationSeconds),
-      completionDate: DateTime.parse(completionDateString),
+      taskName: map['task_name'] as String? ?? '',
+      taskPriority: map['task_priority'] as int? ?? 1,
+      startTime: startTime,
+      endTime: endTime,
+      duration: duration,
+      completionDate: completionDate,
       geofenceId: map['geofence_id'] as String?,
-      createdAt: createdAtSeconds != null 
-          ? DateTime.fromMillisecondsSinceEpoch(createdAtSeconds * 1000)
-          : null,
+      createdAt: createdAt,
     );
   }
 
@@ -125,7 +148,7 @@ class TaskHistoryModel {
     final hours = duration.inHours;
     final minutes = duration.inMinutes.remainder(60);
     final seconds = duration.inSeconds.remainder(60);
-    
+
     if (hours > 0) {
       return '${hours}h ${minutes}m ${seconds}s';
     } else if (minutes > 0) {
@@ -153,9 +176,10 @@ class TaskHistoryModel {
   /// Get efficiency rating based on task priority and duration
   String get efficiencyRating {
     // This is a simple heuristic - can be improved based on user preferences
-    final expectedMinutes = taskPriority * 30; // Higher priority = more expected time
+    final expectedMinutes =
+        taskPriority * 30; // Higher priority = more expected time
     final actualMinutes = duration.inMinutes;
-    
+
     if (actualMinutes <= expectedMinutes * 0.8) {
       return 'Excellent';
     } else if (actualMinutes <= expectedMinutes) {

@@ -67,6 +67,18 @@ class TaskRepository {
     debugPrint("[TaskRepository] updateTask: Task ${task.id} updated.");
   }
 
+  Future<TaskModel?> getTaskById(int id) async {
+    final db = await DatabaseService().mainDb;
+    final rows = await db.query(
+      'tasks',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return TaskModel.fromMap(rows.first);
+  }
+
   //TODO: Delete a task
   // Future<void> deleteTask(int id) async {
   //   debugPrint(

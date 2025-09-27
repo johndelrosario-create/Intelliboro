@@ -13,6 +13,7 @@ import 'package:intelliboro/services/geofence_storage.dart';
 import 'package:intelliboro/services/database_service.dart';
 import 'package:intelliboro/services/context_detection_service.dart';
 import 'package:intelliboro/services/text_to_speech_service.dart';
+import 'package:intelliboro/repository/task_repository.dart';
 
 @pragma('vm:entry-point')
 Future<void> geofenceTriggered(
@@ -171,11 +172,13 @@ Future<void> geofenceTriggered(
     for (final geofence in params.geofences) {
       final geofenceData = await storage.getGeofenceById(geofence.id);
       if (geofenceData != null) {
+        // Add event type info to notification body
         final eventType =
             params.event == native_geofence.GeofenceEvent.enter
                 ? 'entered'
                 : 'exited';
-        notificationBody += 'You have task ${geofenceData.task}\n';
+        notificationBody +=
+            'You have $eventType the area for task ${geofenceData.task}\n';
       }
     }
 
@@ -185,6 +188,7 @@ Future<void> geofenceTriggered(
     }
 
     // Create the notification details with sound enabled (plays BEFORE TTS)
+    // Add action buttons for persistent notifications
     final AndroidNotificationDetails
     androidNotificationDetails = AndroidNotificationDetails(
       channel.id, // Must match the channel ID
@@ -199,10 +203,26 @@ Future<void> geofenceTriggered(
       visibility: NotificationVisibility.public,
       category: AndroidNotificationCategory.alarm, // Back to alarm for urgency
       showWhen: true,
-      autoCancel: true, // Allow user to dismiss easily
+      autoCancel:
+          false, // Persistent notification - cannot be dismissed by swiping
+      ongoing: true, // Make notification persistent
       channelShowBadge: true,
       icon: '@mipmap/ic_launcher',
       styleInformation: const BigTextStyleInformation(''),
+      actions: <AndroidNotificationAction>[
+        const AndroidNotificationAction(
+          'com.intelliboro.DO_NOW',
+          'Do Now \ud83c\udfc3\u200d\u2642\ufe0f',
+          showsUserInterface: true,
+          cancelNotification: true,
+        ),
+        const AndroidNotificationAction(
+          'com.intelliboro.DO_LATER',
+          'Do Later \u23f0',
+          showsUserInterface: false,
+          cancelNotification: false,
+        ),
+      ],
     );
 
     final NotificationDetails platformChannelSpecifics = NotificationDetails(
@@ -216,13 +236,71 @@ Future<void> geofenceTriggered(
     // --- Show the notification FIRST (with sound) to alert user ---
     final notificationId = Random().nextInt(2147483647);
 
+    // Gather task IDs matching these geofence ids using the background DB
+    List<int> matchedTaskIds = [];
+    try {
+      final geofenceIdList = params.geofences.map((g) => g.id).toList();
+      developer.log(
+        '[GeofenceCallback] Background query geofenceIdList: $geofenceIdList',
+      );
+      if (geofenceIdList.isNotEmpty) {
+        final placeholders = List.filled(geofenceIdList.length, '?').join(',');
+        final whereClause =
+            'geofence_id IN ($placeholders) AND isCompleted = 0';
+        final rows = await database.query(
+          'tasks',
+          columns: ['id', 'geofence_id'],
+          where: whereClause,
+          whereArgs: geofenceIdList,
+        );
+        developer.log(
+          '[GeofenceCallback] Background DB returned ${rows.length} matching task rows: $rows',
+        );
+        for (final r in rows) {
+          final idVal = r['id'];
+          if (idVal is int)
+            matchedTaskIds.add(idVal);
+          else if (idVal is String) {
+            final parsed = int.tryParse(idVal);
+            if (parsed != null) matchedTaskIds.add(parsed);
+          }
+        }
+
+        if (matchedTaskIds.isEmpty) {
+          try {
+            final allRows = await database.query(
+              'tasks',
+              columns: ['id', 'geofence_id', 'taskName', 'isCompleted'],
+            );
+            developer.log(
+              '[GeofenceCallback] No matches - full tasks table snapshot: $allRows',
+            );
+          } catch (dumpError, dumpSt) {
+            developer.log(
+              '[GeofenceCallback] Failed to dump all tasks for debugging: $dumpError',
+              error: dumpError,
+              stackTrace: dumpSt,
+            );
+          }
+        }
+      }
+    } catch (e, st) {
+      developer.log(
+        '[GeofenceCallback] Error while collecting task IDs from background DB: $e',
+        error: e,
+        stackTrace: st,
+      );
+    }
+
     final payloadData = {
       'notificationId': notificationId,
       'title': notificationTitle,
       'body': notificationBody,
       'geofenceIds': params.geofences.map((g) => g.id).toList(),
+      'taskIds': matchedTaskIds,
     };
     final payloadJson = jsonEncode(payloadData);
+    developer.log('[GeofenceCallback] Notification payload JSON: $payloadJson');
 
     try {
       developer.log(

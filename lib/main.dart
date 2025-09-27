@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intelliboro/theme.dart';
-import 'package:intelliboro/views/create_task_view.dart'; // Used by old HomePage
-import 'package:permission_handler/permission_handler.dart'; // Used by old HomePage
+import 'package:permission_handler/permission_handler.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
-import 'dart:async'; // Used by old HomePage
-import 'dart:ui'; // Used by old HomePage
-import 'dart:isolate'; // Used by old HomePage
+import 'dart:async';
 import 'package:intelliboro/views/task_list_view.dart';
 import 'package:intelliboro/services/location_service.dart';
 import 'package:intelliboro/services/task_timer_service.dart';
@@ -17,6 +14,8 @@ import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:intelliboro/services/text_to_speech_service.dart';
+import 'package:intelliboro/views/active_task_view.dart';
+import 'package:intelliboro/model/task_model.dart';
 
 // Define the access token
 const String accessToken = String.fromEnvironment('ACCESS_TOKEN');
@@ -25,126 +24,329 @@ const String accessToken = String.fromEnvironment('ACCESS_TOKEN');
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
 
-void _onNotificationResponse(NotificationResponse response) async {
-  developer.log(
-    '[main] Handling notification response. ID: ${response.id}, Action: ${response.actionId}, Payload: ${response.payload}',
-  );
+// Global singleton for managing task timers from notifications
+final TaskTimerService taskTimerService = TaskTimerService();
 
-  if (response.payload == null || response.payload!.isEmpty) {
-    developer.log('[main] Notification response has no payload.');
-    return;
-  }
+// Global navigator key so notification handler can bring the app to foreground
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
+Future<void> _onNotificationResponse(NotificationResponse response) async {
+  // Unified notification response handler.
   try {
-    final payloadData = jsonDecode(response.payload!);
-    final int notificationId = payloadData['notificationId'];
-    final List<dynamic> geofenceIds = payloadData['geofenceIds'] ?? [];
+    final String? payload = response.payload;
+    final int? responseId = response.id;
+
+    // 1) If action is DO_NOW and payload is a simple task id, start that task
+    if (response.actionId == 'com.intelliboro.DO_NOW') {
+      final int? simpleTaskId = payload == null ? null : int.tryParse(payload);
+      if (simpleTaskId != null) {
+        final task = await TaskRepository().getTaskById(simpleTaskId);
+        if (task != null) {
+          await taskTimerService.startTask(task);
+          developer.log(
+            '[main] Started timer for task ${task.taskName} (id=$simpleTaskId)',
+          );
+          if (responseId != null) {
+            await flutterLocalNotificationsPlugin.cancel(responseId);
+          }
+          // Bring app to foreground
+          try {
+            navigatorKey.currentState?.pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const ActiveTaskView()),
+              (r) => false,
+            );
+          } catch (e) {
+            developer.log('[main] Navigation after DO_NOW failed: $e');
+          }
+          return;
+        }
+      }
+    }
+
+    if (payload == null || payload.isEmpty) {
+      developer.log('[main] Notification response has no payload.');
+      return;
+    }
+
+    // Parse JSON payload created by the geofence background callback
+    final Map<String, dynamic> data =
+        jsonDecode(payload) as Map<String, dynamic>;
+    final dynamic nid = data['notificationId'];
+    final int? notificationIdFromPayload =
+        nid is int ? nid : (nid is String ? int.tryParse(nid) : null);
+    final List<dynamic> geofenceIds =
+        (data['geofenceIds'] as List<dynamic>?) ?? [];
+    final List<dynamic> payloadTaskIds =
+        (data['taskIds'] as List<dynamic>?) ?? [];
+
+    // Helper: resolve candidate tasks either from explicit taskIds or geofenceIds
+    Future<List<TaskModel>> _resolveCandidates() async {
+      final taskRepo = TaskRepository();
+      final List<TaskModel> out = [];
+      if (payloadTaskIds.isNotEmpty) {
+        for (final tid in payloadTaskIds) {
+          final int? parsed =
+              tid is int ? tid : (tid is String ? int.tryParse(tid) : null);
+          if (parsed != null) {
+            final t = await taskRepo.getTaskById(parsed);
+            if (t != null && !t.isCompleted) out.add(t);
+          }
+        }
+        if (out.isNotEmpty) return out;
+      }
+      if (geofenceIds.isNotEmpty) {
+        final tasks = await TaskRepository().getTasks();
+        out.addAll(
+          tasks.where(
+            (t) =>
+                t.geofenceId != null &&
+                geofenceIds.contains(t.geofenceId) &&
+                !t.isCompleted,
+          ),
+        );
+      }
+      return out;
+    }
 
     if (response.actionId == 'com.intelliboro.DO_NOW') {
       developer.log(
-        '[main] Do Now action selected for notification $notificationId',
+        '[main] DO_NOW action received (payload notificationId=$notificationIdFromPayload)',
       );
-      
-      // Cancel the notification
-      await flutterLocalNotificationsPlugin.cancel(notificationId);
-      
-      // Start the task timer
-      final taskTimerService = TaskTimerService();
-      final taskRepository = TaskRepository();
-      
-      if (geofenceIds.isNotEmpty) {
-        final tasks = await taskRepository.getTasks();
-        final tasksForGeofence = tasks.where((task) => 
-          geofenceIds.contains(task.geofenceId) && !task.isCompleted
-        ).toList();
-        
-        if (tasksForGeofence.isNotEmpty) {
-          // Find highest priority task
-          final highestPriorityTask = tasksForGeofence.reduce((a, b) => 
-            a.getEffectivePriority() > b.getEffectivePriority() ? a : b
+      if (notificationIdFromPayload != null) {
+        await flutterLocalNotificationsPlugin.cancel(notificationIdFromPayload);
+      }
+      final candidates = await _resolveCandidates();
+      if (candidates.isNotEmpty) {
+        final highest = candidates.reduce(
+          (a, b) => a.getEffectivePriority() > b.getEffectivePriority() ? a : b,
+        );
+        final started = await taskTimerService.startTask(highest);
+        developer.log(
+          '[main] Task timer started: $started for ${highest.taskName}',
+        );
+        // Navigate to the ActiveTaskView so the user can always see the timer UI
+        try {
+          navigatorKey.currentState?.pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const ActiveTaskView()),
+            (r) => false,
           );
-          
-          bool started = await taskTimerService.startTask(highestPriorityTask);
-          developer.log('[main] Task timer started: $started for task: ${highestPriorityTask.taskName}');
-          
-          // Show a quick feedback notification to confirm timer started
-          if (started) {
-            await flutterLocalNotificationsPlugin.show(
-              99999, // Use a specific ID for feedback notifications
-              'Timer Started! ⏰',
-              'Now tracking time for "${highestPriorityTask.taskName}"',
-              const NotificationDetails(
-                android: AndroidNotificationDetails(
-                  'timer_feedback',
-                  'Timer Feedback',
-                  channelDescription: 'Confirms when task timers start',
-                  importance: Importance.defaultImportance,
-                  priority: Priority.defaultPriority,
-                  showWhen: true,
-                  autoCancel: true,
-                  timeoutAfter: 3000, // Auto dismiss after 3 seconds
-                ),
+        } catch (e) {
+          developer.log('[main] Navigation after DO_NOW failed: $e');
+        }
+        if (started) {
+          await flutterLocalNotificationsPlugin.show(
+            99999,
+            'Timer Started! ⏰',
+            'Now tracking time for "${highest.taskName}"',
+            const NotificationDetails(
+              android: AndroidNotificationDetails(
+                'timer_feedback',
+                'Timer Feedback',
+                channelDescription: 'Confirms when task timers start',
+                importance: Importance.defaultImportance,
+                priority: Priority.defaultPriority,
+                showWhen: true,
+                autoCancel: true,
+                timeoutAfter: 3000,
               ),
+            ),
+          );
+          try {
+            // Navigate to the ActiveTaskView so the user can see the running timer.
+            navigatorKey.currentState?.pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const ActiveTaskView()),
+              (r) => false,
             );
-          } else {
-            // Show feedback if task was rescheduled instead
-            await flutterLocalNotificationsPlugin.show(
-              99998,
-              'Task Rescheduled 📅',
-              'Higher priority task active. "${highestPriorityTask.taskName}" moved to later.',
-              const NotificationDetails(
-                android: AndroidNotificationDetails(
-                  'timer_feedback',
-                  'Timer Feedback',
-                  channelDescription: 'Confirms when task timers start',
-                  importance: Importance.defaultImportance,
-                  priority: Priority.defaultPriority,
-                  showWhen: true,
-                  autoCancel: true,
-                  timeoutAfter: 4000,
-                ),
+          } catch (e) {
+            developer.log('[main] Navigation after DO_NOW failed: $e');
+          }
+        } else {
+          await flutterLocalNotificationsPlugin.show(
+            99998,
+            'Task Rescheduled 📅',
+            'Higher priority task active. "${highest.taskName}" moved to later.',
+            const NotificationDetails(
+              android: AndroidNotificationDetails(
+                'timer_feedback',
+                'Timer Feedback',
+                channelDescription: 'Confirms when task timers start',
+                importance: Importance.defaultImportance,
+                priority: Priority.defaultPriority,
+                showWhen: true,
+                autoCancel: true,
+                timeoutAfter: 4000,
               ),
+            ),
+          );
+        }
+      } else {
+        // Fallback: try to extract a task name from notification body/title
+        try {
+          String? body = data['body'] as String?;
+          String? title = data['title'] as String?;
+          final RegExp r = RegExp(r'task\s+([^\n]+)', caseSensitive: false);
+          RegExpMatch? m;
+          if (body != null) m = r.firstMatch(body);
+          if (m == null && title != null) m = r.firstMatch(title);
+          if (m != null) {
+            final String name = m.group(1)!.trim();
+            final allTasks = await TaskRepository().getTasks();
+            TaskModel? matched;
+            for (final t in allTasks) {
+              if (!t.isCompleted &&
+                  t.taskName.toLowerCase() == name.toLowerCase()) {
+                matched = t;
+                break;
+              }
+            }
+            if (matched != null) {
+              developer.log(
+                '[main] DO_NOW fallback matched task by name: ${matched.taskName}',
+              );
+              final started = await taskTimerService.startTask(matched);
+              if (started) {
+                await flutterLocalNotificationsPlugin.show(
+                  99999,
+                  'Timer Started! \u23f0',
+                  'Now tracking time for "${matched.taskName}"',
+                  const NotificationDetails(
+                    android: AndroidNotificationDetails(
+                      'timer_feedback',
+                      'Timer Feedback',
+                      channelDescription: 'Confirms when task timers start',
+                      importance: Importance.defaultImportance,
+                      priority: Priority.defaultPriority,
+                      showWhen: true,
+                      autoCancel: true,
+                      timeoutAfter: 3000,
+                    ),
+                  ),
+                );
+                try {
+                  navigatorKey.currentState?.pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (_) => const ActiveTaskView()),
+                    (r) => false,
+                  );
+                } catch (e) {
+                  developer.log(
+                    '[main] Navigation after DO_NOW fallback failed: $e',
+                  );
+                }
+              }
+            }
+          }
+        } catch (e, st) {
+          developer.log(
+            '[main] Error in DO_NOW fallback name-matching: $e',
+            error: e,
+            stackTrace: st,
+          );
+        }
+      }
+      return;
+    }
+
+    if (response.actionId == 'com.intelliboro.DO_LATER') {
+      developer.log(
+        '[main] DO_LATER action received (payload notificationId=$notificationIdFromPayload)',
+      );
+      if (notificationIdFromPayload != null) {
+        await flutterLocalNotificationsPlugin.cancel(notificationIdFromPayload);
+      }
+      final candidates = await _resolveCandidates();
+      for (final t in candidates) {
+        await taskTimerService.rescheduleTaskLater(t);
+        developer.log('[main] Rescheduled task: ${t.taskName}');
+      }
+      return;
+    }
+
+    // Default tap: cancel the notification
+    if (responseId != null) {
+      await flutterLocalNotificationsPlugin.cancel(responseId);
+    }
+
+    // If the user tapped the notification body (no explicit actionId),
+    // treat it like DO_NOW when we have a payload with taskIds or geofenceIds.
+    if ((response.actionId == null || response.actionId!.isEmpty) &&
+        payload.isNotEmpty) {
+      try {
+        // Resolve candidates and start the highest-priority one, then navigate
+        final List<TaskModel> fallbackCandidates = await _resolveCandidates();
+        if (fallbackCandidates.isNotEmpty) {
+          final highestFallback = fallbackCandidates.reduce(
+            (a, b) =>
+                a.getEffectivePriority() > b.getEffectivePriority() ? a : b,
+          );
+          await taskTimerService.startTask(highestFallback);
+          try {
+            navigatorKey.currentState?.pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const ActiveTaskView()),
+              (r) => false,
+            );
+          } catch (e) {
+            developer.log(
+              '[main] Navigation after default notification tap failed: $e',
             );
           }
         }
+      } catch (e) {
+        developer.log(
+          '[main] Could not parse fallback payload for default tap: $e',
+        );
       }
-    } else if (response.actionId == 'com.intelliboro.DO_LATER') {
-      developer.log(
-        '[main] Do Later action selected for notification $notificationId',
-      );
-      
-      // Cancel the notification
-      await flutterLocalNotificationsPlugin.cancel(notificationId);
-      
-      // Reschedule tasks
-      final taskTimerService = TaskTimerService();
-      final taskRepository = TaskRepository();
-      
-      if (geofenceIds.isNotEmpty) {
-        final tasks = await taskRepository.getTasks();
-        final tasksForGeofence = tasks.where((task) => 
-          geofenceIds.contains(task.geofenceId) && !task.isCompleted
-        ).toList();
-        
-        for (final task in tasksForGeofence) {
-          await taskTimerService.rescheduleTaskLater(task);
-          developer.log('[main] Rescheduled task: ${task.taskName}');
-        }
-      }
-    } else {
-      // Default tap on notification
-      developer.log(
-        '[main] Default notification tap for notification $notificationId. Cancelling it.',
-      );
-      await flutterLocalNotificationsPlugin.cancel(notificationId);
     }
-  } catch (e, stackTrace) {
+  } catch (e, st) {
     developer.log(
       '[main] Error handling notification response: $e',
       error: e,
-      stackTrace: stackTrace,
+      stackTrace: st,
     );
   }
+
+  // Final guarantee: if a task is active after handling the notification,
+  // navigate to the ActiveTaskView so the user always sees the running timer.
+  try {
+    if (taskTimerService.hasActiveTask) {
+      developer.log(
+        '[main] Active task detected after notification handling. Navigating to ActiveTaskView.',
+      );
+      await _navigateToActiveView();
+    }
+  } catch (e) {
+    developer.log('[main] Final navigation to ActiveTaskView failed: $e');
+  }
+}
+
+/// Helper that retries navigation until the `navigatorKey` is available.
+Future<void> _navigateToActiveView({int maxRetries = 8}) async {
+  int attempts = 0;
+  while (attempts < maxRetries) {
+    final navState = navigatorKey.currentState;
+    if (navState != null) {
+      try {
+        navState.pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const ActiveTaskView()),
+          (r) => false,
+        );
+        developer.log(
+          '[main] Navigation to ActiveTaskView succeeded on attempt ${attempts + 1}',
+        );
+        return;
+      } catch (e) {
+        developer.log('[main] Navigation attempt failed: $e');
+        return;
+      }
+    }
+    attempts += 1;
+    developer.log(
+      '[main] navigatorKey not ready, retrying navigation in 150ms (attempt $attempts)',
+    );
+    await Future.delayed(const Duration(milliseconds: 150));
+  }
+  developer.log(
+    '[main] Failed to navigate to ActiveTaskView after $maxRetries attempts',
+  );
 }
 
 Future<void> _initializeTimezone() async {
@@ -176,10 +378,10 @@ void _initializeTtsService() {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Initialize TTS service in background (non-blocking)
   _initializeTtsService();
-  
+
   await _initializeTimezone();
 
   // Initialize flutter_local_notifications
@@ -199,9 +401,11 @@ void main() async {
 
     bool? initialized = await flutterLocalNotificationsPlugin.initialize(
       initializationSettings,
-      onDidReceiveNotificationResponse: (NotificationResponse response) {
-        developer.log('[main] Notification tapped: ${response.payload}');
-        _onNotificationResponse(response);
+      onDidReceiveNotificationResponse: (NotificationResponse response) async {
+        developer.log(
+          '[main] Notification tapped: payload=${response.payload}, actionId=${response.actionId}, id=${response.id}',
+        );
+        await _onNotificationResponse(response);
       },
     );
 
@@ -230,11 +434,17 @@ void main() async {
             >();
 
     if (androidImplementation != null) {
-      final bool? permissionGranted = await androidImplementation.requestNotificationsPermission();
-      developer.log("[main] Notification permission granted: $permissionGranted");
-      
-      final bool? exactAlarmsPermission = await androidImplementation.requestExactAlarmsPermission();
-      developer.log("[main] Exact alarms permission granted: $exactAlarmsPermission");
+      final bool? permissionGranted =
+          await androidImplementation.requestNotificationsPermission();
+      developer.log(
+        "[main] Notification permission granted: $permissionGranted",
+      );
+
+      final bool? exactAlarmsPermission =
+          await androidImplementation.requestExactAlarmsPermission();
+      developer.log(
+        "[main] Exact alarms permission granted: $exactAlarmsPermission",
+      );
     }
 
     developer.log(
@@ -248,6 +458,30 @@ void main() async {
 
   MapboxOptions.setAccessToken(accessToken);
   runApp(const MyApp());
+
+  // If the app was launched via a notification (cold start), handle it now
+  // so DO_NOW navigates to the ActiveTaskView on first launch.
+  Future.microtask(() async {
+    try {
+      final details =
+          await flutterLocalNotificationsPlugin
+              .getNotificationAppLaunchDetails();
+      if (details != null &&
+          details.didNotificationLaunchApp &&
+          details.notificationResponse != null) {
+        developer.log(
+          '[main] App launched from notification, handling response...',
+        );
+        await _onNotificationResponse(details.notificationResponse!);
+      }
+    } catch (e, st) {
+      developer.log(
+        '[main] Error checking notification launch details: $e',
+        error: e,
+        stackTrace: st,
+      );
+    }
+  });
 }
 
 // Optional: Callback for when a notification is tapped (if you need to handle it)
@@ -271,6 +505,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'IntelliBoro',
       theme: appTheme,
       home: const AppInitializer(), // Use AppInitializer

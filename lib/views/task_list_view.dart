@@ -1,539 +1,859 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:isolate';
-import 'dart:math';
+import 'package:flutter/material.dart';
+import 'package:intelliboro/model/task_model.dart';
+import 'package:intelliboro/repository/task_repository.dart';
+import 'package:intelliboro/repository/task_history_repository.dart';
+import 'package:intelliboro/services/task_timer_service.dart';
+import 'package:intelliboro/views/notification_history_view.dart';
+import 'package:intelliboro/views/create_task_view.dart';
+import 'package:intelliboro/views/active_task_view.dart';
+import 'package:intelliboro/viewModel/notification_history_viewmodel.dart';
+import 'package:intelliboro/widgets/task_timer_widget.dart';
 import 'dart:developer' as developer;
-import 'dart:ui' show IsolateNameServer; // For SendPort lookup
 
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:native_geofence/native_geofence.dart' as native_geofence;
-import 'package:sqflite/sqflite.dart';
+class TaskListView extends StatefulWidget {
+  const TaskListView({Key? key}) : super(key: key);
 
+  @override
+  _TaskListViewState createState() => _TaskListViewState();
+}
 
-import 'package:intelliboro/services/geofence_storage.dart';
-import 'package:intelliboro/services/database_service.dart';
-import 'package:intelliboro/services/context_detection_service.dart';
-import 'package:intelliboro/services/text_to_speech_service.dart';
+class _TaskListViewState extends State<TaskListView>
+    with TickerProviderStateMixin {
+  List<TaskModel> _tasks = [];
+  bool _isLoading = false;
+  String? _errorMessage;
+  final TaskRepository _taskRepository = TaskRepository();
+  final TaskHistoryRepository _taskHistoryRepository = TaskHistoryRepository();
+  final TaskTimerService _taskTimerService = TaskTimerService();
+  late final NotificationHistoryViewModel _notificationHistoryViewModel;
+  late AnimationController _fabAnimationController;
+  late Animation<double> _fabAnimation;
+  final Map<int, String> _taskTimeCache = {}; // Cache for task time strings
 
-@pragma('vm:entry-point')
-Future<void> geofenceTriggered(
-  native_geofence.GeofenceCallbackParams params,
-) async {
-  Database? database;
+  @override
+  void initState() {
+    super.initState();
+    _loadTasks();
 
-  try {
-    developer.log(
-      '[GeofenceCallback] Starting geofence callback with params: ${params.toString()}',
+    _notificationHistoryViewModel = NotificationHistoryViewModel();
+    _notificationHistoryViewModel.addListener(
+      _onNotificationHistoryViewModelChanged,
     );
-
-    // Validate input parameters
-    if (params.geofences.isEmpty) {
-      developer.log(
-        '[GeofenceCallback] WARNING: No geofences provided in params',
-      );
-      return;
-    }
-
-    // Filter for 'enter' events before proceeding
-    if (params.event != native_geofence.GeofenceEvent.enter) {
-      developer.log(
-        '[GeofenceCallback] Received event: ${params.event.name}, which is not an ENTER event. Skipping notification and history saving.',
-      );
-      // Close the database if it was opened, as we are returning early.
-      if (database != null && database.isOpen) {
-        try {
-          await database.close();
-          developer.log(
-            '[GeofenceCallback] Closed database connection after skipping non-enter event.',
-          );
-        } catch (e) {
-          developer.log(
-            '[GeofenceCallback] Error closing database after skipping non-enter event: $e',
-          );
-        }
-      }
-      return;
-    }
-
     developer.log(
-      '[GeofenceCallback] Processing ENTER event for geofence(s): ${params.geofences.map((g) => g.id).join(', ')}',
+      '[_TaskListViewState.initState] Calling _notificationHistoryViewModel.loadHistory()',
     );
+    _notificationHistoryViewModel.loadHistory();
 
-    // Log geofence details (now only for enter events)
-    for (final geofence in params.geofences) {
-      developer.log('[GeofenceCallback] Details for geofence: ${geofence.id}');
-    }
+    // Listen to task timer service for UI updates
+    _taskTimerService.addListener(_onTaskTimerChanged);
 
-    // Initialize database service
-    final DatabaseService dbService = DatabaseService();
+    _fabAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+    _fabAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _fabAnimationController, curve: Curves.easeInOut),
+    );
+    _fabAnimationController.forward();
+  }
 
-    // Open database connection with error handling
+  Future<void> _loadTasks() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
     try {
-      developer.log(
-        '[GeofenceCallback] Attempting to open database connection...',
-      );
-      database = await dbService.openNewBackgroundConnection(readOnly: false);
-
-      if (!database.isOpen) {
-        developer.log(
-          '[GeofenceCallback] ERROR: Database connection is not open',
-        );
-        return;
-      }
-      developer.log(
-        '[GeofenceCallback] Successfully opened database connection. Path: ${database.path}',
-      );
-    } catch (e, stackTrace) {
-      developer.log(
-        '[GeofenceCallback] CRITICAL: Failed to open database connection',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      // Try to rethrow to see the full error in the native logs
-      rethrow;
-    }
-    developer.log(
-      '[GeofenceCallback] Starting geofence callback for event: ${params.event.name}',
-    );
-    developer.log(
-      '[GeofenceCallback] Event: ${params.event}, Geofence IDs: ${params.geofences.map((g) => g.id).toList()}, Location: ${params.location}',
-    );
-
-    // First, try to send the event through the port
-    final SendPort? sendPort = IsolateNameServer.lookupPortByName(
-      'native_geofence_send_port',
-    );
-    if (sendPort != null && params.location != null) {
-      sendPort.send({
-        'event': params.event.name,
-        'geofenceIds': params.geofences.map((g) => g.id).toList(),
-        'location': {
-          'latitude': params.location!.latitude,
-          'longitude': params.location!.longitude,
-        },
-        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      final tasks = await _taskRepository.getTasks();
+      setState(() {
+        _tasks = tasks;
+        _tasks.sort(TaskModel.compareByEffectivePriority);
       });
-      developer.log('[GeofenceCallback] Successfully sent event through port');
-    }
 
-    // --- Database Access for Background Isolate ---
-    // We already have a database connection in the 'database' variable
-    developer.log(
-      '[GeofenceCallback] Using background DB connection. Path: ${database.path}',
-    );
+      // Load time data for all tasks
+      await _loadTaskTimes();
 
-    // Get geofence details from storage, using the existing database connection
-    final storage = GeofenceStorage(db: database);
-    // --- End Database Access ---
-
-    // Create and initialize a new notifications plugin instance locally
-    final plugin = FlutterLocalNotificationsPlugin();
-    const AndroidInitializationSettings initializationSettingsAndroid =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-    const InitializationSettings initializationSettings =
-        InitializationSettings(android: initializationSettingsAndroid);
-    await plugin.initialize(
-      initializationSettings,
-      onDidReceiveNotificationResponse: (NotificationResponse response) {
-        developer.log(
-          '[Notifications] Notification clicked: ${response.payload}',
-        );
-      },
-    );
-
-    // Create the notification channel (safe to call multiple times)
-    const String channelId = 'geofence_alerts';
-    const String channelName = 'Geofence Alerts';
-
-    // Create the channel with proper settings
-    const AndroidNotificationChannel channel = AndroidNotificationChannel(
-      channelId,
-      channelName,
-      description: 'Important alerts for location-based events',
-      importance: Importance.max,
-      playSound: true,
-      enableVibration: true,
-      showBadge: true,
-    );
-
-    await plugin
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.createNotificationChannel(channel);
-
-    developer.log(
-      '[GeofenceCallback] Created notification channel: $channelId',
-    );
-
-    String notificationTitle = 'Task reminder';
-    String notificationBody = '';
-
-    for (final geofence in params.geofences) {
-      final geofenceData = await storage.getGeofenceById(geofence.id);
-      if (geofenceData != null) {
-        final eventType =
-            params.event == native_geofence.GeofenceEvent.enter ? 'entered' : 'exited';
-        notificationBody += 'You have task ${geofenceData.task}\n';
-      }
-    }
-
-    if (notificationBody.isEmpty) {
-      notificationBody =
-          'Event: ${params.event.name} for geofences: ${params.geofences.map((g) => g.id).join(", ")}';
-    }
-
-    // Create the notification details with sound enabled (plays BEFORE TTS)
-    final AndroidNotificationDetails androidNotificationDetails =
-        AndroidNotificationDetails(
-          channel.id, // Must match the channel ID
-          channel.name, // Must match the channel name
-          channelDescription: 'Alerts when entering or exiting geofence areas (sound alert then TTS)',
-          importance: Importance.max, // High importance for immediate sound
-          priority: Priority.high,
-          ticker: 'New geofence alert',
-          playSound: true, // Enabled - notification sound plays first
-          enableVibration: true, // Keep vibration for tactile feedback
-          visibility: NotificationVisibility.public,
-          category: AndroidNotificationCategory.alarm, // Back to alarm for urgency
-          showWhen: true,
-          autoCancel: true, // Allow user to dismiss easily
-          channelShowBadge: true,
-          icon: '@mipmap/ic_launcher',
-          styleInformation: const BigTextStyleInformation(''),
-        );
-
-    final NotificationDetails platformChannelSpecifics = NotificationDetails(
-      android: androidNotificationDetails,
-    );
-
-    developer.log(
-      '[GeofenceCallback] Notification details created with channel: ${channel.id}',
-    );
-
-    // --- Show the notification FIRST (with sound) to alert user ---
-    final notificationId = Random().nextInt(2147483647);
-
-    final payloadData = {
-      'notificationId': notificationId,
-      'title': notificationTitle,
-      'body': notificationBody,
-      'geofenceIds': params.geofences.map((g) => g.id).toList(),
-    };
-    final payloadJson = jsonEncode(payloadData);
-
-    try {
-      developer.log('[GeofenceCallback] Showing notification with sound first...');
-      await plugin.show(
-        notificationId,
-        notificationTitle,
-        notificationBody,
-        platformChannelSpecifics,
-        payload: payloadJson,
-      );
-      developer.log('[GeofenceCallback] Notification shown successfully');
-      
-      // Short delay to let notification sound play
-      await Future.delayed(const Duration(milliseconds: 1500));
+      developer.log('[TaskListView] Loaded ${_tasks.length} tasks.');
     } catch (e, stackTrace) {
       developer.log(
-        '[GeofenceCallback] Error showing notification: $e',
+        '[TaskListView] Error loading tasks',
         error: e,
         stackTrace: stackTrace,
       );
-    }
-
-    // --- Then Trigger Text-to-Speech Notifications AFTER notification sound ---
-    try {
-      developer.log('[GeofenceCallback] Attempting to trigger TTS notifications...');
-      
-      // Process each geofence for TTS
-      for (final geofence in params.geofences) {
-        try {
-          developer.log('[GeofenceCallback] Processing geofence ${geofence.id} for TTS');
-          
-          final geofenceData = await storage.getGeofenceById(geofence.id);
-          developer.log('[GeofenceCallback] Geofence data retrieved: ${geofenceData?.toJson()}');
-          
-          if (geofenceData != null && geofenceData.task != null && geofenceData.task!.isNotEmpty) {
-            developer.log('[GeofenceCallback] Found task for TTS: ${geofenceData.task}');
-            
-            // Try direct TTS service approach first
-            try {
-              developer.log('[GeofenceCallback] Initializing TTS service for geofence callback...');
-              final ttsService = TextToSpeechService(); // Singleton instance
-              
-              // Force re-initialization in background context
-              developer.log('[GeofenceCallback] Calling TTS init...');
-              await ttsService.init();
-              developer.log('[GeofenceCallback] TTS init completed');
-              
-              // Check if TTS is available
-              developer.log('[GeofenceCallback] Checking TTS availability...');
-              final isAvailable = await ttsService.isAvailable();
-              developer.log('[GeofenceCallback] TTS availability: $isAvailable');
-              developer.log('[GeofenceCallback] TTS enabled: ${ttsService.isEnabled}');
-              
-              if (isAvailable && ttsService.isEnabled) {
-                developer.log('[GeofenceCallback] Attempting to speak: "${geofenceData.task}"');
-                await ttsService.speakTaskNotification(geofenceData.task!, 'location');
-                developer.log('[GeofenceCallback] Direct TTS triggered successfully for: ${geofenceData.task}');
-                
-                // Wait longer for TTS to complete before showing notification
-                developer.log('[GeofenceCallback] Waiting for TTS to complete before showing notification...');
-                int waitTime = 0;
-                const maxWaitTime = 10000; // 10 seconds max
-                const checkInterval = 500; // Check every 500ms
-                
-                while (ttsService.isSpeaking && waitTime < maxWaitTime) {
-                  await Future.delayed(const Duration(milliseconds: checkInterval));
-                  waitTime += checkInterval;
-                  developer.log('[GeofenceCallback] TTS still speaking, waited ${waitTime}ms');
-                }
-                
-                if (waitTime >= maxWaitTime) {
-                  developer.log('[GeofenceCallback] TTS timeout reached, proceeding with notification');
-                } else {
-                  developer.log('[GeofenceCallback] TTS completed after ${waitTime}ms');
-                }
-                
-                // Add additional delay to ensure audio system is free
-                await Future.delayed(const Duration(milliseconds: 1000));
-              } else {
-                developer.log('[GeofenceCallback] TTS not available or disabled. Available: $isAvailable, Enabled: ${ttsService.isEnabled}');
-                developer.log('[GeofenceCallback] TTS will not be triggered');
-              }
-            } catch (directTtsError) {
-              developer.log('[GeofenceCallback] Direct TTS failed: $directTtsError, trying context service...');
-              
-              // Fallback to context service approach
-              try {
-                final contextService = ContextDetectionService();
-                await contextService.init();
-                
-                await contextService.handleGeofenceContext(
-                  geofenceData.task!,
-                  geofence.id,
-                  metadata: {
-                    'event_type': params.event.name,
-                    'latitude': params.location?.latitude,
-                    'longitude': params.location?.longitude,
-                    'timestamp': DateTime.now().millisecondsSinceEpoch,
-                  },
-                );
-                developer.log('[GeofenceCallback] Context service TTS triggered for: ${geofenceData.task}');
-              } catch (contextError) {
-                developer.log('[GeofenceCallback] Context service TTS also failed: $contextError');
-              }
-            }
-          } else {
-            developer.log('[GeofenceCallback] No task found for geofence ${geofence.id} or task is empty');
-          }
-        } catch (geofenceError) {
-          developer.log('[GeofenceCallback] Error processing geofence ${geofence.id} for TTS: $geofenceError');
-        }
-      }
-      
-      developer.log('[GeofenceCallback] TTS notifications processing completed');
-    } catch (e, stackTrace) {
-      developer.log(
-        '[GeofenceCallback] Error triggering TTS notifications: $e',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      // Continue execution even if TTS fails
-    }
-    // --- End Text-to-Speech Notifications ---
-
-    // Notification was already shown above with sound alert
-
-    // --- Save to History ---
-    developer.log(
-      '[GeofenceCallback] Attempting to save notification to history...',
-    );
-
-    // Use a local variable for database operations
-    Database currentDb = database; // Safe because we checked for null above
-
-    try {
-      // Ensure we have a valid database connection
-      if (!currentDb.isOpen) {
-        developer.log(
-          '[GeofenceCallback] WARNING: Database connection is not open, reconnecting...',
-        );
-        final newDb = await dbService.openNewBackgroundConnection(
-          readOnly: false,
-        );
-        if (newDb == null || !newDb.isOpen) {
-          developer.log(
-            '[GeofenceCallback] ERROR: Failed to reopen database connection',
-          );
-          return;
-        }
-        currentDb = newDb;
-      }
-
-      // Log database path for debugging
-      developer.log('[GeofenceCallback] Database path: ${currentDb.path}');
-
-      // Process each geofence
-      for (final geofence in params.geofences) {
-        try {
-          // Ensure we're still connected
-          if (!currentDb.isOpen) {
-            throw Exception('Database connection lost');
-          }
-
-          final geofenceData = await storage.getGeofenceById(geofence.id);
-
-          // Create the notification record with explicit timestamp
-          final now = DateTime.now();
-          final recordMap = {
-            'notification_id': notificationId,
-            'geofence_id': geofence.id,
-            'task_name': geofenceData?.task,
-            'event_type': params.event.name,
-            'body': notificationBody,
-            'timestamp':
-                now.millisecondsSinceEpoch ~/ 1000, // Convert to seconds
-          };
-
-          // Use DatabaseService to insert the record
-          await dbService.insertNotificationHistory(currentDb, recordMap);
-
-          developer.log(
-            '[GeofenceCallback] Successfully saved record for geofence ID: ${geofence.id}',
-          );
-
-          // Notify the main UI isolate that a new notification was saved
-          final SendPort? uiSendPort = IsolateNameServer.lookupPortByName(
-            'intelliboro_new_notification_port',
-          );
-          if (uiSendPort != null) {
-            developer.log(
-              '[GeofenceCallback] Found UI SendPort, sending notification update signal.',
-            );
-            uiSendPort.send('new_notification_saved');
-          } else {
-            developer.log(
-              '[GeofenceCallback] WARNING: Could not find UI SendPort \'intelliboro_new_notification_port\'. UI will not be updated immediately.',
-            );
-          }
-        } catch (e, stackTrace) {
-          developer.log(
-            '[GeofenceCallback] Error saving record for geofence ${geofence.id}: $e',
-            error: e,
-            stackTrace: stackTrace,
-          );
-
-          // Try one more time with a fresh connection
-          try {
-            developer.log(
-              '[GeofenceCallback] Retrying with fresh database connection...',
-            );
-            // Ensure the retry connection is writable
-            final retryDb = await dbService.openNewBackgroundConnection(
-              readOnly: false,
-            );
-            if (retryDb.isOpen) {
-              final geofenceData = await storage.getGeofenceById(geofence.id);
-              final now = DateTime.now();
-              final recordMap = {
-                'notification_id': notificationId,
-                'geofence_id': geofence.id,
-                'task_name': geofenceData?.task,
-                'event_type': params.event.name,
-                'body': notificationBody,
-                'timestamp':
-                    now.millisecondsSinceEpoch ~/ 1000, // Convert to seconds
-              };
-
-              await dbService.insertNotificationHistory(retryDb, recordMap);
-              currentDb = retryDb; // Update current DB reference
-              developer.log(
-                '[GeofenceCallback] Successfully saved record on retry for geofence ID: ${geofence.id}', // Added geofence.id for clarity
-              );
-
-              // Notify the main UI isolate that a new notification was saved (after retry)
-              final SendPort? uiSendPortRetry =
-                  IsolateNameServer.lookupPortByName(
-                    'intelliboro_new_notification_port',
-                  );
-              if (uiSendPortRetry != null) {
-                developer.log(
-                  '[GeofenceCallback] Found UI SendPort (after retry), sending notification update signal.',
-                );
-                uiSendPortRetry.send('new_notification_saved_after_retry');
-              } else {
-                developer.log(
-                  '[GeofenceCallback] WARNING: Could not find UI SendPort \'intelliboro_new_notification_port\' (after retry). UI will not be updated immediately.',
-                );
-              }
-            }
-          } catch (retryError, retryStack) {
-            developer.log(
-              '[GeofenceCallback] Failed to save record on retry: $retryError',
-              error: retryError,
-              stackTrace: retryStack,
-            );
-          }
-        }
-      }
-
-      // Verify the records were saved
-      try {
-        final count =
-            Sqflite.firstIntValue(
-              await currentDb.rawQuery(
-                'SELECT COUNT(*) FROM notification_history',
-              ),
-            ) ??
-            0;
-        developer.log(
-          '[GeofenceCallback] Total notification history records: $count',
-        );
-
-        // Log the most recent records for debugging
-        final recentRecords = await currentDb.query(
-          'notification_history',
-          orderBy: 'timestamp DESC',
-          limit: 5,
-        );
-        developer.log('[GeofenceCallback] Most recent records: $recentRecords');
-      } catch (e) {
-        developer.log(
-          '[GeofenceCallback] Error accessing notification history: $e',
-        );
-      }
-
-      developer.log(
-        '[GeofenceCallback] Finished processing ${params.geofences.length} geofence(s) for notification history.',
-      );
-    } catch (e, stackTrace) {
-      developer.log(
-        '[GeofenceCallback] CRITICAL ERROR in notification history processing: $e',
-        error: e,
-        stackTrace: stackTrace,
-      );
-    }
-    // --- End Save to History ---
-  } catch (e, stackTrace) {
-    developer.log(
-      '[GeofenceCallback] Error in geofence callback: $e',
-      error: e,
-      stackTrace: stackTrace,
-    );
-  } finally {
-    // IMPORTANT: Always close the background database connection to prevent leaks.
-    try {
-      if (database != null && database.isOpen) {
-        await database.close();
-        developer.log(
-          '[GeofenceCallback] Closed background database connection.',
-        );
-      }
-    } catch (e) {
-      developer.log('[GeofenceCallback] Error closing database connection: $e');
+      setState(() {
+        _errorMessage = "Failed to load tasks: ${e.toString()}";
+        _tasks = [];
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
+
+  /// Load time tracking data for all tasks
+  Future<void> _loadTaskTimes() async {
+    try {
+      _taskTimeCache.clear();
+
+      for (final task in _tasks) {
+        if (task.id != null) {
+          final timeString = await _taskHistoryRepository.getFormattedTotalTime(
+            task.id!,
+          );
+          _taskTimeCache[task.id!] = timeString;
+        }
+      }
+
+      if (mounted) {
+        setState(() {}); // Refresh UI with loaded time data
+      }
+    } catch (e) {
+      developer.log('[TaskListView] Error loading task times: $e');
+    }
+  }
+
+  void _onNotificationHistoryViewModelChanged() {
+    if (mounted) {
+      developer.log(
+        '[_TaskListViewState._onNotificationHistoryViewModelChanged] setState called. Notification count: ${_notificationHistoryViewModel.history.length}',
+      );
+      setState(() {});
+    }
+  }
+
+  void _onTaskTimerChanged() {
+    if (mounted) {
+      developer.log(
+        '[_TaskListViewState._onTaskTimerChanged] Task timer state changed. Active task: ${_taskTimerService.activeTask?.taskName}',
+      );
+      setState(() {}); // Rebuild UI to reflect timer state changes
+    }
+  }
+
+  @override
+  void dispose() {
+    _notificationHistoryViewModel.removeListener(
+      _onNotificationHistoryViewModelChanged,
+    );
+    _notificationHistoryViewModel.dispose();
+    _taskTimerService.removeListener(_onTaskTimerChanged);
+    _fabAnimationController.dispose();
+    super.dispose();
+  }
+
+  Color _getPriorityColor(int priority) {
+    final theme = Theme.of(context);
+    switch (priority) {
+      case 1:
+        return theme.colorScheme.secondary;
+      case 2:
+        return theme.colorScheme.tertiary;
+      case 3:
+        return theme.colorScheme.primary;
+      case 4:
+        return theme.colorScheme.error;
+      case 5:
+        return theme.colorScheme.errorContainer;
+      default:
+        return theme.colorScheme.outline;
+    }
+  }
+
+  IconData _getPriorityIcon(int priority) {
+    switch (priority) {
+      case 1:
+        return Icons.low_priority_rounded;
+      case 2:
+        return Icons.expand_more_rounded;
+      case 3:
+        return Icons.radio_button_unchecked_rounded;
+      case 4:
+        return Icons.expand_less_rounded;
+      case 5:
+        return Icons.priority_high_rounded;
+      default:
+        return Icons.help_outline_rounded;
+    }
+  }
+
+  String _getTimeUntilTask(TaskModel task) {
+    final now = DateTime.now();
+    final taskDateTime = DateTime(
+      task.taskDate.year,
+      task.taskDate.month,
+      task.taskDate.day,
+      task.taskTime.hour,
+      task.taskTime.minute,
+    );
+
+    final difference = taskDateTime.difference(now);
+
+    if (difference.isNegative) {
+      final overdue = -difference.inHours;
+      if (overdue < 24) {
+        return 'Overdue by ${overdue}h';
+      } else {
+        return 'Overdue by ${overdue ~/ 24}d';
+      }
+    } else if (difference.inHours < 1) {
+      return 'Due in ${difference.inMinutes}m';
+    } else if (difference.inHours < 24) {
+      return 'Due in ${difference.inHours}h';
+    } else {
+      return 'Due in ${difference.inDays}d';
+    }
+  }
+
+  Widget _buildTaskCard(TaskModel task) {
+    final theme = Theme.of(context);
+    final priorityColor = _getPriorityColor(task.taskPriority);
+    final priorityIcon = _getPriorityIcon(task.taskPriority);
+    final timeUntil = _getTimeUntilTask(task);
+    final effectivePriority = task.getEffectivePriority();
+
+    // Check if this task is currently active in the timer
+    final isActiveTimer =
+        _taskTimerService.hasActiveTask &&
+        _taskTimerService.activeTask?.id == task.id;
+
+    return Card.filled(
+      margin: const EdgeInsets.only(left: 16, right: 16, bottom: 12),
+      child: Container(
+        decoration:
+            isActiveTimer
+                ? BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: theme.colorScheme.primary,
+                    width: 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: theme.colorScheme.primary.withValues(alpha: 0.3),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                )
+                : null,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () {
+            // TODO: Navigate to task details/edit
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Edit "${task.taskName}" - Coming soon!'),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: priorityColor.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: priorityColor.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Icon(priorityIcon, color: priorityColor, size: 20),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  task.taskName,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    decoration:
+                                        task.isCompleted
+                                            ? TextDecoration.lineThrough
+                                            : null,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              // Show active timer indicator
+                              if (isActiveTimer) ...[
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.primary,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.timer,
+                                        size: 12,
+                                        color: theme.colorScheme.onPrimary,
+                                      ),
+                                      const SizedBox(width: 2),
+                                      Text(
+                                        'ACTIVE',
+                                        style: theme.textTheme.labelSmall
+                                            ?.copyWith(
+                                              color:
+                                                  theme.colorScheme.onPrimary,
+                                              fontSize: 8,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${task.priorityString} Priority',
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: priorityColor,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (task.isRecurring)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.secondaryContainer,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.repeat_rounded,
+                              size: 14,
+                              color: theme.colorScheme.onSecondaryContainer,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              task.recurringShortDescription,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: theme.colorScheme.onSecondaryContainer,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest.withValues(
+                      alpha: 0.5,
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.schedule_rounded,
+                        size: 16,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${task.taskTime.format(context)} • ${task.taskDate.day}/${task.taskDate.month}/${task.taskDate.year}',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: priorityColor.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: priorityColor.withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: Text(
+                          timeUntil,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: priorityColor,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Effective Priority: ${effectivePriority.toStringAsFixed(1)}',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.outline,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ),
+                    // Display time tracking info
+                    if (task.id != null && _taskTimeCache.containsKey(task.id!))
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        margin: const EdgeInsets.only(right: 8),
+                        decoration: BoxDecoration(
+                          color:
+                              task.isCompleted
+                                  ? theme.colorScheme.tertiaryContainer
+                                  : theme.colorScheme.secondaryContainer,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color:
+                                task.isCompleted
+                                    ? theme.colorScheme.tertiary.withValues(
+                                      alpha: 0.3,
+                                    )
+                                    : theme.colorScheme.secondary.withValues(
+                                      alpha: 0.3,
+                                    ),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.timer_outlined,
+                              size: 14,
+                              color:
+                                  task.isCompleted
+                                      ? theme.colorScheme.onTertiaryContainer
+                                      : theme.colorScheme.onSecondaryContainer,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              _taskTimeCache[task.id!]!,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color:
+                                    task.isCompleted
+                                        ? theme.colorScheme.onTertiaryContainer
+                                        : theme
+                                            .colorScheme
+                                            .onSecondaryContainer,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    IconButton.filledTonal(
+                      onPressed: () {
+                        // TODO: Toggle completion status
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              task.isCompleted
+                                  ? 'Mark as incomplete - Coming soon!'
+                                  : 'Mark as complete - Coming soon!',
+                            ),
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      },
+                      icon: Icon(
+                        task.isCompleted
+                            ? Icons.check_circle_rounded
+                            : Icons.radio_button_unchecked_rounded,
+                        color:
+                            task.isCompleted
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.outline,
+                      ),
+                      iconSize: 20,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primaryContainer.withValues(
+                  alpha: 0.3,
+                ),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.task_alt_rounded,
+                size: 64,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Ready to get organized?',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: theme.colorScheme.onSurface,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Create your first task with a priority level and location to get started with smart reminders.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 32),
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const TaskCreation(showMap: true),
+                  ),
+                ).then((_) => _loadTasks());
+              },
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Create First Task'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    developer.log(
+      '[_TaskListViewState.build] Building. Notification count: ${_notificationHistoryViewModel.history.length}, IsLoading: ${_notificationHistoryViewModel.isLoading}',
+    );
+
+    return Scaffold(
+      backgroundColor: theme.colorScheme.surface,
+      appBar: AppBar(
+        title: Text(
+          'My Tasks',
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        backgroundColor: theme.colorScheme.surface,
+        elevation: 0,
+        scrolledUnderElevation: 8,
+        actions: [
+          IconButton.filledTonal(
+            icon: const Icon(Icons.notifications_rounded),
+            tooltip: 'Notification History',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const NotificationHistoryView(),
+                ),
+              ).then((_) {
+                _notificationHistoryViewModel.loadHistory();
+              });
+            },
+          ),
+          const SizedBox(width: 8),
+          // Debug helper: simulate DO_NOW notification (starts highest-priority task)
+          IconButton.filledTonal(
+            icon: const Icon(Icons.bug_report_rounded),
+            tooltip: 'Simulate DO_NOW',
+            onPressed: () async {
+              try {
+                // Find highest-priority non-completed task
+                final tasks = await _taskRepository.getTasks();
+                final candidates = tasks.where((t) => !t.isCompleted).toList();
+                if (candidates.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('No active tasks to simulate'),
+                    ),
+                  );
+                  return;
+                }
+                candidates.sort(TaskModel.compareByEffectivePriority);
+                final highest =
+                    candidates
+                        .last; // compareByEffectivePriority sorts ascending
+                final started = await _taskTimerService.startTask(highest);
+                developer.log(
+                  '[TaskListView] Simulate DO_NOW -> started=$started for ${highest.taskName}',
+                );
+                // Navigate to ActiveTaskView so you can see the timer
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const ActiveTaskView()),
+                  (r) => false,
+                );
+              } catch (e, st) {
+                developer.log(
+                  '[TaskListView] Error simulating DO_NOW: $e',
+                  error: e,
+                  stackTrace: st,
+                );
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Simulation failed: $e')),
+                );
+              }
+            },
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: Stack(
+        children: [
+          Builder(
+            builder: (context) {
+              if (_isLoading && _tasks.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      CircularProgressIndicator(
+                        color: theme.colorScheme.primary,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Loading your tasks...',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              if (_errorMessage != null) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.error_outline_rounded,
+                          size: 64,
+                          color: theme.colorScheme.error,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Oops! Something went wrong',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            color: theme.colorScheme.error,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _errorMessage!,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 24),
+                        FilledButton.icon(
+                          onPressed: _loadTasks,
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('Try Again'),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              if (_tasks.isEmpty) {
+                return _buildEmptyState();
+              }
+
+              final activeTasks = _tasks.where((t) => !t.isCompleted).toList();
+              final completedTasks =
+                  _tasks.where((t) => t.isCompleted).toList();
+
+              return RefreshIndicator(
+                onRefresh: _loadTasks,
+                child: CustomScrollView(
+                  slivers: [
+                    if (activeTasks.isNotEmpty) ...[
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.pending_actions_rounded,
+                                color: theme.colorScheme.primary,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Active Tasks (${activeTasks.length})',
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  color: theme.colorScheme.primary,
+                                ),
+                              ),
+                              const Spacer(),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.primaryContainer,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  'Priority sorted',
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: theme.colorScheme.onPrimaryContainer,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) =>
+                              _buildTaskCard(activeTasks[index]),
+                          childCount: activeTasks.length,
+                        ),
+                      ),
+                    ],
+                    if (completedTasks.isNotEmpty) ...[
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.check_circle_outline_rounded,
+                                color: theme.colorScheme.outline,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Completed (${completedTasks.length})',
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  color: theme.colorScheme.outline,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) =>
+                              _buildTaskCard(completedTasks[index]),
+                          childCount: completedTasks.length,
+                        ),
+                      ),
+                    ],
+                    const SliverToBoxAdapter(
+                      child: SizedBox(height: 100), // Space for FAB
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          // Floating task timer widget
+          const TaskTimerWidget(),
+        ],
+      ),
+      floatingActionButton: ScaleTransition(
+        scale: _fabAnimation,
+        child: FloatingActionButton.extended(
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const TaskCreation(showMap: true),
+              ),
+            ).then((_) => _loadTasks());
+          },
+          icon: const Icon(Icons.add_rounded),
+          label: const Text('New Task'),
+          tooltip: 'Create New Task',
+        ),
+      ),
+    );
+  }
 }
+
+// Dummy EditTaskView for now, to be replaced later
+// class EditTaskView extends StatelessWidget {
+//   final String geofenceId;
+//   const EditTaskView({Key? key, required this.geofenceId}) : super(key: key);
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return Scaffold(
+//       appBar: AppBar(title: Text('Edit Task $geofenceId')),
+//       body: Center(
+//         child: Text(
+//           'Editing details for geofence ID: $geofenceId.\nImplementation pending.',
+//         ),
+//       ),
+//     );
+//   }
+// }

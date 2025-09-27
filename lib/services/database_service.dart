@@ -2,16 +2,19 @@ import 'dart:async';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'dart:developer' as developer;
+import 'package:synchronized/synchronized.dart';
 
 class DatabaseService {
   static final DatabaseService _instance = DatabaseService._constructor();
   static Database? _mainIsolateDatabase; // Renamed for clarity
   static const String _dbName = 'intelliboro.db';
-  static const int _dbVersion = 6;
+  static const int _dbVersion = 7;
   static const String _geofencesTableName = 'geofences';
   static const String _tasksTableName = 'tasks';
   static const String _notificationHistoryTableName = 'notification_history';
   static const String _taskHistoryTableName = 'task_history';
+
+  final _lock = Lock();
 
   // Lock to prevent concurrent initialization from main isolate
   // static bool _isInitializingMainDB = false;
@@ -24,52 +27,27 @@ class DatabaseService {
   // For the main UI isolate, uses a shared instance
   Future<Database> get mainDb async {
     if (_mainIsolateDatabase != null && _mainIsolateDatabase!.isOpen) {
-      developer.log("[DatabaseService] Returning existing open DB instance.");
       return _mainIsolateDatabase!;
     }
-    if (_dbInitializingCompleter != null) {
-      developer.log(
-        "[DatabaseService] DB initialization already in progress, awaiting active completer...",
-      );
-    }
-    // No existing instance, and no initialization in progress; start it.
-    developer.log("[DatabaseService] Starting new DB initialization process.");
-    _dbInitializingCompleter =
-        Completer<Database>(); // Create a new completer for this attempt
 
-    try {
-      final db = await _openDatabaseConnection(
-        readOnly: false,
-        singleInstance: true, // Explicitly true for mainDb
-      );
-      // Check if the database is actually open after _openDatabaseConnection
-      if (!db.isOpen) {
-        developer.log(
-          "[DatabaseService] CRITICAL: _openDatabaseConnection returned a closed DB during mainDb init.",
+    return await _lock.synchronized(() async {
+      // Check again inside the lock
+      if (_mainIsolateDatabase != null && _mainIsolateDatabase!.isOpen) {
+        return _mainIsolateDatabase!;
+      }
+
+      try {
+        final db = await _openDatabaseConnection(
+          readOnly: false,
+          singleInstance: true,
         );
-        throw Exception("_openDatabaseConnection returned a closed DB");
+        _mainIsolateDatabase = db;
+        return db;
+      } catch (e) {
+        developer.log("[DatabaseService] Failed to initialize database: $e");
+        rethrow;
       }
-      _mainIsolateDatabase = db;
-      developer.log(
-        "[DatabaseService] DB initialization successful. Completing completer.",
-      );
-      if (!_dbInitializingCompleter!.isCompleted) {
-        _dbInitializingCompleter!.complete(db);
-      }
-    } catch (e, stacktrace) {
-      developer.log(
-        "[DatabaseService] DB initialization failed: $e\n$stacktrace",
-      );
-      if (!_dbInitializingCompleter!.isCompleted) {
-        _dbInitializingCompleter!.completeError(e, stacktrace);
-      }
-      _mainIsolateDatabase = null; // Ensure it's null on error
-      // Important: Reset completer only after completing it with error,
-      // so subsequent calls can attempt re-initialization.
-      _dbInitializingCompleter = null;
-      rethrow; // Rethrow to the original caller
-    }
-    return _mainIsolateDatabase!;
+    });
   }
 
   //Used in callback
@@ -87,97 +65,28 @@ class DatabaseService {
   // Core method to open a database connection
   Future<Database> _openDatabaseConnection({
     required bool readOnly,
-    required bool singleInstance, // Added parameter
+    required bool singleInstance,
   }) async {
-    Database? db; // Declare db here to be accessible in catch
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, _dbName);
-    developer.log(
-      "[DatabaseService] Attempting to open DB at path: $path, version: $_dbVersion, readOnly: $readOnly, singleInstance: $singleInstance",
+
+    developer.log("[DatabaseService] Opening database at: $path");
+
+    final db = await openDatabase(
+      path,
+      version: _dbVersion,
+      onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
+      onDowngrade: onDatabaseDowngradeDelete,
+      readOnly: readOnly,
+      singleInstance: singleInstance,
     );
 
-    try {
-      db = await openDatabase(
-        path,
-        version: _dbVersion,
-        onCreate: _onCreate, // Static method
-        onUpgrade: _onUpgrade, // Static method
-        onDowngrade: onDatabaseDowngradeDelete,
-        readOnly: readOnly,
-        singleInstance: singleInstance, // Use the passed parameter
-      );
-      developer.log(
-        "[DatabaseService] DB object received. Path: $path. Verifying 'isOpne'...",
-      );
-      if (!db.isOpen) {
-        developer.log(
-          "[DatabaseService] (Simplified) CRITICAL: Database is not open after openDatabase call! Path: $path",
-        );
-        throw Exception(
-          "Database not open after 'openDatabase' call. Path: $path",
-        );
-      }
-
-      // Verify table existence
-      List<Map<String, dynamic>> geofenceTableInfo = await db.rawQuery(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='$_geofencesTableName'",
-      );
-      developer.log(
-        "[DatabaseService] DB opened. Verifying '$_geofencesTableName' table existence...",
-      );
-      List<Map<String, dynamic>> taskTableInfo = await db.rawQuery(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='$_tasksTableName'",
-      );
-      developer.log(
-        "[DatabaseService] DB opened. Verifying '$_tasksTableName' table existence...",
-      );
-      List<Map<String, dynamic>> historyTableInfo = await db.rawQuery(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='$_notificationHistoryTableName'",
-      );
-      developer.log(
-        "[DatabaseService] DB opened. Verifying '$_notificationHistoryTableName' table existence...",
-      );
-
-      if (taskTableInfo.isEmpty ||
-          geofenceTableInfo.isEmpty ||
-          historyTableInfo.isEmpty) {
-        String missing = "";
-        if (taskTableInfo.isEmpty) missing += "$_tasksTableName ";
-        if (geofenceTableInfo.isEmpty) missing += "$_geofencesTableName ";
-        if (historyTableInfo.isEmpty) missing += _notificationHistoryTableName;
-
-        if (!readOnly) {
-          developer.log(
-            "[DatabaseService] CRITICAL (Writable): Essential table(s) '$missing' missing after _onCreate should have run. Path: $path",
-          );
-          await db.close(); // Close the problematic connection
-          throw Exception(
-            "Essential table(s) '$missing' missing in writable DB. Path: $path. This indicates _onCreate might have failed or an old DB file without these tables exists and wasn't upgraded.",
-          );
-        } else {
-          developer.log(
-            "[DatabaseService] WARNING (ReadOnly): Essential table(s) '$missing' missing. Operations likely to fail. Path: $path",
-          );
-        }
-      } else {
-        developer.log(
-          "[DatabaseService] Both '$_tasksTableName' and '$_geofencesTableName' tables confirmed. Path: $path",
-        );
-      }
-      return db;
-    } catch (e, stacktrace) {
-      developer.log(
-        "[DatabaseService] Error in _openDatabaseConnection. Path: $path. Error: $e\n$stacktrace",
-      );
-      if (db != null && db.isOpen) {
-        try {
-          await db.close();
-        } catch (closeError) {
-          /* ignore */
-        }
-      }
-      rethrow;
+    if (!db.isOpen) {
+      throw Exception("Database failed to open");
     }
+
+    return db;
   }
 
   // onCreate and onUpgrade remain static or top-level like as they define schema
@@ -233,7 +142,7 @@ class DatabaseService {
 
     // Create index for geofence_id for better query performance
     await db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_${_tasksTableName}_geofence_id ON $_tasksTableName (geofence_id)',
+      'CREATE INDEX IF NOT EXISTS idx_tasks_geofence_id ON $_tasksTableName (geofence_id)',
     );
 
     developer.log(
@@ -257,16 +166,18 @@ class DatabaseService {
     developer.log(
       '[DatabaseService] _createAllTables: Creating table $_taskHistoryTableName',
     );
+    // Make end_time, duration_seconds and completion_date nullable so we can
+    // create an open session (start_time present, end_time null) and update it later.
     await db.execute(''' 
       CREATE TABLE IF NOT EXISTS $_taskHistoryTableName (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         task_id INTEGER,
-        task_name TEXT NOT NULL,
-        task_priority INTEGER NOT NULL,
+        task_name TEXT,
+        task_priority INTEGER,
         start_time INTEGER NOT NULL,
-        end_time INTEGER NOT NULL,
-        duration_seconds INTEGER NOT NULL,
-        completion_date TEXT NOT NULL,
+        end_time INTEGER,
+        duration_seconds INTEGER,
+        completion_date TEXT,
         geofence_id TEXT,
         created_at INTEGER DEFAULT (strftime('%s', 'now')),
         FOREIGN KEY (task_id) REFERENCES $_tasksTableName(id) ON DELETE SET NULL,
@@ -274,7 +185,7 @@ class DatabaseService {
       )
     ''');
     developer.log(
-      '[DatabaseService] _onCreate: $_taskHistoryTableName created.',
+      '[DatabaseService] _createAllTables: $_taskHistoryTableName created.',
     );
   }
 
@@ -287,27 +198,28 @@ class DatabaseService {
       '[DatabaseService] _onUpgrade: Upgrading from $oldVersion to $newVersion',
     );
 
-    // Always ensure all tables exist
-    await _createAllTables(db);
-
-    // Handle specific version upgrades if needed
+    // Handle specific version upgrades step by step
     if (oldVersion < 2) {
       // Add upgrade logic for version 2 if needed
     }
-    
+
     if (oldVersion < 3) {
       // Add upgrade logic for version 3 if needed
     }
-    
+
     if (oldVersion < 4) {
       // Add geofence_id column to tasks table
       try {
         await db.execute('ALTER TABLE tasks ADD COLUMN geofence_id TEXT');
-        developer.log('[DatabaseService] Added geofence_id column to tasks table');
+        developer.log(
+          '[DatabaseService] Added geofence_id column to tasks table',
+        );
       } catch (e) {
-        developer.log('[DatabaseService] Note: geofence_id column may already exist: $e');
+        developer.log(
+          '[DatabaseService] Note: geofence_id column may already exist: $e',
+        );
       }
-      
+
       // Create index for geofence_id for better query performance
       try {
         await db.execute(
@@ -318,7 +230,7 @@ class DatabaseService {
         developer.log('[DatabaseService] Error creating geofence_id index: $e');
       }
     }
-    
+
     if (oldVersion < 5) {
       // Add task_history table
       try {
@@ -326,12 +238,12 @@ class DatabaseService {
           CREATE TABLE IF NOT EXISTS $_taskHistoryTableName (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             task_id INTEGER,
-            task_name TEXT NOT NULL,
-            task_priority INTEGER NOT NULL,
+            task_name TEXT,
+            task_priority INTEGER,
             start_time INTEGER NOT NULL,
-            end_time INTEGER NOT NULL,
-            duration_seconds INTEGER NOT NULL,
-            completion_date TEXT NOT NULL,
+            end_time INTEGER,
+            duration_seconds INTEGER,
+            completion_date TEXT,
             geofence_id TEXT,
             created_at INTEGER DEFAULT (strftime('%s', 'now')),
             FOREIGN KEY (task_id) REFERENCES $_tasksTableName(id) ON DELETE SET NULL,
@@ -339,25 +251,89 @@ class DatabaseService {
           )
         ''');
         developer.log('[DatabaseService] Added task_history table');
-        
+
         // Create index for performance
         await db.execute(
           'CREATE INDEX IF NOT EXISTS idx_task_history_completion_date ON $_taskHistoryTableName (completion_date)',
         );
         developer.log('[DatabaseService] Created index for task_history table');
       } catch (e) {
-        developer.log('[DatabaseService] Error creating task_history table: $e');
+        developer.log(
+          '[DatabaseService] Error creating task_history table: $e',
+        );
       }
     }
-    
+
     if (oldVersion < 6) {
       // Add recurring_pattern column to tasks table
       try {
-        await db.execute('ALTER TABLE $_tasksTableName ADD COLUMN recurring_pattern TEXT');
-        developer.log('[DatabaseService] Added recurring_pattern column to tasks table');
+        await db.execute(
+          'ALTER TABLE $_tasksTableName ADD COLUMN recurring_pattern TEXT',
+        );
+        developer.log(
+          '[DatabaseService] Added recurring_pattern column to tasks table',
+        );
       } catch (e) {
-        developer.log('[DatabaseService] Note: recurring_pattern column may already exist: $e');
+        developer.log(
+          '[DatabaseService] Note: recurring_pattern column may already exist: $e',
+        );
       }
+    }
+
+    if (oldVersion < 7) {
+      // Version 7: Ensure proper geofence_id column and index handling
+      // This addresses any schema inconsistencies with the geofence_id column
+      try {
+        // First, check if the column exists by trying to query it
+        await db.rawQuery('SELECT geofence_id FROM tasks LIMIT 1');
+        developer.log('[DatabaseService] geofence_id column already exists');
+      } catch (e) {
+        // Column doesn't exist, add it
+        try {
+          await db.execute('ALTER TABLE tasks ADD COLUMN geofence_id TEXT');
+          developer.log(
+            '[DatabaseService] Added missing geofence_id column to tasks table',
+          );
+        } catch (alterError) {
+          developer.log(
+            '[DatabaseService] Error adding geofence_id column: $alterError',
+          );
+        }
+      }
+
+      // Always try to create the index (IF NOT EXISTS will handle duplicates)
+      try {
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_tasks_geofence_id ON tasks (geofence_id)',
+        );
+        developer.log(
+          '[DatabaseService] Ensured idx_tasks_geofence_id index exists',
+        );
+      } catch (e) {
+        developer.log('[DatabaseService] Error ensuring geofence_id index: $e');
+      }
+    }
+
+    // Ensure any missing tables are created (for safety)
+    try {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS $_notificationHistoryTableName (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          notification_id INTEGER NOT NULL,
+          geofence_id TEXT NOT NULL,
+          task_name TEXT,
+          event_type TEXT NOT NULL,
+          body TEXT NOT NULL,
+          timestamp INTEGER NOT NULL
+        )
+      ''');
+      developer.log(
+        '[DatabaseService] Ensured $_notificationHistoryTableName exists',
+      );
+    } catch (e) {
+      developer.log(
+        '[DatabaseService] Error ensuring notification_history table exists: $e',
+      );
     }
   }
 
@@ -416,7 +392,9 @@ class DatabaseService {
     }
   }
 
-  Future<List<Map<String, dynamic>>> getAllNotificationHistory(Database db) async {
+  Future<List<Map<String, dynamic>>> getAllNotificationHistory(
+    Database db,
+  ) async {
     try {
       final result = await db.query(
         _notificationHistoryTableName,
@@ -553,24 +531,24 @@ class DatabaseService {
       final totalResult = await db.rawQuery(
         'SELECT COUNT(*) as total_tasks FROM $_taskHistoryTableName',
       );
-      
+
       // Get total time spent
       final timeResult = await db.rawQuery(
         'SELECT SUM(duration_seconds) as total_seconds FROM $_taskHistoryTableName',
       );
-      
+
       // Get average task duration
       final avgResult = await db.rawQuery(
         'SELECT AVG(duration_seconds) as avg_seconds FROM $_taskHistoryTableName',
       );
-      
+
       // Get tasks completed today
       final today = DateTime.now().toIso8601String().split('T')[0];
       final todayResult = await db.rawQuery(
         'SELECT COUNT(*) as today_tasks FROM $_taskHistoryTableName WHERE completion_date = ?',
         [today],
       );
-      
+
       return {
         'total_tasks': totalResult.first['total_tasks'] ?? 0,
         'total_seconds': timeResult.first['total_seconds'] ?? 0,
@@ -590,9 +568,7 @@ class DatabaseService {
   Future<void> clearAllTaskHistory(Database db) async {
     try {
       final count = await db.delete(_taskHistoryTableName);
-      developer.log(
-        '[DatabaseService] Cleared $count task history records',
-      );
+      developer.log('[DatabaseService] Cleared $count task history records');
     } catch (e, stackTrace) {
       developer.log(
         '[DatabaseService] Error clearing task history',
