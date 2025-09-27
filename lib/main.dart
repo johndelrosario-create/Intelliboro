@@ -13,6 +13,8 @@ import 'package:intelliboro/repository/task_repository.dart';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:intelliboro/services/notification_service.dart'
+    show notificationPlugin, initializeNotifications;
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 import 'package:flutter_timezone/flutter_timezone.dart';
@@ -23,9 +25,9 @@ import 'package:intelliboro/model/task_model.dart';
 // Define the access token
 const String accessToken = String.fromEnvironment('ACCESS_TOKEN');
 
-// Create an instance of the plugin
+// Use centralized notification plugin
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-    FlutterLocalNotificationsPlugin();
+    notificationPlugin;
 
 // Global singleton for managing task timers from notifications
 final TaskTimerService taskTimerService = TaskTimerService();
@@ -138,7 +140,13 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
         final highest = candidates.reduce(
           (a, b) => a.getEffectivePriority() > b.getEffectivePriority() ? a : b,
         );
-        final started = await taskTimerService.startTask(highest);
+        // If this DO_NOW originated from a geofence payload, prefer strict priority
+        final isFromGeofence =
+            geofenceIds.isNotEmpty || payloadTaskIds.isNotEmpty;
+        final started = await taskTimerService.startTask(
+          highest,
+          strictPriority: isFromGeofence,
+        );
         developer.log(
           '[main] Task timer started: $started for ${highest.taskName}',
         );
@@ -242,7 +250,11 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
               developer.log(
                 '[main] DO_NOW fallback matched task by name: ${matched.taskName}',
               );
-              final started = await taskTimerService.startTask(matched);
+              final started = await taskTimerService.startTask(
+                matched,
+                strictPriority:
+                    geofenceIds.isNotEmpty || payloadTaskIds.isNotEmpty,
+              );
               if (started) {
                 await flutterLocalNotificationsPlugin.show(
                   99999,
@@ -300,6 +312,54 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
       return;
     }
 
+    // Handle quick snooze actions from the 'Pending' notification
+    if (response.actionId == 'com.intelliboro.SNOOZE_5' ||
+        response.actionId == 'com.intelliboro.SNOOZE_LATER') {
+      developer.log('[main] Snooze action received: ${response.actionId}');
+      if (notificationIdFromPayload != null) {
+        await flutterLocalNotificationsPlugin.cancel(notificationIdFromPayload);
+      }
+      final candidates = await _resolveCandidates();
+      if (candidates.isEmpty) return;
+
+      if (response.actionId == 'com.intelliboro.SNOOZE_5') {
+        for (final t in candidates) {
+          await taskTimerService.addToPending(t, const Duration(minutes: 5));
+          if (t.geofenceId != null) {
+            try {
+              await GeofencingService().removeGeofence(t.geofenceId!);
+            } catch (e) {
+              developer.log('[main] Failed to remove geofence for snooze: $e');
+            }
+          }
+        }
+        await flutterLocalNotificationsPlugin.show(
+          99997,
+          'Snoozed',
+          'Tasks snoozed for 5 minutes.',
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              'timer_feedback',
+              'Timer Feedback',
+              channelDescription: 'Confirms snooze actions',
+            ),
+          ),
+        );
+        return;
+      }
+
+      // SNOOZE_LATER: bring app to foreground so user can pick a snooze duration
+      try {
+        navigatorKey.currentState?.pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const HomeShell()),
+          (r) => false,
+        );
+      } catch (e) {
+        developer.log('[main] Navigation after SNOOZE_LATER failed: $e');
+      }
+      return;
+    }
+
     // Default tap: cancel the notification
     if (responseId != null) {
       await flutterLocalNotificationsPlugin.cancel(responseId);
@@ -317,7 +377,10 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
             (a, b) =>
                 a.getEffectivePriority() > b.getEffectivePriority() ? a : b,
           );
-          await taskTimerService.startTask(highestFallback);
+          await taskTimerService.startTask(
+            highestFallback,
+            strictPriority: geofenceIds.isNotEmpty || payloadTaskIds.isNotEmpty,
+          );
           try {
             navigatorKey.currentState?.pushAndRemoveUntil(
               MaterialPageRoute(builder: (_) => const ActiveTaskView()),
@@ -423,23 +486,16 @@ void main() async {
 
   await _initializeTimezone();
 
-  // Initialize flutter_local_notifications
+  // Initialize centralized notification plugin
   try {
-    const AndroidInitializationSettings initializationSettingsAndroid =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-    const DarwinInitializationSettings initializationSettingsIOS =
-        DarwinInitializationSettings(
-          defaultPresentBanner: true,
-          defaultPresentSound: true,
-        );
-    const InitializationSettings initializationSettings =
-        InitializationSettings(
-          android: initializationSettingsAndroid,
-          iOS: initializationSettingsIOS,
-        );
+    await initializeNotifications();
 
-    bool? initialized = await flutterLocalNotificationsPlugin.initialize(
-      initializationSettings,
+    // Register callback for responses to delegate to handler
+    await flutterLocalNotificationsPlugin.initialize(
+      const InitializationSettings(
+        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        iOS: DarwinInitializationSettings(),
+      ),
       onDidReceiveNotificationResponse: (NotificationResponse response) async {
         developer.log(
           '[main] Notification tapped: payload=${response.payload}, actionId=${response.actionId}, id=${response.id}',
@@ -447,52 +503,27 @@ void main() async {
         await _onNotificationResponse(response);
       },
     );
-
-    // Create the notification channel
-    const AndroidNotificationChannel channel = AndroidNotificationChannel(
-      'geofence_alerts',
-      'Geofence Alerts',
-      description: 'Important alerts for location-based events',
-      importance: Importance.max,
-      playSound: true,
-      enableVibration: true,
-      showBadge: true,
-    );
-
-    await flutterLocalNotificationsPlugin
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.createNotificationChannel(channel);
-
-    // Request notification permissions
-    final AndroidFlutterLocalNotificationsPlugin? androidImplementation =
-        flutterLocalNotificationsPlugin
-            .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin
-            >();
-
-    if (androidImplementation != null) {
-      final bool? permissionGranted =
-          await androidImplementation.requestNotificationsPermission();
-      developer.log(
-        "[main] Notification permission granted: $permissionGranted",
-      );
-
-      final bool? exactAlarmsPermission =
-          await androidImplementation.requestExactAlarmsPermission();
-      developer.log(
-        "[main] Exact alarms permission granted: $exactAlarmsPermission",
-      );
-    }
-
-    developer.log(
-      "[main] FlutterLocalNotificationsPlugin initialized: $initialized",
-    );
   } catch (e, s) {
+    developer.log('[main] Error initializing notifications: $e\n$s');
+  }
+
+  // Initialize geofencing service early so the port listener is registered
+  try {
+    await GeofencingService().init();
+    developer.log('[main] GeofencingService initialized early in main');
+  } catch (e, st) {
     developer.log(
-      "[main] Error initializing FlutterLocalNotificationsPlugin: $e\n$s",
+      '[main] Error initializing GeofencingService early: $e',
+      error: e,
+      stackTrace: st,
     );
+  }
+
+  // Load any pending tasks persisted by background callbacks while app wasn't active
+  try {
+    await taskTimerService.loadPersistedPending();
+  } catch (e) {
+    developer.log('[main] Failed to load persisted pending tasks: $e');
   }
 
   MapboxOptions.setAccessToken(accessToken);

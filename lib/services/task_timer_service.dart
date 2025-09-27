@@ -13,6 +13,8 @@ import 'dart:math';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:intelliboro/services/notification_service.dart'
+    show notificationPlugin;
 
 /// Request emitted when a higher-priority task arrives and a user decision is needed.
 class TaskSwitchRequest {
@@ -34,6 +36,45 @@ class TaskTimerService extends ChangeNotifier {
   static final TaskTimerService _instance = TaskTimerService._internal();
   factory TaskTimerService() => _instance;
   TaskTimerService._internal();
+
+  // Initialize async state (load persisted pending tasks)
+  Future<void> loadPersistedPending() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final keys = prefs.getKeys();
+      for (final k in keys) {
+        if (k.startsWith('pending_task_')) {
+          final idStr = k.substring('pending_task_'.length);
+          final parsed = int.tryParse(idStr);
+          if (parsed == null) continue;
+          final millis = prefs.getInt(k);
+          if (millis == null) continue;
+          final until = DateTime.fromMillisecondsSinceEpoch(millis);
+          if (until.isAfter(DateTime.now())) {
+            _pendingUntil[parsed] = until;
+          } else {
+            // expired - remove persisted key
+            try {
+              await prefs.remove(k);
+            } catch (_) {}
+          }
+        }
+      }
+      if (_pendingUntil.isNotEmpty) {
+        developer.log(
+          '[TaskTimerService] Loaded persisted pending tasks: ${_pendingUntil.keys.toList()}',
+        );
+        try {
+          tasksChanged.value = true;
+        } catch (_) {}
+        notifyListeners();
+      }
+    } catch (e) {
+      developer.log(
+        '[TaskTimerService] Failed to load persisted pending tasks: $e',
+      );
+    }
+  }
 
   // Current active task and timer
   TaskModel? _activeTask;
@@ -82,7 +123,7 @@ class TaskTimerService extends ChangeNotifier {
   }
 
   /// Start timing a task
-  Future<bool> startTask(TaskModel task) async {
+  Future<bool> startTask(TaskModel task, {bool strictPriority = false}) async {
     try {
       developer.log(
         '[TaskTimerService] Attempting to start task: ${task.taskName}',
@@ -95,8 +136,14 @@ class TaskTimerService extends ChangeNotifier {
         );
 
         // Compare priorities - higher effective priority wins
-        final currentPriority = _activeTask!.getEffectivePriority();
-        final newPriority = task.getEffectivePriority();
+        final currentPriority =
+            strictPriority
+                ? _activeTask!.taskPriority.toDouble()
+                : _activeTask!.getEffectivePriority();
+        final newPriority =
+            strictPriority
+                ? task.taskPriority.toDouble()
+                : task.getEffectivePriority();
 
         if (newPriority > currentPriority) {
           developer.log(
@@ -114,7 +161,7 @@ class TaskTimerService extends ChangeNotifier {
 
             // Post a local notification so user can respond from background
             try {
-              final plugin = FlutterLocalNotificationsPlugin();
+              final plugin = notificationPlugin;
               const AndroidNotificationDetails androidDetails =
                   AndroidNotificationDetails(
                     'geofence_alerts',
@@ -193,7 +240,12 @@ class TaskTimerService extends ChangeNotifier {
         }
       } else {
         // No active task, start this one
-        return _startTaskTimer(task);
+        final started = _startTaskTimer(task);
+        if (started) {
+          // Persist active task id asynchronously
+          _persistActiveTaskId(task.id);
+        }
+        return started;
       }
     } catch (e, stackTrace) {
       developer.log(
@@ -202,6 +254,19 @@ class TaskTimerService extends ChangeNotifier {
         stackTrace: stackTrace,
       );
       return false;
+    }
+  }
+
+  /// Persist the currently active task id in SharedPreferences for background isolates
+  Future<void> _persistActiveTaskId(int? id) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (id != null) {
+        await prefs.setInt('active_task_id', id);
+        developer.log('[TaskTimerService] Persisted active_task_id=$id');
+      }
+    } catch (e) {
+      developer.log('[TaskTimerService] Failed to persist active_task_id: $e');
     }
   }
 
@@ -236,6 +301,11 @@ class TaskTimerService extends ChangeNotifier {
     developer.log(
       '[TaskTimerService] Task ${task.taskName} (id=$id) added to pending until $until',
     );
+
+    // Signal to any listeners (UI) that tasks have changed so lists refresh.
+    try {
+      tasksChanged.value = true;
+    } catch (_) {}
 
     // Schedule timer to clear pending state after snooze duration and attempt geofence recreation
     Timer(snoozeDuration, () async {
@@ -299,6 +369,9 @@ class TaskTimerService extends ChangeNotifier {
           }
 
           notifyListeners();
+          try {
+            tasksChanged.value = true;
+          } catch (_) {}
         }
       } catch (e) {
         developer.log(
@@ -359,6 +432,8 @@ class TaskTimerService extends ChangeNotifier {
       developer.log(
         '[TaskTimerService] Started timer for task: ${task.taskName}',
       );
+
+      // Active task started (persistence handled by caller)
 
       // Ensure UI updates to reflect task timer start
       notifyListeners();
@@ -443,6 +518,17 @@ class TaskTimerService extends ChangeNotifier {
     _elapsedTime = Duration.zero;
     _isPaused = false;
 
+    // Clear persisted active task id
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('active_task_id');
+      developer.log('[TaskTimerService] Cleared persisted active_task_id');
+    } catch (e) {
+      developer.log(
+        '[TaskTimerService] Failed to clear persisted active_task_id: $e',
+      );
+    }
+
     // Persist history and handle task completion/reschedule
     await _markTaskCompleted(task, completionTime);
 
@@ -462,6 +548,19 @@ class TaskTimerService extends ChangeNotifier {
     _activeTask = null;
     _startTime = null;
     _elapsedTime = Duration.zero;
+
+    // Clear persisted active task id
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('active_task_id');
+      developer.log(
+        '[TaskTimerService] Cleared persisted active_task_id (reschedule)',
+      );
+    } catch (e) {
+      developer.log(
+        '[TaskTimerService] Failed to clear persisted active_task_id: $e',
+      );
+    }
 
     // Reschedule the interrupted task
     await _rescheduleTask(taskToReschedule);

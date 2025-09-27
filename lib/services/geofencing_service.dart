@@ -9,6 +9,14 @@ import 'package:native_geofence/native_geofence.dart' as native_geofence;
 import 'package:intelliboro/viewModel/Geofencing/map_viewmodel.dart';
 import 'package:intelliboro/viewModel/notifications/callback.dart'
     show geofenceTriggered;
+import 'dart:convert';
+import 'package:intelliboro/model/task_model.dart';
+import 'package:intelliboro/repository/task_repository.dart';
+import 'package:intelliboro/services/task_timer_service.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:intelliboro/services/notification_service.dart'
+    show notificationPlugin;
+import 'package:intelliboro/services/text_to_speech_service.dart';
 
 class GeofencingService {
   // --- Singleton implementation ---
@@ -97,11 +105,348 @@ class GeofencingService {
         }
       }
 
-      // Listen for geofence events on the port
+      // Listen for geofence events on the port. Messages originate from the
+      // background geofence callback isolate and include a 'notificationId',
+      // 'geofenceIds' and optionally 'taskIds'. We process the message on the
+      // UI isolate to decide whether to immediately show the notification or
+      // to snooze the incoming tasks if a higher-priority task is active.
       _port.listen((dynamic data) {
         developer.log(
           '[GeofencingService] Received on native_geofence_send_port: $data',
         );
+
+        Future.microtask(() async {
+          try {
+            if (data is Map) {
+              final dynamic nid = data['notificationId'];
+              final int? notificationId =
+                  nid is int ? nid : (nid is String ? int.tryParse(nid) : null);
+              final List<dynamic> geofenceIds =
+                  (data['geofenceIds'] as List<dynamic>?) ?? [];
+              final List<dynamic> payloadTaskIds =
+                  (data['taskIds'] as List<dynamic>?) ?? [];
+
+              // Resolve candidate tasks. Prefer explicit taskIds when provided.
+              final List<TaskModel> candidates = [];
+              final taskRepo = TaskRepository();
+              if (payloadTaskIds.isNotEmpty) {
+                for (final tid in payloadTaskIds) {
+                  final int? parsed =
+                      tid is int
+                          ? tid
+                          : (tid is String ? int.tryParse(tid) : null);
+                  if (parsed != null) {
+                    final t = await taskRepo.getTaskById(parsed);
+                    if (t != null && !t.isCompleted) candidates.add(t);
+                  }
+                }
+              }
+              if (candidates.isEmpty && geofenceIds.isNotEmpty) {
+                final all = await taskRepo.getTasks();
+                candidates.addAll(
+                  all.where(
+                    (t) =>
+                        t.geofenceId != null &&
+                        geofenceIds.contains(t.geofenceId) &&
+                        !t.isCompleted,
+                  ),
+                );
+              }
+
+              if (candidates.isEmpty) return;
+
+              // If there's an active task with higher effective priority, snooze incoming
+              final timerService = TaskTimerService();
+              final bool hasActive = timerService.hasActiveTask;
+              double activePriority = -1;
+              if (hasActive) {
+                activePriority =
+                    timerService.activeTask!.getEffectivePriority();
+              }
+
+              // Log candidate details for debugging
+              try {
+                final candidateSummary = candidates
+                    .map(
+                      (c) =>
+                          'id=${c.id},name=${c.taskName},prio=${c.getEffectivePriority()}',
+                    )
+                    .join(' | ');
+                developer.log(
+                  '[GeofencingService] Candidate tasks: $candidateSummary',
+                );
+              } catch (_) {}
+
+              // Find highest incoming priority
+              final incomingHighest = candidates
+                  .map((c) => c.getEffectivePriority())
+                  .fold<double>(0, (p, e) => e > p ? e : p);
+
+              developer.log(
+                '[GeofencingService] Active priority: ${hasActive ? activePriority : 'none'}, Incoming highest: $incomingHighest',
+              );
+
+              if (hasActive && incomingHighest <= activePriority) {
+                developer.log(
+                  '[GeofencingService] Active task has higher/equal priority; snoozing incoming ${candidates.length} tasks',
+                );
+
+                // Add each incoming task to pending and attempt to pause geofence monitoring
+                for (final c in candidates) {
+                  try {
+                    await timerService.addToPending(
+                      c,
+                      timerService.defaultSnoozeDuration,
+                    );
+                    // Ensure UI is notified of task list changes
+                    try {
+                      timerService.tasksChanged.value = true;
+                    } catch (_) {}
+                  } catch (e) {
+                    developer.log(
+                      '[GeofencingService] Failed to add task ${c.id} to pending: $e',
+                    );
+                  }
+                }
+
+                // Cancel the notification so the user doesn't see the normal alert
+                if (notificationId != null) {
+                  try {
+                    await notificationPlugin.cancel(notificationId);
+                    developer.log(
+                      '[GeofencingService] Cancelled notification $notificationId due to active task',
+                    );
+                    // If the background callback registered an ack port name, notify it
+                    try {
+                      final String? ackPortName =
+                          data['ackPortName'] as String?;
+                      if (ackPortName != null) {
+                        final sp = IsolateNameServer.lookupPortByName(
+                          ackPortName,
+                        );
+                        if (sp != null) {
+                          sp.send('suppressed');
+                          developer.log(
+                            '[GeofencingService] Sent suppression ack to $ackPortName',
+                          );
+                        }
+                        // Remove ack port mapping if present to avoid leaks
+                        IsolateNameServer.removePortNameMapping(ackPortName);
+                      }
+                    } catch (e) {
+                      developer.log(
+                        '[GeofencingService] Failed to send ack to background isolate: $e',
+                      );
+                    }
+                  } catch (e) {
+                    developer.log(
+                      '[GeofencingService] Failed to cancel notification $notificationId: $e',
+                    );
+                  }
+                }
+
+                // Optionally pause native geofence monitoring for those ids to avoid repeated triggers
+                for (final gid in geofenceIds) {
+                  try {
+                    final idStr = gid is String ? gid : gid.toString();
+                    await native_geofence.NativeGeofenceManager.instance
+                        .removeGeofenceById(idStr);
+                    developer.log(
+                      '[GeofencingService] Temporarily removed native geofence $idStr due to snooze',
+                    );
+                  } catch (e) {
+                    developer.log(
+                      '[GeofencingService] Failed to remove native geofence for snooze: $e',
+                    );
+                  }
+                }
+
+                // Inform the user that tasks were added to pending and provide quick snooze actions
+                try {
+                  final plugin = notificationPlugin;
+                  final List<int> ids =
+                      candidates.map((c) => c.id).whereType<int>().toList();
+                  final title =
+                      ids.length == 1 ? 'Task Pending ⏸️' : 'Tasks Pending ⏸️';
+                  final names = candidates.map((c) => c.taskName).join(', ');
+                  final body =
+                      ids.length == 1
+                          ? 'Task "${names}" was added to pending. Snooze for 5 minutes or choose later.'
+                          : '${ids.length} tasks were added to pending: ${names}. Snooze for 5 minutes or choose later.';
+
+                  final payload = jsonEncode({'taskIds': ids});
+
+                  final int newNotifId = DateTime.now().millisecondsSinceEpoch
+                      .remainder(2147483647);
+                  final AndroidNotificationDetails androidDetails =
+                      AndroidNotificationDetails(
+                        'geofence_alerts',
+                        'Geofence Alerts',
+                        channelDescription:
+                            'Pending tasks and quick snooze actions',
+                        importance: Importance.defaultImportance,
+                        priority: Priority.defaultPriority,
+                        actions: <AndroidNotificationAction>[
+                          AndroidNotificationAction(
+                            'com.intelliboro.SNOOZE_5',
+                            'Snooze 5m',
+                            showsUserInterface: false,
+                            cancelNotification: true,
+                          ),
+                          AndroidNotificationAction(
+                            'com.intelliboro.SNOOZE_LATER',
+                            'Snooze later',
+                            showsUserInterface: true,
+                            cancelNotification: true,
+                          ),
+                        ],
+                      );
+
+                  await plugin.show(
+                    newNotifId,
+                    title,
+                    body,
+                    NotificationDetails(android: androidDetails),
+                    payload: payload,
+                  );
+                  developer.log(
+                    '[GeofencingService] Posted pending notification $newNotifId for tasks: $ids',
+                  );
+                  // Also try to trigger a brief TTS that indicates tasks were snoozed
+                  try {
+                    final tts = TextToSpeechService();
+                    await tts.init();
+                    if (await tts.isAvailable() && tts.isEnabled) {
+                      await tts.speakTaskNotification(
+                        ids.length == 1
+                            ? 'Task ${names} has been snoozed and added to your pending list.'
+                            : '${ids.length} tasks were snoozed and added to your pending list.',
+                        'snooze',
+                      );
+                    }
+                  } catch (ttsErr) {
+                    developer.log(
+                      '[GeofencingService] TTS for snooze failed: $ttsErr',
+                    );
+                  }
+                } catch (e) {
+                  developer.log(
+                    '[GeofencingService] Failed to post pending notification: $e',
+                  );
+                }
+              } else {
+                // No active task OR incomingHigher > activePriority: show the immediate geofence alert notification now
+                try {
+                  final plugin = notificationPlugin;
+                  final List<int> ids =
+                      candidates.map((c) => c.id).whereType<int>().toList();
+                  final names = candidates.map((c) => c.taskName).join(', ');
+                  final title =
+                      ids.length == 1 ? 'Task reminder' : 'Nearby tasks';
+                  final body =
+                      ids.length == 1
+                          ? 'You entered the area for "$names".'
+                          : 'You entered areas for: ${names}';
+
+                  // Ensure we cancel the early background notification (to avoid duplicates)
+                  if (notificationId != null) {
+                    try {
+                      await plugin.cancel(notificationId);
+                    } catch (_) {}
+                  }
+
+                  // Send ack to background isolate to suppress its own audible/TTS path
+                  try {
+                    final String? ackPortName = data['ackPortName'] as String?;
+                    if (ackPortName != null) {
+                      final sp = IsolateNameServer.lookupPortByName(
+                        ackPortName,
+                      );
+                      sp?.send('suppressed');
+                      IsolateNameServer.removePortNameMapping(ackPortName);
+                    }
+                  } catch (_) {}
+
+                  const AndroidNotificationDetails androidDetails =
+                      AndroidNotificationDetails(
+                        'geofence_alerts',
+                        'Geofence Alerts',
+                        channelDescription:
+                            'Alerts when entering/exiting geofences',
+                        importance: Importance.max,
+                        priority: Priority.max,
+                        playSound: true,
+                        visibility: NotificationVisibility.public,
+                        category: AndroidNotificationCategory.alarm,
+                        fullScreenIntent: true,
+                        styleInformation: BigTextStyleInformation(''),
+                        actions: <AndroidNotificationAction>[
+                          AndroidNotificationAction(
+                            'com.intelliboro.DO_NOW',
+                            'Do Now',
+                            showsUserInterface: true,
+                            cancelNotification: true,
+                          ),
+                          AndroidNotificationAction(
+                            'com.intelliboro.DO_LATER',
+                            'Do Later',
+                            showsUserInterface: false,
+                            cancelNotification: false,
+                          ),
+                        ],
+                      );
+
+                  // Use a fresh id for the UI alert
+                  final int uiNotifId = DateTime.now().millisecondsSinceEpoch
+                      .remainder(2147483647);
+
+                  final payload = jsonEncode({
+                    'notificationId': uiNotifId,
+                    'geofenceIds': geofenceIds,
+                    'taskIds': ids,
+                  });
+
+                  await plugin.show(
+                    uiNotifId,
+                    title,
+                    body,
+                    NotificationDetails(android: androidDetails),
+                    payload: payload,
+                  );
+                  developer.log(
+                    '[GeofencingService] Posted geofence alert notification $uiNotifId for tasks: $ids',
+                  );
+
+                  // Optional: brief TTS in UI isolate
+                  try {
+                    final tts = TextToSpeechService();
+                    await tts.init();
+                    if (await tts.isAvailable() && tts.isEnabled) {
+                      await tts.speakTaskNotification(
+                        ids.length == 1
+                            ? 'Reminder: $names'
+                            : 'You have ${ids.length} nearby tasks.',
+                        'location',
+                      );
+                    }
+                  } catch (ttsErr) {
+                    developer.log('[GeofencingService] TTS failed: $ttsErr');
+                  }
+                } catch (e) {
+                  developer.log(
+                    '[GeofencingService] Failed to show geofence alert: $e',
+                  );
+                }
+              }
+            }
+          } catch (e, st) {
+            developer.log(
+              '[GeofencingService] Error processing port message: $e',
+              error: e,
+              stackTrace: st,
+            );
+          }
+        });
       });
 
       // Register and listen to our app-specific notification port

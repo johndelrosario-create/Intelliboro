@@ -3,17 +3,21 @@ import 'dart:convert';
 import 'dart:isolate';
 import 'dart:math';
 import 'dart:developer' as developer;
-import 'dart:ui' show IsolateNameServer; // For SendPort lookup
+import 'dart:ui' show IsolateNameServer, Color; // For SendPort lookup and Color
+import 'package:flutter/widgets.dart'; // Ensure bindings in background isolate
 
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+// notificationPlugin from the UI isolate is not used in this background callback.
+// We'll initialize a local FlutterLocalNotificationsPlugin instance instead.
 import 'package:native_geofence/native_geofence.dart' as native_geofence;
 import 'package:sqflite/sqflite.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:intelliboro/services/geofence_storage.dart';
 import 'package:intelliboro/services/database_service.dart';
 import 'package:intelliboro/services/context_detection_service.dart';
 import 'package:intelliboro/services/text_to_speech_service.dart';
-import 'package:intelliboro/repository/task_repository.dart';
+// import 'package:intelliboro/repository/task_repository.dart'; // unused in callback isolate
 
 @pragma('vm:entry-point')
 Future<void> geofenceTriggered(
@@ -25,6 +29,39 @@ Future<void> geofenceTriggered(
     developer.log(
       '[GeofenceCallback] Starting geofence callback with params: ${params.toString()}',
     );
+
+    // Ensure Flutter bindings are initialized for this background isolate so
+    // plugins (notifications, shared_preferences, etc.) can function.
+    try {
+      WidgetsFlutterBinding.ensureInitialized();
+    } catch (e) {
+      developer.log('[GeofenceCallback] Widgets binding ensure failed: $e');
+    }
+
+    // Create and initialize a local FlutterLocalNotificationsPlugin instance
+    // for use inside this background isolate. The global `notificationPlugin`
+    // from the UI isolate is not usable here.
+    final FlutterLocalNotificationsPlugin plugin =
+        FlutterLocalNotificationsPlugin();
+    try {
+      final AndroidInitializationSettings initializationSettingsAndroid =
+          AndroidInitializationSettings('@mipmap/ic_launcher');
+      final DarwinInitializationSettings initializationSettingsIOS =
+          const DarwinInitializationSettings();
+      final InitializationSettings initializationSettings =
+          InitializationSettings(
+            android: initializationSettingsAndroid,
+            iOS: initializationSettingsIOS,
+          );
+      await plugin.initialize(initializationSettings);
+      developer.log(
+        '[GeofenceCallback] Local notifications plugin initialized',
+      );
+    } catch (e) {
+      developer.log(
+        '[GeofenceCallback] Failed to init local notifications: $e',
+      );
+    }
 
     // Validate input parameters
     if (params.geofences.isEmpty) {
@@ -39,19 +76,7 @@ Future<void> geofenceTriggered(
       developer.log(
         '[GeofenceCallback] Received event: ${params.event.name}, which is not an ENTER event. Skipping notification and history saving.',
       );
-      // Close the database if it was opened, as we are returning early.
-      if (database != null && database.isOpen) {
-        try {
-          await database.close();
-          developer.log(
-            '[GeofenceCallback] Closed database connection after skipping non-enter event.',
-          );
-        } catch (e) {
-          developer.log(
-            '[GeofenceCallback] Error closing database after skipping non-enter event: $e',
-          );
-        }
-      }
+      // No DB was opened yet in this path; nothing to close.
       return;
     }
 
@@ -69,6 +94,30 @@ Future<void> geofenceTriggered(
 
     // Open database connection with error handling
     try {
+      // Show an immediate notification that we're processing the geofence
+      try {
+        final debugDetails = NotificationDetails(
+          android: AndroidNotificationDetails(
+            'geofence_progress',
+            'Geofence Progress',
+            channelDescription: 'Progress updates for geofence processing',
+            importance: Importance.max,
+            priority: Priority.high,
+            playSound: true,
+          ),
+        );
+        await plugin.show(
+          DateTime.now().millisecondsSinceEpoch.remainder(2147483647),
+          'Processing geofence',
+          'Opening database...',
+          debugDetails,
+        );
+      } catch (e) {
+        developer.log(
+          '[GeofenceCallback] Failed to show progress notification: $e',
+        );
+      }
+
       developer.log(
         '[GeofenceCallback] Attempting to open database connection...',
       );
@@ -99,10 +148,28 @@ Future<void> geofenceTriggered(
       '[GeofenceCallback] Event: ${params.event}, Geofence IDs: ${params.geofences.map((g) => g.id).toList()}, Location: ${params.location}',
     );
 
-    // First, try to send the event through the port
+    // First, try to send the event through the port. Generate a notificationId
+    // early so the UI isolate can cancel the notification if desired.
     final SendPort? sendPort = IsolateNameServer.lookupPortByName(
       'native_geofence_send_port',
     );
+    final int earlyNotificationId = Random().nextInt(2147483647);
+
+    // Create a short-lived acknowledgment ReceivePort and register it under
+    // a name the UI isolate can look up. The background isolate will wait
+    // briefly for an ack; if received, it will suppress the audible
+    // notification/TTS to avoid race conditions.
+    final String ackPortName = 'native_geofence_ack_port_$earlyNotificationId';
+    final receiveForAck = ReceivePort();
+    try {
+      IsolateNameServer.registerPortWithName(
+        receiveForAck.sendPort,
+        ackPortName,
+      );
+    } catch (e) {
+      developer.log('[GeofenceCallback] Could not register ack port: $e');
+    }
+
     if (sendPort != null && params.location != null) {
       sendPort.send({
         'event': params.event.name,
@@ -112,8 +179,13 @@ Future<void> geofenceTriggered(
           'longitude': params.location!.longitude,
         },
         'timestamp': DateTime.now().millisecondsSinceEpoch,
+        'notificationId': earlyNotificationId,
+        // Tell the UI which ack port to call if it suppresses the notification
+        'ackPortName': ackPortName,
       });
-      developer.log('[GeofenceCallback] Successfully sent event through port');
+      developer.log(
+        '[GeofenceCallback] Successfully sent event through port with notificationId=$earlyNotificationId and ackPortName=$ackPortName',
+      );
     }
 
     // --- Database Access for Background Isolate ---
@@ -126,45 +198,120 @@ Future<void> geofenceTriggered(
     final storage = GeofenceStorage(db: database);
     // --- End Database Access ---
 
-    // Create and initialize a new notifications plugin instance locally
-    final plugin = FlutterLocalNotificationsPlugin();
-    const AndroidInitializationSettings initializationSettingsAndroid =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-    const InitializationSettings initializationSettings =
-        InitializationSettings(android: initializationSettingsAndroid);
-    await plugin.initialize(
-      initializationSettings,
-      onDidReceiveNotificationResponse: (NotificationResponse response) {
-        developer.log(
-          '[Notifications] Notification clicked: ${response.payload}',
-        );
-      },
-    );
+    // Show progress notification for geofence data lookup
+    try {
+      final debugDetails = NotificationDetails(
+        android: AndroidNotificationDetails(
+          'geofence_progress',
+          'Geofence Progress',
+          channelDescription: 'Progress updates for geofence processing',
+          importance: Importance.max,
+          priority: Priority.high,
+          playSound: true,
+        ),
+      );
+      await plugin.show(
+        DateTime.now().millisecondsSinceEpoch.remainder(2147483647),
+        'Processing geofence',
+        'Looking up task details...',
+        debugDetails,
+      );
+    } catch (e) {
+      developer.log(
+        '[GeofenceCallback] Failed to show progress notification: $e',
+      );
+    }
 
-    // Create the notification channel (safe to call multiple times)
-    const String channelId = 'geofence_alerts';
-    const String channelName = 'Geofence Alerts';
+    // Use the locally initialized plugin instance for Android-specific channel creation
+    final androidPlugin =
+        plugin
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >();
 
-    // Create the channel with proper settings
-    const AndroidNotificationChannel channel = AndroidNotificationChannel(
-      channelId,
-      channelName,
+    // Create all our notification channels upfront with proper settings
+    const AndroidNotificationChannel alertsChannel = AndroidNotificationChannel(
+      'geofence_alerts',
+      'Geofence Alerts',
       description: 'Important alerts for location-based events',
       importance: Importance.max,
       playSound: true,
       enableVibration: true,
-      showBadge: true,
     );
+    await androidPlugin?.createNotificationChannel(alertsChannel);
 
-    await plugin
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.createNotificationChannel(channel);
+    const AndroidNotificationChannel progressChannel =
+        AndroidNotificationChannel(
+          'geofence_progress',
+          'Geofence Progress',
+          description: 'Progress updates for geofence processing',
+          importance: Importance.high,
+          playSound: false,
+          enableVibration: false,
+        );
+    await androidPlugin?.createNotificationChannel(progressChannel);
+
+    const AndroidNotificationChannel debugChannel = AndroidNotificationChannel(
+      'geofence_debug',
+      'Geofence Debug',
+      description: 'Debug information for geofence triggers',
+      importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
+    );
+    await androidPlugin?.createNotificationChannel(debugChannel);
 
     developer.log(
-      '[GeofenceCallback] Created notification channel: $channelId',
+      '[GeofenceCallback] Created/ensured all notification channels',
     );
+
+    // DEBUG: Post an immediate debug notification to verify the background
+    // isolate can post notifications while the app is attached to the debugger.
+    try {
+      // Force Android to show notification immediately by using heads-up notification
+      final debugDetails = NotificationDetails(
+        android: AndroidNotificationDetails(
+          'geofence_debug',
+          'Geofence Debug',
+          channelDescription: 'Debug information for geofence triggers',
+          importance: Importance.max,
+          priority: Priority.max,
+          playSound: true,
+          enableVibration: true,
+          visibility: NotificationVisibility.public,
+          fullScreenIntent: true,
+          category: AndroidNotificationCategory.alarm,
+          // Add these to ensure immediate display
+          showProgress: false,
+          ongoing: false,
+          autoCancel: true,
+          channelShowBadge: true,
+          enableLights: true,
+          ledColor: const Color.fromARGB(255, 255, 0, 0),
+          ledOnMs: 1000,
+          ledOffMs: 500,
+        ),
+      );
+      await plugin.show(
+        earlyNotificationId + 1,
+        'DEBUG geofence callback',
+        'Received geofence(s): ${params.geofences.map((g) => g.id).join(",")}',
+        debugDetails,
+      );
+      developer.log(
+        '[GeofenceCallback] Posted debug notification (id=${earlyNotificationId + 1})',
+      );
+
+      // Force a wake lock to ensure notification appears immediately
+      await plugin.show(
+        earlyNotificationId + 2,
+        'Geofence Triggered!',
+        'Processing location event...',
+        debugDetails,
+      );
+    } catch (e) {
+      developer.log('[GeofenceCallback] Failed to post debug notification: $e');
+    }
 
     String notificationTitle = 'Task reminder';
     String notificationBody = '';
@@ -187,28 +334,81 @@ Future<void> geofenceTriggered(
           'Event: ${params.event.name} for geofences: ${params.geofences.map((g) => g.id).join(", ")}';
     }
 
+    // Show progress that we're building notification
+    try {
+      final debugDetails = NotificationDetails(
+        android: AndroidNotificationDetails(
+          'geofence_progress',
+          'Geofence Progress',
+          channelDescription: 'Progress updates for geofence processing',
+          importance: Importance.max,
+          priority: Priority.high,
+          playSound: true,
+        ),
+      );
+      await plugin.show(
+        DateTime.now().millisecondsSinceEpoch.remainder(2147483647),
+        'Processing geofence',
+        'Preparing task notification...',
+        debugDetails,
+      );
+    } catch (e) {
+      developer.log(
+        '[GeofenceCallback] Failed to show progress notification: $e',
+      );
+    }
+
+    // Show final progress notification before showing task notification
+    try {
+      final debugDetails = NotificationDetails(
+        android: AndroidNotificationDetails(
+          'geofence_progress',
+          'Geofence Progress',
+          channelDescription: 'Progress updates for geofence processing',
+          importance: Importance.max,
+          priority: Priority.high,
+          playSound: true,
+        ),
+      );
+      await plugin.show(
+        DateTime.now().millisecondsSinceEpoch.remainder(2147483647),
+        'Processing geofence',
+        'Creating task notification...',
+        debugDetails,
+      );
+    } catch (e) {
+      developer.log(
+        '[GeofenceCallback] Failed to show progress notification: $e',
+      );
+    }
+
     // Create the notification details with sound enabled (plays BEFORE TTS)
     // Add action buttons for persistent notifications
     final AndroidNotificationDetails
     androidNotificationDetails = AndroidNotificationDetails(
-      channel.id, // Must match the channel ID
-      channel.name, // Must match the channel name
+      'geofence_alerts', // Main alerts channel
+      'Geofence Alerts',
       channelDescription:
           'Alerts when entering or exiting geofence areas (sound alert then TTS)',
-      importance: Importance.max, // High importance for immediate sound
-      priority: Priority.high,
+      importance: Importance.max,
+      priority: Priority.max, // Changed to max for immediate display
       ticker: 'New geofence alert',
-      playSound: true, // Enabled - notification sound plays first
-      enableVibration: true, // Keep vibration for tactile feedback
+      playSound: true,
+      enableVibration: true,
       visibility: NotificationVisibility.public,
-      category: AndroidNotificationCategory.alarm, // Back to alarm for urgency
+      category: AndroidNotificationCategory.alarm,
       showWhen: true,
-      autoCancel:
-          false, // Persistent notification - cannot be dismissed by swiping
+      autoCancel: false, // Persistent until user acts
       ongoing: true, // Make notification persistent
-      channelShowBadge: true,
       icon: '@mipmap/ic_launcher',
       styleInformation: const BigTextStyleInformation(''),
+      fullScreenIntent:
+          true, // Force immediate display even when app in background
+      channelShowBadge: true,
+      enableLights: true,
+      ledColor: const Color.fromARGB(255, 255, 200, 0),
+      ledOnMs: 1000,
+      ledOffMs: 500,
       actions: <AndroidNotificationAction>[
         const AndroidNotificationAction(
           'com.intelliboro.DO_NOW',
@@ -230,11 +430,12 @@ Future<void> geofenceTriggered(
     );
 
     developer.log(
-      '[GeofenceCallback] Notification details created with channel: ${channel.id}',
+      '[GeofenceCallback] Notification details created with channel: geofence_alerts',
     );
 
     // --- Show the notification FIRST (with sound) to alert user ---
-    final notificationId = Random().nextInt(2147483647);
+    // Use the earlyNotificationId so the UI isolate can correlate and cancel it.
+    final notificationId = earlyNotificationId;
 
     // Gather task IDs matching these geofence ids using the background DB
     List<int> matchedTaskIds = [];
@@ -292,6 +493,174 @@ Future<void> geofenceTriggered(
       );
     }
 
+    // Before constructing payload, check SharedPreferences for an active task
+    // so background can deterministically suppress audible notifications
+    // even when UI isolate might be asleep.
+    bool preemptivelySuppressed = false;
+    try {
+      developer.log(
+        '[GeofenceCallback] Checking SharedPreferences for active_task_id',
+      );
+      final prefs = await SharedPreferences.getInstance();
+      final int? activeTaskId = prefs.getInt('active_task_id');
+      if (activeTaskId != null) {
+        developer.log(
+          '[GeofenceCallback] Found persisted active_task_id=$activeTaskId',
+        );
+        try {
+          // Query the tasks table for the active task and compute its effective priority
+          final rows = await database.query(
+            'tasks',
+            columns: [
+              'id',
+              'taskName',
+              'taskPriority',
+              'isCompleted',
+              'geofence_id',
+            ],
+            where: 'id = ?',
+            whereArgs: [activeTaskId],
+            limit: 1,
+          );
+          if (rows.isNotEmpty) {
+            final row = rows.first;
+            final int? tp =
+                row['taskPriority'] is int
+                    ? row['taskPriority'] as int
+                    : int.tryParse(row['taskPriority'].toString());
+            final double activePriority = tp != null ? tp.toDouble() : 0.0;
+
+            // Compute incoming highest priority from matchedTaskIds
+            double incomingHighest = 0.0;
+            if (matchedTaskIds.isNotEmpty) {
+              final placeholders = List.filled(
+                matchedTaskIds.length,
+                '?',
+              ).join(',');
+              final incomingRows = await database.rawQuery(
+                'SELECT id, taskPriority FROM tasks WHERE id IN ($placeholders) AND isCompleted = 0',
+                matchedTaskIds,
+              );
+              for (final r in incomingRows) {
+                final int? ip =
+                    r['taskPriority'] is int
+                        ? r['taskPriority'] as int
+                        : int.tryParse(r['taskPriority'].toString());
+                if (ip != null)
+                  incomingHighest =
+                      incomingHighest > ip ? incomingHighest : ip.toDouble();
+              }
+            }
+
+            developer.log(
+              '[GeofenceCallback] (pre-check) Active priority=$activePriority, incomingHighest=$incomingHighest',
+            );
+
+            if (incomingHighest <= activePriority) {
+              developer.log(
+                '[GeofenceCallback] (pre-check) Active task priority higher or equal; suppressing audible notification preemptively.',
+              );
+              preemptivelySuppressed = true;
+
+              // Persist pending state for matched tasks so the UI can reflect
+              // pending status even if the UI isolate doesn't receive the port message.
+              try {
+                final prefs = await SharedPreferences.getInstance();
+                final int snoozeMinutes = prefs.getInt('snooze_minutes') ?? 5;
+                final until = DateTime.now().add(
+                  Duration(minutes: snoozeMinutes),
+                );
+                final List<int> ids = List<int>.from(matchedTaskIds);
+                for (final int tid in ids) {
+                  await prefs.setInt(
+                    'pending_task_$tid',
+                    until.millisecondsSinceEpoch,
+                  );
+                }
+                developer.log(
+                  '[GeofenceCallback] Persisted pending for tasks: $ids until $until',
+                );
+
+                // Post a background pending notification to inform the user.
+                try {
+                  final title =
+                      ids.length == 1 ? 'Task Pending' : 'Tasks Pending';
+                  String namesSummary = '';
+                  try {
+                    if (ids.isNotEmpty) {
+                      final placeholders = List.filled(
+                        ids.length,
+                        '?',
+                      ).join(',');
+                      final nameRows = await database.rawQuery(
+                        'SELECT taskName FROM tasks WHERE id IN ($placeholders)',
+                        ids,
+                      );
+                      final names =
+                          nameRows
+                              .map((r) => (r['taskName'] ?? '').toString())
+                              .where((s) => s.isNotEmpty)
+                              .toList();
+                      if (names.isNotEmpty) {
+                        namesSummary = names.join(', ');
+                      }
+                    }
+                  } catch (_) {}
+                  final body =
+                      ids.length == 1
+                          ? (namesSummary.isNotEmpty
+                              ? 'Task "${namesSummary}" was added to pending.'
+                              : 'A task was added to pending.')
+                          : (namesSummary.isNotEmpty
+                              ? '${ids.length} tasks were added to pending: ${namesSummary}.'
+                              : '${ids.length} tasks were added to pending.');
+                  final int newNotifId = DateTime.now().millisecondsSinceEpoch
+                      .remainder(2147483647);
+                  final AndroidNotificationDetails androidDetails2 =
+                      AndroidNotificationDetails(
+                        'geofence_alerts',
+                        'Geofence Alerts',
+                        channelDescription:
+                            'Pending tasks (background fallback)',
+                        importance: Importance.defaultImportance,
+                        priority: Priority.defaultPriority,
+                      );
+                  await plugin.show(
+                    newNotifId,
+                    title,
+                    body,
+                    NotificationDetails(android: androidDetails2),
+                    payload: jsonEncode({'taskIds': ids}),
+                  );
+                  developer.log(
+                    '[GeofenceCallback] Posted background pending notification $newNotifId for tasks: $ids',
+                  );
+                } catch (pnErr) {
+                  developer.log(
+                    '[GeofenceCallback] Failed to post background pending notification: $pnErr',
+                  );
+                }
+              } catch (persistErr) {
+                developer.log(
+                  '[GeofenceCallback] Failed to persist pending state: $persistErr',
+                );
+              }
+            }
+          }
+        } catch (e, st) {
+          developer.log(
+            '[GeofenceCallback] Error querying active task from DB: $e',
+            error: e,
+            stackTrace: st,
+          );
+        }
+      }
+    } catch (e) {
+      developer.log(
+        '[GeofenceCallback] Error reading SharedPreferences for active_task_id: $e',
+      );
+    }
+
     final payloadData = {
       'notificationId': notificationId,
       'title': notificationTitle,
@@ -302,27 +671,111 @@ Future<void> geofenceTriggered(
     final payloadJson = jsonEncode(payloadData);
     developer.log('[GeofenceCallback] Notification payload JSON: $payloadJson');
 
+    // Show an early notification immediately (unless preemptively suppressed)
+    if (!preemptivelySuppressed) {
+      try {
+        developer.log(
+          '[GeofenceCallback] Showing early notification immediately (id=$notificationId)',
+        );
+        await plugin.show(
+          notificationId,
+          notificationTitle,
+          notificationBody,
+          platformChannelSpecifics,
+          payload: payloadJson,
+        );
+        developer.log(
+          '[GeofenceCallback] Early notification shown (id=$notificationId)',
+        );
+      } catch (e, st) {
+        developer.log(
+          '[GeofenceCallback] Error showing early notification: $e',
+          error: e,
+          stackTrace: st,
+        );
+      }
+    } else {
+      developer.log(
+        '[GeofenceCallback] Preemptively suppressed; not showing early audible notification',
+      );
+    }
+
+    // Then wait briefly for the UI isolate to ack suppression before doing TTS.
+    bool ackReceived = false;
     try {
       developer.log(
-        '[GeofenceCallback] Showing notification with sound first...',
+        '[GeofenceCallback] Waiting up to 4000ms for suppression ack...',
       );
-      await plugin.show(
-        notificationId,
-        notificationTitle,
-        notificationBody,
-        platformChannelSpecifics,
-        payload: payloadJson,
-      );
-      developer.log('[GeofenceCallback] Notification shown successfully');
+      final completer = Completer<void>();
+      late final StreamSubscription sub;
+      sub = receiveForAck.listen((message) {
+        try {
+          developer.log('[GeofenceCallback] Received ack message: $message');
+          if (!completer.isCompleted) completer.complete();
+        } catch (e) {
+          developer.log('[GeofenceCallback] Error processing ack message: $e');
+        }
+      });
 
-      // Short delay to let notification sound play
-      await Future.delayed(const Duration(milliseconds: 1500));
-    } catch (e, stackTrace) {
+      try {
+        await Future.any([
+          completer.future,
+          Future.delayed(const Duration(milliseconds: 4000)),
+        ]);
+        if (completer.isCompleted) {
+          ackReceived = true;
+          developer.log(
+            '[GeofenceCallback] Suppression ack received from UI isolate.',
+          );
+        } else {
+          developer.log(
+            '[GeofenceCallback] No ack received within timeout; proceeding with TTS.',
+          );
+        }
+      } finally {
+        await sub.cancel();
+      }
+    } catch (e, st) {
       developer.log(
-        '[GeofenceCallback] Error showing notification: $e',
+        '[GeofenceCallback] Error while waiting for ack: $e',
         error: e,
-        stackTrace: stackTrace,
+        stackTrace: st,
       );
+    } finally {
+      // Clean up ack port registration
+      try {
+        IsolateNameServer.removePortNameMapping(ackPortName);
+      } catch (e) {
+        developer.log(
+          '[GeofenceCallback] Failed to remove ack port mapping: $e',
+        );
+      }
+    }
+
+    // If ack was received, cancel the early notification (UI handled it).
+    if (ackReceived) {
+      try {
+        developer.log(
+          '[GeofenceCallback] Ack received; cancelling early notification id=$notificationId',
+        );
+        await plugin.cancel(notificationId);
+      } catch (e, st) {
+        developer.log(
+          '[GeofenceCallback] Error cancelling notification: $e',
+          error: e,
+          stackTrace: st,
+        );
+      }
+    } else if (preemptivelySuppressed) {
+      developer.log(
+        '[GeofenceCallback] Preemptively suppressed: background persisted pending and posted fallback notification.',
+      );
+    } else {
+      developer.log(
+        '[GeofenceCallback] No ack received; leaving early notification shown and proceeding with TTS.',
+      );
+      // Small delay to allow system audio to settle before TTS
+      await Future.delayed(const Duration(milliseconds: 1500));
     }
 
     // --- Then Trigger Text-to-Speech Notifications AFTER notification sound ---
@@ -330,6 +783,20 @@ Future<void> geofenceTriggered(
       developer.log(
         '[GeofenceCallback] Attempting to trigger TTS notifications...',
       );
+
+      // Build set of persisted pending IDs so TTS can choose wording
+      final prefsForTts = await SharedPreferences.getInstance();
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      final Set<int> persistedPendingIds = {};
+      for (final k in prefsForTts.getKeys()) {
+        if (k.startsWith('pending_task_')) {
+          final idStr = k.substring('pending_task_'.length);
+          final tid = int.tryParse(idStr);
+          if (tid == null) continue;
+          final millis = prefsForTts.getInt(k);
+          if (millis != null && millis > nowMs) persistedPendingIds.add(tid);
+        }
+      }
 
       // Process each geofence for TTS
       for (final geofence in params.geofences) {
@@ -349,6 +816,26 @@ Future<void> geofenceTriggered(
             developer.log(
               '[GeofenceCallback] Found task for TTS: ${geofenceData.task}',
             );
+            // Determine if this geofence's task was persisted as pending by background/UI
+            int? geofenceTaskId;
+            try {
+              final rows = await database.query(
+                'tasks',
+                columns: ['id'],
+                where: 'geofence_id = ?',
+                whereArgs: [geofence.id],
+                limit: 1,
+              );
+              if (rows.isNotEmpty) {
+                final idv = rows.first['id'];
+                geofenceTaskId =
+                    idv is int ? idv : int.tryParse(idv.toString());
+              }
+            } catch (_) {}
+
+            final bool wasPersistedPending =
+                geofenceTaskId != null &&
+                persistedPendingIds.contains(geofenceTaskId);
 
             // Try direct TTS service approach first
             try {
@@ -373,12 +860,16 @@ Future<void> geofenceTriggered(
               );
 
               if (isAvailable && ttsService.isEnabled) {
+                final speakText =
+                    wasPersistedPending
+                        ? '${geofenceData.task} was added to pending tasks.'
+                        : geofenceData.task!;
                 developer.log(
-                  '[GeofenceCallback] Attempting to speak: "${geofenceData.task}"',
+                  '[GeofenceCallback] Attempting to speak: "$speakText"',
                 );
                 await ttsService.speakTaskNotification(
-                  geofenceData.task!,
-                  'location',
+                  speakText,
+                  wasPersistedPending ? 'snooze' : 'location',
                 );
                 developer.log(
                   '[GeofenceCallback] Direct TTS triggered successfully for: ${geofenceData.task}',
@@ -493,7 +984,7 @@ Future<void> geofenceTriggered(
         final newDb = await dbService.openNewBackgroundConnection(
           readOnly: false,
         );
-        if (newDb == null || !newDb.isOpen) {
+        if (!newDb.isOpen) {
           developer.log(
             '[GeofenceCallback] ERROR: Failed to reopen database connection',
           );

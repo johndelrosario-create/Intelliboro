@@ -36,13 +36,13 @@ class TextToSpeechService {
 
     try {
       _flutterTts = FlutterTts();
-      
+
       // Load settings from SharedPreferences
       await _loadSettings();
-      
+
       // Configure TTS
       await _configureTts();
-      
+
       _isInitialized = true;
       developer.log('[TextToSpeechService] Successfully initialized');
     } catch (e, stackTrace) {
@@ -87,14 +87,16 @@ class TextToSpeechService {
   Future<void> _loadSettings() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      
+
       _isEnabled = prefs.getBool(_enabledKey) ?? true;
       _speechRate = prefs.getDouble(_speechRateKey) ?? 0.5;
       _volume = prefs.getDouble(_volumeKey) ?? 0.8;
       _pitch = prefs.getDouble(_pitchKey) ?? 1.0;
       _language = prefs.getString(_languageKey) ?? 'en-US';
 
-      developer.log('[TextToSpeechService] Settings loaded: enabled=$_isEnabled, rate=$_speechRate, volume=$_volume, pitch=$_pitch, language=$_language');
+      developer.log(
+        '[TextToSpeechService] Settings loaded: enabled=$_isEnabled, rate=$_speechRate, volume=$_volume, pitch=$_pitch, language=$_language',
+      );
     } catch (e) {
       developer.log('[TextToSpeechService] Error loading settings: $e');
     }
@@ -104,7 +106,7 @@ class TextToSpeechService {
   Future<void> _saveSettings() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      
+
       await prefs.setBool(_enabledKey, _isEnabled);
       await prefs.setDouble(_speechRateKey, _speechRate);
       await prefs.setDouble(_volumeKey, _volume);
@@ -132,12 +134,11 @@ class TextToSpeechService {
 
       // Create the notification text
       String notificationText = _createNotificationText(taskName, context);
-      
+
       developer.log('[TextToSpeechService] Speaking: $notificationText');
-      
+
       _isSpeaking = true;
       await _flutterTts!.speak(notificationText);
-      
     } catch (e, stackTrace) {
       developer.log(
         '[TextToSpeechService] Error speaking notification: $e',
@@ -152,7 +153,7 @@ class TextToSpeechService {
   String _createNotificationText(String taskName, String context) {
     // Clean up the task name
     String cleanTaskName = taskName.trim();
-    
+
     // Create contextual messages based on the type of context
     switch (context.toLowerCase()) {
       case 'location':
@@ -162,6 +163,8 @@ class TextToSpeechService {
         return "Time reminder: $cleanTaskName";
       case 'urgent':
         return "Urgent task: $cleanTaskName";
+      case 'snooze':
+        return '"$cleanTaskName" was added to do later';
       default:
         return "You have task: $cleanTaskName";
     }
@@ -195,7 +198,7 @@ class TextToSpeechService {
   /// Get available languages
   Future<List<String>> getLanguages() async {
     if (_flutterTts == null) return [];
-    
+
     try {
       final languages = await _flutterTts!.getLanguages;
       return List<String>.from(languages);
@@ -208,7 +211,7 @@ class TextToSpeechService {
   /// Check if TTS is available on the device
   Future<bool> isAvailable() async {
     if (_flutterTts == null) return false;
-    
+
     try {
       final languages = await _flutterTts!.getLanguages;
       return languages.isNotEmpty;
@@ -236,7 +239,7 @@ class TextToSpeechService {
   /// Set speech rate (0.0 - 1.0)
   Future<void> setSpeechRate(double rate) async {
     if (rate < 0.0 || rate > 1.0) return;
-    
+
     _speechRate = rate;
     if (_flutterTts != null) {
       await _flutterTts!.setSpeechRate(_speechRate);
@@ -248,7 +251,7 @@ class TextToSpeechService {
   /// Set volume (0.0 - 1.0)
   Future<void> setVolume(double volume) async {
     if (volume < 0.0 || volume > 1.0) return;
-    
+
     _volume = volume;
     if (_flutterTts != null) {
       await _flutterTts!.setVolume(_volume);
@@ -260,7 +263,7 @@ class TextToSpeechService {
   /// Set pitch (0.5 - 2.0)
   Future<void> setPitch(double pitch) async {
     if (pitch < 0.5 || pitch > 2.0) return;
-    
+
     _pitch = pitch;
     if (_flutterTts != null) {
       await _flutterTts!.setPitch(_pitch);
