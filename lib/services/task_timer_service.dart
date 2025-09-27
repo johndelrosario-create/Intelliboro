@@ -6,6 +6,9 @@ import 'package:intelliboro/model/task_history_model.dart';
 import 'package:intelliboro/repository/task_repository.dart';
 import 'package:intelliboro/services/database_service.dart';
 import 'package:intelliboro/repository/task_history_repository.dart';
+import 'package:intelliboro/services/geofence_storage.dart';
+import 'package:intelliboro/services/geofencing_service.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
 /// Service responsible for managing task timers and active task tracking
 class TaskTimerService extends ChangeNotifier {
@@ -21,6 +24,12 @@ class TaskTimerService extends ChangeNotifier {
   bool _isPaused = false;
 
   final Map<int, Stopwatch> _runningTimers = {};
+  // Pending tasks mapped to a DateTime until which they are snoozed
+  final Map<int, DateTime> _pendingUntil = {};
+
+  /// Default snooze duration used when putting tasks into pending.
+  /// Can be changed by the user via UI.
+  Duration defaultSnoozeDuration = const Duration(minutes: 5);
   final TaskHistoryRepository _historyRepo = TaskHistoryRepository();
   // Notifier to signal when task records change (completed/rescheduled/deleted)
   final ValueNotifier<bool> tasksChanged = ValueNotifier<bool>(false);
@@ -64,9 +73,10 @@ class TaskTimerService extends ChangeNotifier {
             '[TaskTimerService] Current task has higher/equal priority ($currentPriority vs $newPriority), rescheduling new task',
           );
 
-          // Reschedule the new task and keep current one active
-          await _rescheduleTask(task);
-          return false; // Indicate task was rescheduled, not started
+          // Add the new task to pending (snoozed) instead of rescheduling
+          // Default snooze duration is 5 minutes for pending tasks
+          await _addToPending(task, const Duration(minutes: 5));
+          return false; // Indicate task was not started (pending)
         }
       } else {
         // No active task, start this one
@@ -80,6 +90,124 @@ class TaskTimerService extends ChangeNotifier {
       );
       return false;
     }
+  }
+
+  /// Add [task] to pending list until [snoozeDuration] has passed.
+  Future<void> _addToPending(TaskModel task, Duration snoozeDuration) async {
+    final id = task.id;
+    if (id == null) {
+      developer.log(
+        '[TaskTimerService] Cannot add to pending: task id is null',
+      );
+      return;
+    }
+    final until = DateTime.now().add(snoozeDuration);
+    _pendingUntil[id] = until;
+    developer.log(
+      '[TaskTimerService] Task ${task.taskName} (id=$id) added to pending until $until',
+    );
+
+    // Schedule timer to clear pending state after snooze duration and attempt geofence recreation
+    Timer(snoozeDuration, () async {
+      try {
+        if (_pendingUntil.containsKey(id) &&
+            _pendingUntil[id]!.isBefore(DateTime.now())) {
+          _pendingUntil.remove(id);
+          developer.log(
+            '[TaskTimerService] Pending snooze expired for task id=$id',
+          );
+
+          // Attempt to recreate native geofence for this task if it existed
+          try {
+            if (task.geofenceId != null && task.geofenceId!.isNotEmpty) {
+              final storage = GeofenceStorage();
+              final geofenceData = await storage.getGeofenceById(
+                task.geofenceId!,
+              );
+              if (geofenceData != null) {
+                await GeofencingService().createGeofence(
+                  geometry: Point(
+                    coordinates: Position(
+                      geofenceData.longitude,
+                      geofenceData.latitude,
+                    ),
+                  ),
+                  radiusMeters: geofenceData.radiusMeters,
+                  customId: geofenceData.id,
+                  fillColor: Color(
+                    int.parse(
+                      geofenceData.fillColor.startsWith('0x')
+                          ? geofenceData.fillColor
+                          : '0x${geofenceData.fillColor}',
+                    ),
+                  ),
+                  fillOpacity: geofenceData.fillOpacity,
+                  strokeColor: Color(
+                    int.parse(
+                      geofenceData.strokeColor.startsWith('0x')
+                          ? geofenceData.strokeColor
+                          : '0x${geofenceData.strokeColor}',
+                    ),
+                  ),
+                  strokeWidth: geofenceData.strokeWidth,
+                );
+                developer.log(
+                  '[TaskTimerService] Re-created native geofence for task id=$id (geofence ${task.geofenceId}) after snooze',
+                );
+              } else {
+                developer.log(
+                  '[TaskTimerService] No geofence data found in DB for id=${task.geofenceId}',
+                );
+              }
+            }
+          } catch (e, st) {
+            developer.log(
+              '[TaskTimerService] Error re-creating geofence after snooze for task id=$id: $e',
+              error: e,
+              stackTrace: st,
+            );
+          }
+
+          notifyListeners();
+        }
+      } catch (e) {
+        developer.log(
+          '[TaskTimerService] Error clearing pending state for task id=$id: $e',
+        );
+      }
+    });
+
+    // Notify listeners so UI can update pending indicators
+    notifyListeners();
+  }
+
+  /// Check whether a task is currently pending (snoozed)
+  bool isPending(int taskId) {
+    final until = _pendingUntil[taskId];
+    if (until == null) return false;
+    return until.isAfter(DateTime.now());
+  }
+
+  /// Returns the DateTime until which [taskId] is pending, or null.
+  DateTime? getPendingUntil(int taskId) => _pendingUntil[taskId];
+
+  /// Returns remaining duration for pending state, or null if not pending.
+  Duration? getPendingRemaining(int taskId) {
+    final until = _pendingUntil[taskId];
+    if (until == null) return null;
+    final rem = until.difference(DateTime.now());
+    return rem.isNegative ? Duration.zero : rem;
+  }
+
+  /// Update the default snooze duration (user-facing setting).
+  void setDefaultSnoozeDuration(Duration duration) {
+    defaultSnoozeDuration = duration;
+    notifyListeners();
+  }
+
+  /// Public API to add [task] to pending for [snoozeDuration].
+  Future<void> addToPending(TaskModel task, Duration snoozeDuration) async {
+    return _addToPending(task, snoozeDuration);
   }
 
   /// Internal method to start the timer for a task

@@ -7,6 +7,7 @@ import 'package:intelliboro/views/task_list_view.dart';
 import 'package:intelliboro/views/task_statistics_view.dart';
 import 'package:intelliboro/views/notification_history_view.dart';
 import 'package:intelliboro/services/location_service.dart';
+import 'package:intelliboro/services/geofencing_service.dart';
 import 'package:intelliboro/services/task_timer_service.dart';
 import 'package:intelliboro/repository/task_repository.dart';
 import 'dart:convert';
@@ -163,10 +164,31 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
             developer.log('[main] Navigation after DO_NOW failed: $e');
           }
         } else {
+          // Lower-priority than current: add to pending (snoozed for 5 minutes)
+          await taskTimerService.addToPending(
+            highest,
+            const Duration(minutes: 5),
+          );
+
+          // Pause geofence reminders for this task for 5 minutes
+          if (highest.geofenceId != null) {
+            try {
+              await GeofencingService().removeGeofence(highest.geofenceId!);
+            } catch (e) {
+              developer.log('[main] Failed to remove geofence for snooze: $e');
+            }
+            // We rely on map view or app init to recreate geofences after snooze; log intent
+            Timer(const Duration(minutes: 5), () {
+              developer.log(
+                '[main] Snooze expired for geofence ${highest.geofenceId}; ensure recreation via MapViewModel/GeofenceStorage.',
+              );
+            });
+          }
+
           await flutterLocalNotificationsPlugin.show(
             99998,
-            'Task Rescheduled 📅',
-            'Higher priority task active. "${highest.taskName}" moved to later.',
+            'Task Pending ⏸️',
+            'Lower priority task "${highest.taskName}" will be pending for 5 minutes.',
             const NotificationDetails(
               android: AndroidNotificationDetails(
                 'timer_feedback',

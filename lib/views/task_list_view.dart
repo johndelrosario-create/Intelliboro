@@ -222,6 +222,17 @@ class _TaskListViewState extends State<TaskListView>
     final priorityIcon = _getPriorityIcon(task.taskPriority);
     final timeUntil = _getTimeUntilTask(task);
     final effectivePriority = task.getEffectivePriority();
+    // Pending state info (snoozed due to lower priority)
+    final Duration? _pendingRemaining =
+        (task.id != null)
+            ? _taskTimerService.getPendingRemaining(task.id!)
+            : null;
+    final String _pendingLabel =
+        _pendingRemaining != null
+            ? (_pendingRemaining.inMinutes > 0
+                ? 'PENDING • ${_pendingRemaining.inMinutes}m'
+                : 'PENDING • ${_pendingRemaining.inSeconds}s')
+            : 'PENDING';
 
     // Check if this task is currently active in the timer
     final isActiveTimer =
@@ -327,6 +338,48 @@ class _TaskListViewState extends State<TaskListView>
                                               color:
                                                   theme.colorScheme.onPrimary,
                                               fontSize: 8,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                              // Show pending indicator when task is snoozed (and not active)
+                              if (!isActiveTimer &&
+                                  task.id != null &&
+                                  _taskTimerService.isPending(task.id!)) ...[
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.tertiaryContainer,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.pause_circle_outline,
+                                        size: 12,
+                                        color:
+                                            theme
+                                                .colorScheme
+                                                .onTertiaryContainer,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        _pendingLabel,
+                                        style: theme.textTheme.labelSmall
+                                            ?.copyWith(
+                                              color:
+                                                  theme
+                                                      .colorScheme
+                                                      .onTertiaryContainer,
+                                              fontSize: 10,
                                               fontWeight: FontWeight.bold,
                                             ),
                                       ),
@@ -961,21 +1014,3 @@ class _TaskListViewState extends State<TaskListView>
     );
   }
 }
-
-// Dummy EditTaskView for now, to be replaced later
-// class EditTaskView extends StatelessWidget {
-//   final String geofenceId;
-//   const EditTaskView({Key? key, required this.geofenceId}) : super(key: key);
-
-//   @override
-//   Widget build(BuildContext context) {
-//     return Scaffold(
-//       appBar: AppBar(title: Text('Edit Task $geofenceId')),
-//       body: Center(
-//         child: Text(
-//           'Editing details for geofence ID: $geofenceId.\nImplementation pending.',
-//         ),
-//       ),
-//     );
-//   }
-// }

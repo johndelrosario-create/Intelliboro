@@ -25,15 +25,13 @@ class GeofencingService {
   // Track created geofence IDs for management
   final Set<String> _createdGeofenceIds = {};
   bool _isInitialized = false;
-  final ReceivePort _port = ReceivePort(); // For native_geofence plugin if it used ports
+  final ReceivePort _port =
+      ReceivePort(); // For native_geofence plugin if it used ports
 
   // Port for our app's background->UI notification events
   final ReceivePort _newNotificationReceivePort = ReceivePort();
   final StreamController<void> _newNotificationStreamController =
       StreamController<void>.broadcast();
-
-  // Ensure manager is initializzed only once globally
-  static bool _nativeManagerGloballyInitialized = false;
 
   // Private internal constructor
   GeofencingService._internal();
@@ -308,134 +306,20 @@ class GeofencingService {
     }
   }
 
-  Future<void> _createNativeGeofence({
-    required String id,
-    required Point geometry,
-    required double radiusMeters,
-  }) async {
-    try {
-      // Create location from geometry
-      final location = native_geofence.Location(
-        latitude: geometry.coordinates.lat.toDouble(),
-        longitude: geometry.coordinates.lng.toDouble(),
-      );
-
-      // Create the geofence with all required parameters
-      final geofence = native_geofence.Geofence(
-        id: id,
-        location: location,
-        radiusMeters: radiusMeters,
-        triggers: {
-          native_geofence.GeofenceEvent.enter,
-          native_geofence.GeofenceEvent.exit,
-        },
-        iosSettings: native_geofence.IosGeofenceSettings(initialTrigger: false),
-        androidSettings: native_geofence.AndroidGeofenceSettings(
-          initialTriggers: {
-            native_geofence.GeofenceEvent.enter,
-            native_geofence.GeofenceEvent.exit,
-          },
-          notificationResponsiveness: const Duration(seconds: 0),
-          loiteringDelay: const Duration(seconds: 0),
-        ),
-      );
-
-      developer.log(
-        '[GeofencingService._createNativeGeofence] Attempting to create native geofence with params: ID=$id, Lat=${location.latitude}, Lon=${location.longitude}, Radius=${radiusMeters}m',
-      );
-
-      // Register the geofence with the callback
-      // No need to call startGeofencing; use createGeofence with callback instead
-
-      // Cache the geofence for later removal
-      _geofenceCache[geofence.id] = geofence;
-
-      developer.log(
-        '[GeofencingService._createNativeGeofence] Native geofence creation requested for ID: $id. Checking monitored regions...',
-      );
-
-      // Log all monitored regions
-      final List<native_geofence.ActiveGeofence> monitoredRegions =
-          await native_geofence.NativeGeofenceManager.instance
-              .getRegisteredGeofences();
-
-      if (monitoredRegions.isEmpty) {
-        developer.log(
-          '[GeofencingService._createNativeGeofence] No monitored regions reported by the plugin.',
-        );
-      } else {
-        developer.log(
-          '[GeofencingService._createNativeGeofence] Currently monitored regions by plugin (${monitoredRegions.length}):',
-        );
-        for (var activeRegion in monitoredRegions) {
-          developer.log(
-            '  - ID: ${activeRegion.id}, Lat: ${activeRegion.location.latitude}, Lon: ${activeRegion.location.longitude}, Radius: ${activeRegion.radiusMeters}m',
-          );
-        }
-      }
-
-      final bool isJustCreatedActive = monitoredRegions.any(
-        (ag) => ag.id == id,
-      );
-      developer.log(
-        '[GeofencingService._createNativeGeofence] Is newly created geofence ($id) listed as monitored by plugin? $isJustCreatedActive',
-      );
-      if (!isJustCreatedActive) {
-        developer.log(
-          '[GeofencingService._createNativeGeofence] WARNING: Newly created geofence $id was NOT found in the list of monitored regions immediately after creation. This is a problem!',
-        );
-      }
-    } catch (e, stackTrace) {
-      developer.log(
-        'Error creating native geofence',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      rethrow;
-    }
-  }
+  // Note: The implementation that interacts with the native geofence plugin
+  // is performed inline in `createGeofence(...)`. The old helper `_createNativeGeofence`
+  // was removed as it was unused and caused an analyzer warning.
 
   // Store created geofences to be able to remove them later
   final Map<String, native_geofence.Geofence> _geofenceCache = {};
 
   Future<void> removeGeofence(String id) async {
     try {
-      if (!_createdGeofenceIds.contains(id)) {
-        developer.log(
-          'Geofence $id not found in tracking set, skipping removal',
-        );
-        return;
-      }
-
       developer.log('Attempting to remove geofence: $id');
 
-      // Get the geofence from cache or create a minimal one
-      final geofence =
-          _geofenceCache[id] ??
-          native_geofence.Geofence(
-            id: id,
-            location: const native_geofence.Location(
-              latitude: 0,
-              longitude: 0,
-            ), // Dummy values
-            radiusMeters: 100, // Dummy value
-            triggers: {
-              native_geofence.GeofenceEvent.enter,
-              native_geofence.GeofenceEvent.exit,
-            },
-            iosSettings: native_geofence.IosGeofenceSettings(
-              initialTrigger: false,
-            ),
-            androidSettings: native_geofence.AndroidGeofenceSettings(
-              initialTriggers: {
-                native_geofence.GeofenceEvent.enter,
-                native_geofence.GeofenceEvent.exit,
-              },
-              notificationResponsiveness: const Duration(seconds: 0),
-              loiteringDelay: const Duration(seconds: 0),
-            ),
-          );
-
+      // Even if we didn't previously track this geofence in _createdGeofenceIds,
+      // attempt native removal. This handles cases where the app or DB state
+      // got out of sync with the native plugin (or after app restarts).
       try {
         await native_geofence.NativeGeofenceManager.instance.removeGeofenceById(
           id,
@@ -443,13 +327,22 @@ class GeofencingService {
         developer.log('Successfully removed native geofence: $id');
       } catch (e) {
         developer.log(
-          'Error removing native geofence $id (this might be normal if it was already removed): $e',
+          'Error removing native geofence $id (this might be normal if it was already removed or plugin state is different): $e',
         );
-        // Don't rethrow - we want to continue with cleanup even if native removal fails
+        // Continue - we still want to attempt DB/cache cleanup below
       }
 
-      _createdGeofenceIds.remove(id);
-      _geofenceCache.remove(id);
+      // Remove local bookkeeping entries if present
+      if (_createdGeofenceIds.contains(id)) {
+        _createdGeofenceIds.remove(id);
+      } else {
+        developer.log('Geofence $id was not present in _createdGeofenceIds');
+      }
+
+      if (_geofenceCache.containsKey(id)) {
+        _geofenceCache.remove(id);
+      }
+
       developer.log('Completed removal of geofence: $id');
     } catch (e, stackTrace) {
       developer.log(
@@ -508,10 +401,3 @@ class GeofencingService {
     }
   }
 }
-
-// Extension to convert Color to int value for Mapbox
-// extension ColorExtension on Color {
-//   int toMapboxColor() {
-//     return (alpha & 0xff) << 24 | (red & 0xff) << 16 | (green & 0xff) << 8 | (blue & 0xff);
-//   }
-// }
