@@ -94,30 +94,6 @@ Future<void> geofenceTriggered(
 
     // Open database connection with error handling
     try {
-      // Show an immediate notification that we're processing the geofence
-      try {
-        final debugDetails = NotificationDetails(
-          android: AndroidNotificationDetails(
-            'geofence_progress',
-            'Geofence Progress',
-            channelDescription: 'Progress updates for geofence processing',
-            importance: Importance.max,
-            priority: Priority.high,
-            playSound: true,
-          ),
-        );
-        await plugin.show(
-          DateTime.now().millisecondsSinceEpoch.remainder(2147483647),
-          'Processing geofence',
-          'Opening database...',
-          debugDetails,
-        );
-      } catch (e) {
-        developer.log(
-          '[GeofenceCallback] Failed to show progress notification: $e',
-        );
-      }
-
       developer.log(
         '[GeofenceCallback] Attempting to open database connection...',
       );
@@ -198,29 +174,7 @@ Future<void> geofenceTriggered(
     final storage = GeofenceStorage(db: database);
     // --- End Database Access ---
 
-    // Show progress notification for geofence data lookup
-    try {
-      final debugDetails = NotificationDetails(
-        android: AndroidNotificationDetails(
-          'geofence_progress',
-          'Geofence Progress',
-          channelDescription: 'Progress updates for geofence processing',
-          importance: Importance.max,
-          priority: Priority.high,
-          playSound: true,
-        ),
-      );
-      await plugin.show(
-        DateTime.now().millisecondsSinceEpoch.remainder(2147483647),
-        'Processing geofence',
-        'Looking up task details...',
-        debugDetails,
-      );
-    } catch (e) {
-      developer.log(
-        '[GeofenceCallback] Failed to show progress notification: $e',
-      );
-    }
+    // Remove debug/progress notifications
 
     // Use the locally initialized plugin instance for Android-specific channel creation
     final androidPlugin =
@@ -240,78 +194,13 @@ Future<void> geofenceTriggered(
     );
     await androidPlugin?.createNotificationChannel(alertsChannel);
 
-    const AndroidNotificationChannel progressChannel =
-        AndroidNotificationChannel(
-          'geofence_progress',
-          'Geofence Progress',
-          description: 'Progress updates for geofence processing',
-          importance: Importance.high,
-          playSound: false,
-          enableVibration: false,
-        );
-    await androidPlugin?.createNotificationChannel(progressChannel);
-
-    const AndroidNotificationChannel debugChannel = AndroidNotificationChannel(
-      'geofence_debug',
-      'Geofence Debug',
-      description: 'Debug information for geofence triggers',
-      importance: Importance.max,
-      playSound: true,
-      enableVibration: true,
-    );
-    await androidPlugin?.createNotificationChannel(debugChannel);
+    // Removed progress and debug channels
 
     developer.log(
       '[GeofenceCallback] Created/ensured all notification channels',
     );
 
-    // DEBUG: Post an immediate debug notification to verify the background
-    // isolate can post notifications while the app is attached to the debugger.
-    try {
-      // Force Android to show notification immediately by using heads-up notification
-      final debugDetails = NotificationDetails(
-        android: AndroidNotificationDetails(
-          'geofence_debug',
-          'Geofence Debug',
-          channelDescription: 'Debug information for geofence triggers',
-          importance: Importance.max,
-          priority: Priority.max,
-          playSound: true,
-          enableVibration: true,
-          visibility: NotificationVisibility.public,
-          fullScreenIntent: true,
-          category: AndroidNotificationCategory.alarm,
-          // Add these to ensure immediate display
-          showProgress: false,
-          ongoing: false,
-          autoCancel: true,
-          channelShowBadge: true,
-          enableLights: true,
-          ledColor: const Color.fromARGB(255, 255, 0, 0),
-          ledOnMs: 1000,
-          ledOffMs: 500,
-        ),
-      );
-      await plugin.show(
-        earlyNotificationId + 1,
-        'DEBUG geofence callback',
-        'Received geofence(s): ${params.geofences.map((g) => g.id).join(",")}',
-        debugDetails,
-      );
-      developer.log(
-        '[GeofenceCallback] Posted debug notification (id=${earlyNotificationId + 1})',
-      );
-
-      // Force a wake lock to ensure notification appears immediately
-      await plugin.show(
-        earlyNotificationId + 2,
-        'Geofence Triggered!',
-        'Processing location event...',
-        debugDetails,
-      );
-    } catch (e) {
-      developer.log('[GeofenceCallback] Failed to post debug notification: $e');
-    }
+    // Removed debug verification notifications
 
     String notificationTitle = 'Task reminder';
     String notificationBody = '';
@@ -334,53 +223,9 @@ Future<void> geofenceTriggered(
           'Event: ${params.event.name} for geofences: ${params.geofences.map((g) => g.id).join(", ")}';
     }
 
-    // Show progress that we're building notification
-    try {
-      final debugDetails = NotificationDetails(
-        android: AndroidNotificationDetails(
-          'geofence_progress',
-          'Geofence Progress',
-          channelDescription: 'Progress updates for geofence processing',
-          importance: Importance.max,
-          priority: Priority.high,
-          playSound: true,
-        ),
-      );
-      await plugin.show(
-        DateTime.now().millisecondsSinceEpoch.remainder(2147483647),
-        'Processing geofence',
-        'Preparing task notification...',
-        debugDetails,
-      );
-    } catch (e) {
-      developer.log(
-        '[GeofenceCallback] Failed to show progress notification: $e',
-      );
-    }
+    // Removed progress notifications while building
 
-    // Show final progress notification before showing task notification
-    try {
-      final debugDetails = NotificationDetails(
-        android: AndroidNotificationDetails(
-          'geofence_progress',
-          'Geofence Progress',
-          channelDescription: 'Progress updates for geofence processing',
-          importance: Importance.max,
-          priority: Priority.high,
-          playSound: true,
-        ),
-      );
-      await plugin.show(
-        DateTime.now().millisecondsSinceEpoch.remainder(2147483647),
-        'Processing geofence',
-        'Creating task notification...',
-        debugDetails,
-      );
-    } catch (e) {
-      developer.log(
-        '[GeofenceCallback] Failed to show progress notification: $e',
-      );
-    }
+    // Removed final progress notification before showing task alert
 
     // Create the notification details with sound enabled (plays BEFORE TTS)
     // Add action buttons for persistent notifications

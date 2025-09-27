@@ -954,49 +954,6 @@ class _TaskListViewState extends State<TaskListView>
             onPressed: () => _openSnoozeSettings(),
           ),
           const SizedBox(width: 8),
-          // Debug helper: simulate DO_NOW notification (starts highest-priority task)
-          IconButton.filledTonal(
-            icon: const Icon(Icons.bug_report_rounded),
-            tooltip: 'Simulate DO_NOW',
-            onPressed: () async {
-              try {
-                // Find highest-priority non-completed task
-                final tasks = await _taskRepository.getTasks();
-                final candidates = tasks.where((t) => !t.isCompleted).toList();
-                if (candidates.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('No active tasks to simulate'),
-                    ),
-                  );
-                  return;
-                }
-                candidates.sort(TaskModel.compareByEffectivePriority);
-                final highest =
-                    candidates
-                        .last; // compareByEffectivePriority sorts ascending
-                final started = await _taskTimerService.startTask(highest);
-                developer.log(
-                  '[TaskListView] Simulate DO_NOW -> started=$started for ${highest.taskName}',
-                );
-                // Navigate to ActiveTaskView so you can see the timer
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => const ActiveTaskView()),
-                  (r) => false,
-                );
-              } catch (e, st) {
-                developer.log(
-                  '[TaskListView] Error simulating DO_NOW: $e',
-                  error: e,
-                  stackTrace: st,
-                );
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Simulation failed: $e')),
-                );
-              }
-            },
-          ),
-          const SizedBox(width: 8),
         ],
       ),
       body: Stack(
