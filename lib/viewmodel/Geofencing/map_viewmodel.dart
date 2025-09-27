@@ -522,8 +522,9 @@ class MapboxMapViewModel extends ChangeNotifier {
       geofenceZoneSymbolIds.clear();
 
       // Add all saved geofences
-      // OLD working behavior: use camera-center meters-per-pixel for consistent sizing
-      final centerMpp = await metersToPixelsAtCurrentLocationAndZoom();
+      // Compute per-feature meters-per-pixel at current zoom for accurate sizing
+      final camera = await mapboxMap!.getCameraState();
+      final currentZoom = camera.zoom;
       for (final geofence in _savedGeofences) {
         try {
           debugPrint(
@@ -538,12 +539,19 @@ class MapboxMapViewModel extends ChangeNotifier {
           final parsedFill = _parseColor(geofence.fillColor) ?? Colors.amberAccent;
           final parsedStroke = _parseColor(geofence.strokeColor) ?? Colors.white;
 
-          // Compute pixel radius using camera-center MPP (legacy behavior)
-          final mpp = centerMpp > 0 ? centerMpp : (await metersToPixelsAtCurrentLocationAndZoom());
+          // Compute pixel radius using the geofence's latitude at the current zoom
+          double mpp = await mapboxMap!.projection.getMetersPerPixelAtLatitude(
+            geofence.latitude,
+            currentZoom,
+          );
+          if (mpp <= 0) {
+            // Fallback to camera-center MPP
+            mpp = await metersToPixelsAtCurrentLocationAndZoom();
+          }
           final safeMpp = mpp > 0 ? mpp : 1.0;
           double pixelRadius = geofence.radiusMeters / safeMpp;
-          // Maintain a very small visibility floor without distorting size
-          if (pixelRadius < 1.5) pixelRadius = 1.5;
+          // Maintain a visibility floor without distorting too much
+          if (pixelRadius < 2.5) pixelRadius = 2.5;
 
           final double visibleOpacity = geofence.fillOpacity.clamp(0.2, 1.0).toDouble();
           final visibleStrokeWidth = geofence.strokeWidth < 1.0 ? 1.0 : geofence.strokeWidth;
@@ -716,16 +724,23 @@ class MapboxMapViewModel extends ChangeNotifier {
     if (geofenceZoneSymbol != null &&
         _savedGeofences.isNotEmpty &&
         geofenceZoneSymbolIds.length == _savedGeofences.length) {
-      final centerMpp = await metersToPixelsAtCurrentLocationAndZoom();
+      final camera = await mapboxMap!.getCameraState();
+      final currentZoom = camera.zoom;
       for (int i = 0; i < _savedGeofences.length; i++) {
         final geofenceData = _savedGeofences[i];
         final annotation =
             geofenceZoneSymbolIds[i]; // Assuming lists are in sync
-        // Use camera-center MPP for updates as well
-        final mpp = centerMpp > 0 ? centerMpp : (await metersToPixelsAtCurrentLocationAndZoom());
+        // Per-feature meters-per-pixel at current zoom
+        double mpp = await mapboxMap!.projection.getMetersPerPixelAtLatitude(
+          geofenceData.latitude,
+          currentZoom,
+        );
+        if (mpp <= 0) {
+          mpp = await metersToPixelsAtCurrentLocationAndZoom();
+        }
         final safeMpp = mpp > 0 ? mpp : 1.0;
         double px = geofenceData.radiusMeters / safeMpp;
-        if (px < 1.5) px = 1.5; // minimal floor to avoid invisibility
+        if (px < 2.5) px = 2.5; // minimal floor to avoid invisibility
         annotation.circleRadius = px;
         futures.add(geofenceZoneSymbol!.update(annotation));
       }
@@ -931,14 +946,6 @@ class MapboxMapViewModel extends ChangeNotifier {
     );
     geofenceZoneHelperIds.add(helperAnnotation);
     isGeofenceHelperPlaced = true;
-
-    // Also, ensure the persistent symbol for this geofence would be displayed correctly.
-    // _displaySavedGeofences will handle drawing all persistent symbols,
-    // but we need to ensure the helper reflects the one being edited.
-    // No, _displaySavedGeofences shows ALL. For an edit view, we might want to show only the one being edited,
-    // or highlight it. For now, the helper represents the editable area.
-    // The persistent ones are handled by _loadSavedGeofences -> _displaySavedGeofences
-    // which is fine, as the edit view will have its own map and won't call _displaySavedGeofences for *all* geofences.
 
     debugPrint(
       "Helper for existing geofence placed at ${point.coordinates} with radius ${_currentHelperRadiusInPixels}px for ${radiusMeters}m",
