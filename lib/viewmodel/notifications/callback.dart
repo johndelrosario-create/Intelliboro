@@ -8,12 +8,11 @@ import 'dart:ui' show IsolateNameServer; // For SendPort lookup
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:native_geofence/native_geofence.dart' as native_geofence;
 import 'package:sqflite/sqflite.dart';
-import 'package:sqflite/sqlite_api.dart';
-import 'package:meta/meta.dart';
-
 
 import 'package:intelliboro/services/geofence_storage.dart';
 import 'package:intelliboro/services/database_service.dart';
+import 'package:intelliboro/services/context_detection_service.dart';
+import 'package:intelliboro/services/text_to_speech_service.dart';
 
 @pragma('vm:entry-point')
 Future<void> geofenceTriggered(
@@ -173,7 +172,9 @@ Future<void> geofenceTriggered(
       final geofenceData = await storage.getGeofenceById(geofence.id);
       if (geofenceData != null) {
         final eventType =
-            params.event == native_geofence.GeofenceEvent.enter ? 'entered' : 'exited';
+            params.event == native_geofence.GeofenceEvent.enter
+                ? 'entered'
+                : 'exited';
         notificationBody += 'You have task ${geofenceData.task}\n';
       }
     }
@@ -183,25 +184,26 @@ Future<void> geofenceTriggered(
           'Event: ${params.event.name} for geofences: ${params.geofences.map((g) => g.id).join(", ")}';
     }
 
-    // Create the notification details with high priority
-    final AndroidNotificationDetails androidNotificationDetails =
-        AndroidNotificationDetails(
-          channel.id, // Must match the channel ID
-          channel.name, // Must match the channel name
-          channelDescription: 'Alerts when entering or exiting geofence areas',
-          importance: Importance.max,
-          priority: Priority.high,
-          ticker: 'New geofence alert',
-          playSound: true,
-          enableVibration: true,
-          visibility: NotificationVisibility.public,
-          category: AndroidNotificationCategory.alarm,
-          showWhen: true,
-          autoCancel: false,
-          channelShowBadge: true,
-          icon: '@mipmap/ic_launcher',
-          styleInformation: const BigTextStyleInformation(''),
-        );
+    // Create the notification details with sound enabled (plays BEFORE TTS)
+    final AndroidNotificationDetails
+    androidNotificationDetails = AndroidNotificationDetails(
+      channel.id, // Must match the channel ID
+      channel.name, // Must match the channel name
+      channelDescription:
+          'Alerts when entering or exiting geofence areas (sound alert then TTS)',
+      importance: Importance.max, // High importance for immediate sound
+      priority: Priority.high,
+      ticker: 'New geofence alert',
+      playSound: true, // Enabled - notification sound plays first
+      enableVibration: true, // Keep vibration for tactile feedback
+      visibility: NotificationVisibility.public,
+      category: AndroidNotificationCategory.alarm, // Back to alarm for urgency
+      showWhen: true,
+      autoCancel: true, // Allow user to dismiss easily
+      channelShowBadge: true,
+      icon: '@mipmap/ic_launcher',
+      styleInformation: const BigTextStyleInformation(''),
+    );
 
     final NotificationDetails platformChannelSpecifics = NotificationDetails(
       android: androidNotificationDetails,
@@ -211,7 +213,7 @@ Future<void> geofenceTriggered(
       '[GeofenceCallback] Notification details created with channel: ${channel.id}',
     );
 
-    // Show the notification with a unique ID
+    // --- Show the notification FIRST (with sound) to alert user ---
     final notificationId = Random().nextInt(2147483647);
 
     final payloadData = {
@@ -223,6 +225,9 @@ Future<void> geofenceTriggered(
     final payloadJson = jsonEncode(payloadData);
 
     try {
+      developer.log(
+        '[GeofenceCallback] Showing notification with sound first...',
+      );
       await plugin.show(
         notificationId,
         notificationTitle,
@@ -231,40 +236,167 @@ Future<void> geofenceTriggered(
         payload: payloadJson,
       );
       developer.log('[GeofenceCallback] Notification shown successfully');
+
+      // Short delay to let notification sound play
+      await Future.delayed(const Duration(milliseconds: 1500));
     } catch (e, stackTrace) {
       developer.log(
         '[GeofenceCallback] Error showing notification: $e',
         error: e,
         stackTrace: stackTrace,
       );
-
-      // Try showing a basic notification as fallback
-      try {
-        await plugin.show(
-          notificationId,
-          'Location Alert',
-          'You have ${params.event.name.toLowerCase()} a geofence area',
-          const NotificationDetails(
-            android: AndroidNotificationDetails(
-              'geofence_alerts',
-              'Geofence Alerts',
-              importance: Importance.max,
-              priority: Priority.max,
-              showWhen: true,
-            ),
-          ),
-        );
-        developer.log('[GeofenceCallback] Fallback notification shown');
-      } catch (e2) {
-        developer.log(
-          '[GeofenceCallback] Fallback notification also failed: $e2',
-        );
-      }
     }
 
-    developer.log(
-      '[GeofenceCallback] Successfully showed notification: ID=$notificationId, Title=$notificationTitle, Body=$notificationBody',
-    );
+    // --- Then Trigger Text-to-Speech Notifications AFTER notification sound ---
+    try {
+      developer.log(
+        '[GeofenceCallback] Attempting to trigger TTS notifications...',
+      );
+
+      // Process each geofence for TTS
+      for (final geofence in params.geofences) {
+        try {
+          developer.log(
+            '[GeofenceCallback] Processing geofence ${geofence.id} for TTS',
+          );
+
+          final geofenceData = await storage.getGeofenceById(geofence.id);
+          developer.log(
+            '[GeofenceCallback] Geofence data retrieved: ${geofenceData?.toJson()}',
+          );
+
+          if (geofenceData != null &&
+              geofenceData.task != null &&
+              geofenceData.task!.isNotEmpty) {
+            developer.log(
+              '[GeofenceCallback] Found task for TTS: ${geofenceData.task}',
+            );
+
+            // Try direct TTS service approach first
+            try {
+              developer.log(
+                '[GeofenceCallback] Initializing TTS service for geofence callback...',
+              );
+              final ttsService = TextToSpeechService(); // Singleton instance
+
+              // Force re-initialization in background context
+              developer.log('[GeofenceCallback] Calling TTS init...');
+              await ttsService.init();
+              developer.log('[GeofenceCallback] TTS init completed');
+
+              // Check if TTS is available
+              developer.log('[GeofenceCallback] Checking TTS availability...');
+              final isAvailable = await ttsService.isAvailable();
+              developer.log(
+                '[GeofenceCallback] TTS availability: $isAvailable',
+              );
+              developer.log(
+                '[GeofenceCallback] TTS enabled: ${ttsService.isEnabled}',
+              );
+
+              if (isAvailable && ttsService.isEnabled) {
+                developer.log(
+                  '[GeofenceCallback] Attempting to speak: "${geofenceData.task}"',
+                );
+                await ttsService.speakTaskNotification(
+                  geofenceData.task!,
+                  'location',
+                );
+                developer.log(
+                  '[GeofenceCallback] Direct TTS triggered successfully for: ${geofenceData.task}',
+                );
+
+                // Wait longer for TTS to complete before showing notification
+                developer.log(
+                  '[GeofenceCallback] Waiting for TTS to complete before showing notification...',
+                );
+                int waitTime = 0;
+                const maxWaitTime = 10000; // 10 seconds max
+                const checkInterval = 500; // Check every 500ms
+
+                while (ttsService.isSpeaking && waitTime < maxWaitTime) {
+                  await Future.delayed(
+                    const Duration(milliseconds: checkInterval),
+                  );
+                  waitTime += checkInterval;
+                  developer.log(
+                    '[GeofenceCallback] TTS still speaking, waited ${waitTime}ms',
+                  );
+                }
+
+                if (waitTime >= maxWaitTime) {
+                  developer.log(
+                    '[GeofenceCallback] TTS timeout reached, proceeding with notification',
+                  );
+                } else {
+                  developer.log(
+                    '[GeofenceCallback] TTS completed after ${waitTime}ms',
+                  );
+                }
+
+                // Add additional delay to ensure audio system is free
+                await Future.delayed(const Duration(milliseconds: 1000));
+              } else {
+                developer.log(
+                  '[GeofenceCallback] TTS not available or disabled. Available: $isAvailable, Enabled: ${ttsService.isEnabled}',
+                );
+                developer.log('[GeofenceCallback] TTS will not be triggered');
+              }
+            } catch (directTtsError) {
+              developer.log(
+                '[GeofenceCallback] Direct TTS failed: $directTtsError, trying context service...',
+              );
+
+              // Fallback to context service approach
+              try {
+                final contextService = ContextDetectionService();
+                await contextService.init();
+
+                await contextService.handleGeofenceContext(
+                  geofenceData.task!,
+                  geofence.id,
+                  metadata: {
+                    'event_type': params.event.name,
+                    'latitude': params.location?.latitude,
+                    'longitude': params.location?.longitude,
+                    'timestamp': DateTime.now().millisecondsSinceEpoch,
+                  },
+                );
+                developer.log(
+                  '[GeofenceCallback] Context service TTS triggered for: ${geofenceData.task}',
+                );
+              } catch (contextError) {
+                developer.log(
+                  '[GeofenceCallback] Context service TTS also failed: $contextError',
+                );
+              }
+            }
+          } else {
+            developer.log(
+              '[GeofenceCallback] No task found for geofence ${geofence.id} or task is empty',
+            );
+          }
+        } catch (geofenceError) {
+          developer.log(
+            '[GeofenceCallback] Error processing geofence ${geofence.id} for TTS: $geofenceError',
+          );
+        }
+      }
+
+      developer.log(
+        '[GeofenceCallback] TTS notifications processing completed',
+      );
+    } catch (e, stackTrace) {
+      developer.log(
+        '[GeofenceCallback] Error triggering TTS notifications: $e',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      // Continue execution even if TTS fails
+    }
+    // --- End Text-to-Speech Notifications ---
+
+    // Notification was already shown above with sound alert
 
     // --- Save to History ---
     developer.log(
@@ -456,8 +588,3 @@ Future<void> geofenceTriggered(
     }
   }
 }
-
-// Helper function to capitalize strings (unused but kept for future use)
-@visibleForTesting
-String capitalize(String s) =>
-    s.isNotEmpty ? s[0].toUpperCase() + s.substring(1).toLowerCase() : s;
