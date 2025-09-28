@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intelliboro/services/pin_service.dart';
+import 'package:intelliboro/widgets/numeric_keypad.dart';
+import 'package:intelliboro/widgets/pin_display.dart';
 import 'dart:async';
 
 /// Simple lock screen that asks for a 6-digit PIN before allowing access.
@@ -12,8 +14,8 @@ class PinLockView extends StatefulWidget {
 }
 
 class _PinLockViewState extends State<PinLockView> {
-  final _pinCtrl = TextEditingController();
-  final _formKey = GlobalKey<FormState>();
+  String _enteredPin = '';
+  final _maxPinLength = 6;
   String? _error;
   bool _verifying = false;
   bool _lockedOut = false;
@@ -41,7 +43,8 @@ class _PinLockViewState extends State<PinLockView> {
       setState(() {
         _lockedOut = true;
         _remaining = remain;
-        _error = _formatLockoutMsg(remain);
+        _error =
+            null; // Clear error when locked out, use dedicated lockout display
       });
       _startTicker();
     } else {
@@ -67,7 +70,7 @@ class _PinLockViewState extends State<PinLockView> {
       } else {
         setState(() {
           _remaining = remain;
-          _error = _formatLockoutMsg(remain);
+          // Don't set _error here, use dedicated lockout display
         });
       }
     });
@@ -85,11 +88,17 @@ class _PinLockViewState extends State<PinLockView> {
     setState(() => _error = null);
     await _checkLockout();
     if (_lockedOut) return;
-    if (!_formKey.currentState!.validate()) return;
+
+    // Validate PIN length
+    if (_enteredPin.length != _maxPinLength) {
+      setState(() => _error = 'PIN must be exactly 6 digits');
+      return;
+    }
+
     if (_verifying) return;
     setState(() => _verifying = true);
     try {
-      final ok = await PinService().verifyPin(_pinCtrl.text);
+      final ok = await PinService().verifyPin(_enteredPin);
       if (!mounted) return;
       if (ok) {
         widget.onUnlocked();
@@ -98,11 +107,41 @@ class _PinLockViewState extends State<PinLockView> {
         if (!_lockedOut) {
           setState(() {
             _error = 'Incorrect PIN. Please try again.';
+            _enteredPin = ''; // Clear the entered PIN on error
           });
         }
       }
     } finally {
       if (mounted) setState(() => _verifying = false);
+    }
+  }
+
+  void _onNumberTap(String number) {
+    if (_lockedOut || _verifying) return;
+
+    if (_enteredPin.length < _maxPinLength) {
+      setState(() {
+        _enteredPin += number;
+        _error = null; // Clear any previous error
+      });
+
+      // Auto-verify when PIN is complete
+      if (_enteredPin.length == _maxPinLength) {
+        Future.delayed(const Duration(milliseconds: 200), () {
+          if (mounted) _verify();
+        });
+      }
+    }
+  }
+
+  void _onBackspace() {
+    if (_lockedOut || _verifying) return;
+
+    if (_enteredPin.isNotEmpty) {
+      setState(() {
+        _enteredPin = _enteredPin.substring(0, _enteredPin.length - 1);
+        _error = null; // Clear any previous error
+      });
     }
   }
 
@@ -116,54 +155,71 @@ class _PinLockViewState extends State<PinLockView> {
           constraints: const BoxConstraints(maxWidth: 420),
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Icon(Icons.lock_outline, size: 64, color: theme.colorScheme.primary),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Unlock with your 6-digit PIN',
-                    style: theme.textTheme.titleLarge,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _pinCtrl,
-                    obscureText: true,
-                    keyboardType: TextInputType.number,
-                    maxLength: 6,
-                    decoration: const InputDecoration(
-                      labelText: 'PIN',
-                      counterText: '',
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Icon(
+                  Icons.lock_outline,
+                  size: 64,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'Unlock with your 6-digit PIN',
+                  style: theme.textTheme.titleLarge,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 32),
+
+                // PIN Display with dots
+                PinDisplay(pin: _enteredPin, maxLength: _maxPinLength),
+
+                const SizedBox(height: 24),
+
+                // Error message
+                if (_error != null && !_lockedOut)
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(
+                        color: theme.colorScheme.error,
+                        fontSize: 14,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
-                    validator: (v) {
-                      if (_lockedOut) {
-                        return _error ?? 'Locked out temporarily. Please wait.';
-                      }
-                      if (v == null || v.isEmpty) return 'Enter your PIN';
-                      if (!RegExp(r'^\d{6}$').hasMatch(v)) {
-                        return 'PIN must be exactly 6 digits';
-                      }
-                      return null;
-                    },
-                    onFieldSubmitted: (_) => _verify(),
                   ),
-                  const SizedBox(height: 8),
-                  if (_error != null)
-                    Text(_error!, style: const TextStyle(color: Colors.red)),
-                  const SizedBox(height: 8),
-                  FilledButton.icon(
-                    onPressed: (_verifying || _lockedOut) ? null : _verify,
-                    icon: const Icon(Icons.arrow_forward),
-                    label: _verifying
-                        ? const Text('Verifying...')
-                        : (_lockedOut ? const Text('Locked') : const Text('Unlock')),
+
+                // Lockout message
+                if (_lockedOut)
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                    child: Text(
+                      _formatLockoutMsg(_remaining),
+                      style: TextStyle(
+                        color: theme.colorScheme.error,
+                        fontSize: 14,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
                   ),
-                ],
-              ),
+
+                const SizedBox(height: 32),
+
+                // Custom Numeric Keypad
+                NumericKeypad(
+                  onNumberTap: _onNumberTap,
+                  onBackspace: _onBackspace,
+                  showBackspace: true,
+                ),
+
+                const SizedBox(height: 24),
+
+                // Status indicator
+                if (_verifying)
+                  const Center(child: CircularProgressIndicator()),
+              ],
             ),
           ),
         ),
