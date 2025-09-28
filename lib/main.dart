@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:intelliboro/theme.dart';
-import 'package:permission_handler/permission_handler.dart';
+// permission_handler functions are imported where needed (keep explicit show import later)
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
+import 'package:alarm/alarm.dart';
+import 'package:alarm/utils/alarm_set.dart';
+import 'package:intelliboro/services/flutter_alarm_service.dart';
 import 'dart:async';
 import 'package:intelliboro/views/task_list_view.dart';
 import 'package:intelliboro/views/task_statistics_view.dart';
@@ -25,8 +28,13 @@ import 'package:intelliboro/services/pin_service.dart';
 import 'package:intelliboro/views/pin_setup_view.dart';
 import 'package:intelliboro/views/pin_lock_view.dart';
 import 'package:intelliboro/views/settings_view.dart';
-import 'package:permission_handler/permission_handler.dart'
-    show openAppSettings;
+import 'package:permission_handler/permission_handler.dart';
+import 'dart:io';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
+import 'package:intelliboro/services/audio_focus_guard.dart';
+
+const String _kPermissionsPromptShown = 'permissions_prompt_shown_v1';
 
 // Define the access token
 const String accessToken = String.fromEnvironment('ACCESS_TOKEN');
@@ -152,43 +160,104 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
   // Unified notification response handler.
   try {
     final String? payload = response.payload;
-    final int? responseId = response.id;
+
+    developer.log(
+      '[main] Processing notification response: ${response.actionId} ${response.id}',
+    );
+    developer.log('[main] Payload: $payload');
 
     // 1) If action is DO_NOW and payload is a simple task id, start that task
     if (response.actionId == 'com.intelliboro.DO_NOW') {
+      developer.log('[main] Processing DO_NOW action with payload: $payload');
       final int? simpleTaskId = payload == null ? null : int.tryParse(payload);
       if (simpleTaskId != null) {
+        developer.log('[main] Parsed valid task ID: $simpleTaskId');
         final task = await TaskRepository().getTaskById(simpleTaskId);
         if (task != null) {
-          await taskTimerService.startTask(task);
           developer.log(
-            '[main] Started timer for task ${task.taskName} (id=$simpleTaskId)',
+            '[main] Found task: ${task.taskName} (id=$simpleTaskId)',
           );
-          if (responseId != null) {
-            await flutterLocalNotificationsPlugin.cancel(responseId);
-          }
-          // Bring app to foreground
-          try {
-            navigatorKey.currentState?.pushAndRemoveUntil(
-              MaterialPageRoute(builder: (_) => const ActiveTaskView()),
-              (r) => false,
+
+          // Clear any existing notification for this response
+          if (response.id != null) {
+            await flutterLocalNotificationsPlugin.cancel(response.id!);
+            developer.log(
+              '[main] Cancelled originating notification id=${response.id}',
             );
+
+            // Stop the alarm if it's ringing
+            await Alarm.stop(response.id!);
+            developer.log('[main] Stopped alarm id=${response.id}');
+            // Release audio focus guard
+            AudioFocusGuard.instance.onAlarmStop(response.id);
+          }
+
+          // Start the task (may return false if lower priority)
+          final started = await taskTimerService.startTask(task);
+          developer.log(
+            '[main] Task start result for id=$simpleTaskId: $started',
+          );
+
+          if (started) {
+            try {
+              // Start timer tracking for the task
+              await taskTimerService.startTimerForTask(task);
+              developer.log(
+                '[main] Successfully started timer for task ${task.taskName} (id=$simpleTaskId)',
+              );
+
+              // Show confirmation notification with chronometer
+              await flutterLocalNotificationsPlugin.show(
+                99999,
+                'Timer Started! ⏰',
+                'Now tracking time for "${task.taskName}"',
+                const NotificationDetails(
+                  android: AndroidNotificationDetails(
+                    'timer_feedback',
+                    'Timer Feedback',
+                    channelDescription: 'Confirms when task timers start',
+                    importance: Importance.defaultImportance,
+                    priority: Priority.defaultPriority,
+                    showWhen: true,
+                    autoCancel: false,
+                    ongoing: true,
+                    usesChronometer: true,
+                  ),
+                ),
+              );
+              developer.log('[main] Posted timer confirmation notification');
+            } catch (e) {
+              developer.log(
+                '[main] Error starting timer or posting confirmation: $e',
+              );
+            }
+          } else {
+            developer.log(
+              '[main] Did not start task ${task.taskName} due to priority/scheduling',
+            );
+          }
+
+          // Navigate to ActiveTaskView (best-effort) so user sees the timer
+          try {
+            await _navigateToActiveView(maxRetries: 5);
+            developer.log('[main] Navigated to ActiveTaskView after DO_NOW');
           } catch (e) {
             developer.log('[main] Navigation after DO_NOW failed: $e');
           }
+
           return;
         }
       }
     }
 
-    if (payload == null || payload.isEmpty) {
+    if (response.payload == null || response.payload!.isEmpty) {
       developer.log('[main] Notification response has no payload.');
       return;
     }
 
     // Parse JSON payload created by the geofence background callback
     final Map<String, dynamic> data =
-        jsonDecode(payload) as Map<String, dynamic>;
+        jsonDecode(response.payload!) as Map<String, dynamic>;
     // If this payload contains a switchRequestId (from TaskTimerService), allow quick response
     if (data.containsKey('switchRequestId')) {
       final switchId = data['switchRequestId'] as String?;
@@ -273,6 +342,12 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
           developer.log('[main] Navigation after DO_NOW failed: $e');
         }
         if (started) {
+          // Also start the timer for the task
+          await taskTimerService.startTimerForTask(highest);
+          developer.log(
+            '[main] Started timer tracking for ${highest.taskName}',
+          );
+
           await flutterLocalNotificationsPlugin.show(
             99999,
             'Timer Started! ⏰',
@@ -285,8 +360,9 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
                 importance: Importance.defaultImportance,
                 priority: Priority.defaultPriority,
                 showWhen: true,
-                autoCancel: true,
-                timeoutAfter: 3000,
+                autoCancel: false,
+                ongoing: true,
+                usesChronometer: true,
               ),
             ),
           );
@@ -381,8 +457,9 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
                       importance: Importance.defaultImportance,
                       priority: Priority.defaultPriority,
                       showWhen: true,
-                      autoCancel: true,
-                      timeoutAfter: 3000,
+                      autoCancel: false,
+                      ongoing: true,
+                      usesChronometer: true,
                     ),
                   ),
                 );
@@ -476,14 +553,15 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
     }
 
     // Default tap: cancel the notification
-    if (responseId != null) {
-      await flutterLocalNotificationsPlugin.cancel(responseId);
+    if (response.id != null) {
+      await flutterLocalNotificationsPlugin.cancel(response.id!);
     }
 
     // If the user tapped the notification body (no explicit actionId),
     // treat it like DO_NOW when we have a payload with taskIds or geofenceIds.
     if ((response.actionId == null || response.actionId!.isEmpty) &&
-        payload.isNotEmpty) {
+        response.payload != null &&
+        response.payload!.isNotEmpty) {
       try {
         // Resolve candidates and start the highest-priority one, then navigate
         final List<TaskModel> fallbackCandidates = await _resolveCandidates();
@@ -497,10 +575,7 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
             strictPriority: geofenceIds.isNotEmpty || payloadTaskIds.isNotEmpty,
           );
           try {
-            navigatorKey.currentState?.pushAndRemoveUntil(
-              MaterialPageRoute(builder: (_) => const ActiveTaskView()),
-              (r) => false,
-            );
+            await _navigateToActiveView(maxRetries: 5);
           } catch (e) {
             developer.log(
               '[main] Navigation after default notification tap failed: $e',
@@ -523,15 +598,15 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
 
   // Final guarantee: if a task is active after handling the notification,
   // navigate to the ActiveTaskView so the user always sees the running timer.
-  try {
-    if (taskTimerService.hasActiveTask) {
-      developer.log(
-        '[main] Active task detected after notification handling. Navigating to ActiveTaskView.',
-      );
+  if (taskTimerService.hasActiveTask) {
+    developer.log(
+      '[main] Active task detected after notification handling. Navigating to ActiveTaskView.',
+    );
+    try {
       await _navigateToActiveView();
+    } catch (e) {
+      developer.log('[main] Final navigation to ActiveTaskView failed: $e');
     }
-  } catch (e) {
-    developer.log('[main] Final navigation to ActiveTaskView failed: $e');
   }
 }
 
@@ -593,41 +668,164 @@ void _initializeTtsService() {
   });
 }
 
+/// Handle when an alarm rings - show notification with action buttons
+Future<void> _handleAlarmRing(AlarmSettings alarmSettings) async {
+  try {
+    developer.log('[main] Handling alarm ring for id=${alarmSettings.id}');
+
+    // Extract task ID from alarm ID (reverse of _alarmIdForTaskId)
+    final taskId = alarmSettings.id - 100000;
+
+    // Get task details
+    final task = await TaskRepository().getTaskById(taskId);
+    if (task == null) {
+      developer.log(
+        '[main] Task not found for alarm id=${alarmSettings.id}, taskId=$taskId',
+      );
+      return;
+    }
+
+    // Show notification with action buttons (no sound - alarm package handles audio)
+    await flutterLocalNotificationsPlugin.show(
+      alarmSettings.id,
+      'Task Reminder ⏰',
+      '${task.taskName} - Time to start!',
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          'task_alarms',
+          'Task Alarms',
+          channelDescription: 'Time-based task alarms',
+          importance: Importance.max,
+          priority: Priority.high,
+          category: AndroidNotificationCategory.alarm,
+          fullScreenIntent: true,
+          playSound:
+              false, // Disable notification sound - alarm package plays audio
+          actions: <AndroidNotificationAction>[
+            const AndroidNotificationAction(
+              'com.intelliboro.DO_NOW',
+              'Do Now 🏃‍♂️',
+              showsUserInterface: true,
+              cancelNotification: true,
+            ),
+            const AndroidNotificationAction(
+              'com.intelliboro.DO_LATER',
+              'Do Later ⏰',
+              showsUserInterface: false,
+              cancelNotification: false,
+            ),
+          ],
+        ),
+      ),
+      payload: taskId.toString(),
+    );
+
+    developer.log(
+      '[main] Showed alarm notification for task: ${task.taskName}',
+    );
+  } catch (e) {
+    developer.log('[main] Error handling alarm ring: $e');
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Bring up the UI immediately to avoid long blocking on the splash.
+  // Initialize timezone and notifications BEFORE bringing up the UI so
+  // scheduling calls (which may run during early DB/insert flows) always
+  // have tz.local and the notification plugin ready. This adds a small
+  // startup delay but avoids races where scheduleForTask is invoked early.
+  try {
+    // Initialize timezone data and set local zone
+    tz.initializeTimeZones();
+    final String timezoneName = await FlutterTimezone.getLocalTimezone();
+    tz.setLocalLocation(tz.getLocation(timezoneName));
+    developer.log('[main] Timezone initialized for: $timezoneName');
+
+    // Initialize Flutter alarm service
+    final flutterAlarmService = FlutterAlarmService();
+    await flutterAlarmService.initialize();
+    developer.log('[main] Flutter alarm service initialized');
+
+    // Initialize notification plugin (centralized instance)
+    await initializeNotifications();
+    await flutterLocalNotificationsPlugin.initialize(
+      const InitializationSettings(
+        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        iOS: DarwinInitializationSettings(),
+      ),
+      onDidReceiveNotificationResponse: (NotificationResponse response) async {
+        developer.log(
+          '[main] Notification tapped: payload=${response.payload}, actionId=${response.actionId}, id=${response.id}',
+        );
+        await _onNotificationResponse(response);
+      },
+    );
+
+    // Set up alarm ring listener
+    Alarm.ringing.listen((AlarmSet alarmSet) {
+      for (final alarm in alarmSet.alarms) {
+        developer.log('[main] Alarm ringing: id=${alarm.id}');
+        AudioFocusGuard.instance.onAlarmStart(alarm.id);
+        _handleAlarmRing(alarm);
+      }
+    });
+    developer.log('[main] Alarm ring listener set up');
+  } catch (e, s) {
+    developer.log(
+      '[main] Error initializing timezone/notifications early: $e\n$s',
+    );
+    // Fall back to deferred initialization in microtask (keeps UX resilient)
+    Future.microtask(() async {
+      try {
+        await _initializeTimezone();
+        await initializeNotifications();
+      } catch (e2, s2) {
+        developer.log('[main] Deferred init also failed: $e2\n$s2');
+      }
+    });
+  }
+
+  // Bring up the UI immediately after core init steps
   MapboxOptions.setAccessToken(accessToken);
+  // Diagnostic: log whether an access token was provided at build/run time.
+  developer.log(
+    '[main] Mapbox access token present: ${accessToken.isNotEmpty}',
+  );
+  if (accessToken.isEmpty) {
+    developer.log(
+      '[main] WARNING: Mapbox ACCESS_TOKEN is empty. If maps previously worked, ensure you built the app with --dart-define=ACCESS_TOKEN=<your_token>',
+    );
+  }
+  // Early request: ensure the user is offered the exact-alarms setting as soon
+  // as the app starts. This helps devices that block exact alarms by default.
+  if (Platform.isAndroid) {
+    try {
+      const platform = MethodChannel('exact_alarms');
+      final bool canSchedule = await platform.invokeMethod(
+        'canScheduleExactAlarms',
+      );
+      developer.log('[main] Early canScheduleExactAlarms: $canSchedule');
+      if (!canSchedule) {
+        developer.log(
+          '[main] Early requestExactAlarmPermission: launching system intent',
+        );
+        // Fire-and-forget - this will open the system page where the user can
+        // enable "Allow exact alarms" for the app.
+        await platform.invokeMethod('requestExactAlarmPermission');
+      }
+    } catch (e) {
+      developer.log('[main] Early exact alarms check/request failed: $e');
+    }
+  }
+
   runApp(const MyApp());
 
   // Initialize TTS service in background (non-blocking)
   _initializeTtsService();
 
-  // Defer heavier initializations to microtasks so first frame can render.
+  // Defer other initializations to microtasks so first frame can render.
   Future.microtask(() async {
-    await _initializeTimezone();
-
-    // Initialize centralized notification plugin and register callbacks
-    try {
-      await initializeNotifications();
-      await flutterLocalNotificationsPlugin.initialize(
-        const InitializationSettings(
-          android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-          iOS: DarwinInitializationSettings(),
-        ),
-        onDidReceiveNotificationResponse: (
-          NotificationResponse response,
-        ) async {
-          developer.log(
-            '[main] Notification tapped: payload=${response.payload}, actionId=${response.actionId}, id=${response.id}',
-          );
-          await _onNotificationResponse(response);
-        },
-      );
-    } catch (e, s) {
-      developer.log('[main] Error initializing notifications: $e\n$s');
-    }
-
     // Initialize geofencing service early so the port listener is registered
     try {
       await GeofencingService().init();
@@ -667,6 +865,357 @@ void main() async {
         error: e,
         stackTrace: st,
       );
+    }
+
+    // Also ask native side if the app was launched with an action from our
+    // alarm notification (e.g., do_now). MainActivity exposes 'getLaunchAction'.
+    try {
+      if (Platform.isAndroid) {
+        const platform = MethodChannel('exact_alarms');
+        final Map? launch = await platform.invokeMethod('getLaunchAction');
+        developer.log('[main] Native launch action (raw): $launch');
+        if (launch != null) {
+          // Prefer explicit taskId when provided by native code
+          final dynamic tval = launch['taskId'];
+          final int? launchTaskId =
+              tval is int ? tval : (tval is String ? int.tryParse(tval) : null);
+          final String? action = launch['action'] as String?;
+
+          if (launchTaskId != null) {
+            try {
+              final task = await TaskRepository().getTaskById(launchTaskId);
+              if (task != null) {
+                if (action == 'do_later') {
+                  // For alarm-based do_later, reschedule the task to ring again after snooze duration
+                  await taskTimerService.rescheduleTaskLater(task);
+                  developer.log(
+                    '[main] Rescheduled task (native do_later) ${task.taskName} for ${taskTimerService.defaultSnoozeDuration.inMinutes} minutes later',
+                  );
+                } else {
+                  // Default (do_now or missing action): start the task
+                  // First cancel any existing alarms for this task to prevent re-ringing
+                  try {
+                    final alarmService = FlutterAlarmService();
+                    await alarmService.cancelForTaskId(launchTaskId);
+                    developer.log(
+                      '[main] Cancelled alarm for task id=$launchTaskId before starting',
+                    );
+                  } catch (e) {
+                    developer.log(
+                      '[main] Failed to cancel alarm for task id=$launchTaskId: $e',
+                    );
+                  }
+
+                  final started = await taskTimerService.startTask(
+                    task,
+                    // For alarm notifications, don't use strict priority as it affects UX
+                    strictPriority: false,
+                  );
+                  developer.log(
+                    '[main] Native launch started task id=$launchTaskId started=$started',
+                  );
+                  if (started) {
+                    try {
+                      // Also start the timer for the task once it's activated
+                      await taskTimerService.startTimerForTask(task);
+                      developer.log(
+                        '[main] Started timer for task id=$launchTaskId',
+                      );
+
+                      // Show feedback notification
+                      await flutterLocalNotificationsPlugin.show(
+                        99999,
+                        'Timer Started! ⏰',
+                        'Now tracking time for "${task.taskName}"',
+                        const NotificationDetails(
+                          android: AndroidNotificationDetails(
+                            'timer_feedback',
+                            'Timer Feedback',
+                            channelDescription:
+                                'Confirms when task timers start',
+                            importance: Importance.defaultImportance,
+                            priority: Priority.defaultPriority,
+                            showWhen: true,
+                            autoCancel: false,
+                            ongoing: true,
+                            usesChronometer: true,
+                          ),
+                        ),
+                      );
+
+                      // Navigate to the task view to show the timer
+                      navigatorKey.currentState?.pushAndRemoveUntil(
+                        MaterialPageRoute(
+                          builder: (_) => const ActiveTaskView(),
+                        ),
+                        (r) => false,
+                      );
+                    } catch (e) {
+                      developer.log(
+                        '[main] Navigation or timer start failed: $e',
+                      );
+                    }
+                  }
+                }
+              } else {
+                developer.log(
+                  '[main] Native launch included taskId=$launchTaskId but task not found',
+                );
+              }
+            } catch (e) {
+              developer.log(
+                '[main] Error handling native launch taskId=$launchTaskId: $e',
+              );
+            }
+          } else if (action == 'do_later') {
+            // Fallback: legacy behavior using notificationId -> taskId arithmetic
+            try {
+              final dynamic nid = launch['notificationId'];
+              final int? notificationIdFromLaunch =
+                  nid is int ? nid : (nid is String ? int.tryParse(nid) : null);
+              if (notificationIdFromLaunch != null) {
+                try {
+                  await flutterLocalNotificationsPlugin.cancel(
+                    notificationIdFromLaunch,
+                  );
+                } catch (e) {}
+
+                if (notificationIdFromLaunch >= 100000) {
+                  final int taskId = notificationIdFromLaunch - 100000;
+                  final task = await TaskRepository().getTaskById(taskId);
+                  if (task != null) {
+                    await taskTimerService.rescheduleTaskLater(task);
+                    developer.log(
+                      '[main] Rescheduled task (legacy do_later) ${task.taskName}',
+                    );
+                  }
+                }
+              }
+            } catch (e) {
+              developer.log(
+                '[main] Failed to handle native do_later fallback: $e',
+              );
+            }
+          } else if (action == 'do_now') {
+            // If we have a do_now without taskId, navigate to ActiveTaskView as best-effort
+            developer.log(
+              '[main] Native launch do_now without taskId: $launch',
+            );
+            try {
+              navigatorKey.currentState?.pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const ActiveTaskView()),
+                (r) => false,
+              );
+            } catch (e) {
+              developer.log(
+                '[main] Failed to handle native do_now fallback: $e',
+              );
+            }
+          }
+        }
+      }
+    } catch (e) {
+      developer.log('[main] getLaunchAction call failed: $e');
+    }
+
+    // Also listen for immediate native launch-action forwards so we don't
+    // miss taps on the alarm notification when the app is backgrounded.
+    try {
+      if (Platform.isAndroid) {
+        const platform = MethodChannel('exact_alarms');
+        platform.setMethodCallHandler((call) async {
+          try {
+            if (call.method == 'onLaunchAction') {
+              final Map? launch = call.arguments as Map?;
+              developer.log('[main] onLaunchAction received: $launch');
+              if (launch == null) return;
+              final dynamic tval = launch['taskId'];
+              final int? launchTaskId =
+                  tval is int
+                      ? tval
+                      : (tval is String ? int.tryParse(tval) : null);
+              final String? action = launch['action'] as String?;
+              if (launchTaskId != null) {
+                final task = await TaskRepository().getTaskById(launchTaskId);
+                if (task != null) {
+                  if (action == 'do_later') {
+                    // For alarm-based do_later, reschedule the task to ring again after snooze duration
+                    await taskTimerService.rescheduleTaskLater(task);
+                    developer.log(
+                      '[main] Rescheduled task (onLaunchAction do_later) ${task.taskName} for ${taskTimerService.defaultSnoozeDuration.inMinutes} minutes later',
+                    );
+                  } else {
+                    // Cancel any existing alarms for this task first
+                    try {
+                      final alarmService = FlutterAlarmService();
+                      await alarmService.cancelForTaskId(launchTaskId);
+                      developer.log(
+                        '[main] Cancelled alarm for task id=$launchTaskId (onLaunchAction)',
+                      );
+                    } catch (e) {
+                      developer.log(
+                        '[main] Failed to cancel alarm for task id=$launchTaskId (onLaunchAction): $e',
+                      );
+                    }
+
+                    final started = await taskTimerService.startTask(
+                      task,
+                      strictPriority: false,
+                    );
+                    developer.log(
+                      '[main] onLaunchAction started task id=$launchTaskId started=$started',
+                    );
+                    if (started) {
+                      try {
+                        await taskTimerService.startTimerForTask(task);
+                        developer.log(
+                          '[main] Started timer for task id=$launchTaskId',
+                        );
+                        await flutterLocalNotificationsPlugin.show(
+                          99999,
+                          'Timer Started! \u23f0',
+                          'Now tracking time for "${task.taskName}"',
+                          const NotificationDetails(
+                            android: AndroidNotificationDetails(
+                              'timer_feedback',
+                              'Timer Feedback',
+                              channelDescription:
+                                  'Confirms when task timers start',
+                              importance: Importance.defaultImportance,
+                              priority: Priority.defaultPriority,
+                              showWhen: true,
+                              autoCancel: false,
+                              ongoing: true,
+                              usesChronometer: true,
+                            ),
+                          ),
+                        );
+
+                        // Navigate to the task view to show the timer
+                        try {
+                          navigatorKey.currentState?.pushAndRemoveUntil(
+                            MaterialPageRoute(
+                              builder: (_) => const ActiveTaskView(),
+                            ),
+                            (r) => false,
+                          );
+                        } catch (e) {
+                          developer.log(
+                            '[main] Navigation or timer start failed: $e',
+                          );
+                        }
+                      } catch (e) {
+                        developer.log(
+                          '[main] Failed to start timer for onLaunchAction: $e',
+                        );
+                      }
+                    }
+                  }
+                }
+              } else if (action == 'do_later') {
+                try {
+                  final dynamic nid = launch['notificationId'];
+                  final int? notificationIdFromLaunch =
+                      nid is int
+                          ? nid
+                          : (nid is String ? int.tryParse(nid) : null);
+                  if (notificationIdFromLaunch != null) {
+                    try {
+                      await flutterLocalNotificationsPlugin.cancel(
+                        notificationIdFromLaunch,
+                      );
+                    } catch (e) {}
+
+                    if (notificationIdFromLaunch >= 100000) {
+                      final int taskId = notificationIdFromLaunch - 100000;
+                      final task = await TaskRepository().getTaskById(taskId);
+                      if (task != null) {
+                        await taskTimerService.rescheduleTaskLater(task);
+                        developer.log(
+                          '[main] Rescheduled task (legacy do_later) ${task.taskName}',
+                        );
+                      }
+                    }
+                  }
+                } catch (e) {
+                  developer.log(
+                    '[main] Failed to handle onLaunchAction do_later fallback: $e',
+                  );
+                }
+              } else if (action == 'do_now') {
+                // If we only have an action, bring up ActiveTaskView as best-effort
+                developer.log(
+                  '[main] onLaunchAction do_now without taskId: $launch',
+                );
+                try {
+                  navigatorKey.currentState?.pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (_) => const ActiveTaskView()),
+                    (r) => false,
+                  );
+                } catch (e) {
+                  developer.log(
+                    '[main] Failed to handle onLaunchAction do_now fallback: $e',
+                  );
+                }
+              } else if (action == 'alarm_triggered') {
+                // Show a proper Flutter notification with showsUserInterface: true
+                developer.log('[main] onLaunchAction alarm_triggered: $launch');
+                try {
+                  final notificationId =
+                      launch['notificationId'] as int? ?? 999999;
+                  final title = launch['title'] as String? ?? 'Task Reminder';
+                  final body =
+                      launch['body'] as String? ?? 'Time to work on your task!';
+
+                  await flutterLocalNotificationsPlugin.show(
+                    notificationId,
+                    title,
+                    body,
+                    NotificationDetails(
+                      android: AndroidNotificationDetails(
+                        'task_alarms',
+                        'Task Alarms',
+                        channelDescription: 'Time-based task alarms',
+                        importance: Importance.max,
+                        priority: Priority.high,
+                        category: AndroidNotificationCategory.alarm,
+                        fullScreenIntent: true,
+                        playSound:
+                            false, // Disable notification sound - alarm package plays audio
+                        actions: <AndroidNotificationAction>[
+                          const AndroidNotificationAction(
+                            'com.intelliboro.DO_NOW',
+                            'Do Now 🏃‍♂️',
+                            showsUserInterface: true,
+                            cancelNotification: true,
+                          ),
+                          const AndroidNotificationAction(
+                            'com.intelliboro.DO_LATER',
+                            'Do Later ⏰',
+                            showsUserInterface: false,
+                            cancelNotification: false,
+                          ),
+                        ],
+                      ),
+                    ),
+                    payload: launchTaskId?.toString(),
+                  );
+
+                  developer.log(
+                    '[main] Showed alarm notification with Flutter plugin: id=$notificationId',
+                  );
+                } catch (e) {
+                  developer.log('[main] Failed to show alarm notification: $e');
+                }
+              }
+            }
+          } catch (ee) {
+            developer.log('[main] onLaunchAction handler error: $ee');
+          }
+        });
+      }
+    } catch (e) {
+      developer.log('[main] onLaunchAction registration failed: $e');
     }
 
     // Global listener for switch requests so prompts appear regardless of current screen
@@ -743,6 +1292,15 @@ class _AppInitializerState extends State<AppInitializer> {
     });
 
     try {
+      // First-run flow: if the app has not shown the permissions prompt yet,
+      // perform the guided permission checks and attempt to request exact alarm
+      // permission when appropriate (Android).
+      final prefs = await SharedPreferences.getInstance();
+      final bool firstRun = !(prefs.getBool(_kPermissionsPromptShown) ?? false);
+      if (firstRun) {
+        developer.log('[main] First-run detected: showing permissions flow');
+      }
+
       debugPrint("[_AppInitializerState] Requesting location permission...");
       bool locationGranted = await _locationService.requestLocationPermission();
       debugPrint(
@@ -757,6 +1315,32 @@ class _AppInitializerState extends State<AppInitializer> {
       debugPrint(
         "[_AppInitializerState] Notification permission status: $notificationStatus",
       );
+
+      // If notification permission is denied on Android and this is first run,
+      // check whether exact alarms can be scheduled. If exact alarms are
+      // disallowed, launch the system intent to bring the user to the
+      // "Alarms & reminders" app-specific page so they can enable it.
+      if (firstRun && Platform.isAndroid && notificationStatus.isDenied) {
+        try {
+          const platform = MethodChannel('exact_alarms');
+          final bool canSchedule = await platform.invokeMethod(
+            'canScheduleExactAlarms',
+          );
+          developer.log(
+            '[main] canScheduleExactAlarms (first-run): $canSchedule',
+          );
+          if (!canSchedule) {
+            developer.log(
+              '[main] Requesting exact alarm permission via platform intent',
+            );
+            await platform.invokeMethod('requestExactAlarmPermission');
+          }
+        } catch (e) {
+          developer.log(
+            '[main] Error checking/requesting exact alarms on first-run: $e',
+          );
+        }
+      }
 
       if (!mounted) return;
       setState(() {
@@ -773,6 +1357,12 @@ class _AppInitializerState extends State<AppInitializer> {
         _showPermissionDeniedDialog();
       } else {
         debugPrint("[_AppInitializerState] All necessary permissions granted.");
+      }
+
+      // Mark that we've shown the first-run permissions flow so we don't repeat
+      // this aggressive flow on subsequent app starts.
+      if (firstRun) {
+        await prefs.setBool(_kPermissionsPromptShown, true);
       }
     } catch (e, stackTrace) {
       debugPrint(
