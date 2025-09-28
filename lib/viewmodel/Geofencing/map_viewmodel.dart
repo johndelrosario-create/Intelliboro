@@ -27,6 +27,10 @@ class MapboxMapViewModel extends ChangeNotifier {
   num? longitude;
   CameraState? cameraState;
 
+  // Real-time location tracking
+  StreamSubscription<locator.Position>? _locationStreamSubscription;
+  bool _isLocationTrackingActive = false;
+
   // Pending/selected radius in meters for the helper circle (adjustable via UI).
   double pendingRadiusMeters = 50.0;
   // Padding to avoid edge-touch glitches when checking overlaps (in meters).
@@ -282,10 +286,31 @@ class MapboxMapViewModel extends ChangeNotifier {
             '[MapViewModel] Current location: ${userPosition.latitude}, ${userPosition.longitude}',
           );
         } catch (e) {
-          debugPrint('[MapViewModel] Error getting location: $e');
-          mapInitializationError =
-              'Failed to get current location: $e. Please ensure location services are enabled and permissions granted.';
-          notifyListeners();
+          debugPrint('[MapViewModel] Error getting current location: $e');
+          // Try to get last known location for offline scenarios
+          try {
+            debugPrint(
+              '[MapViewModel] Attempting to get last known location for offline use...',
+            );
+            userPosition = await _locationService.getLastKnownLocation();
+            if (userPosition != null) {
+              debugPrint(
+                '[MapViewModel] Got cached/last known location: ${userPosition.latitude}, ${userPosition.longitude}',
+              );
+            } else {
+              debugPrint('[MapViewModel] No cached location available');
+              mapInitializationError =
+                  'Unable to get location: $e. Please ensure location services are enabled and try again when online.';
+              notifyListeners();
+            }
+          } catch (cacheError) {
+            debugPrint(
+              '[MapViewModel] Error getting cached location: $cacheError',
+            );
+            mapInitializationError =
+                'Failed to get current location: $e. Please ensure location services are enabled and permissions granted.';
+            notifyListeners();
+          }
         }
 
         try {
@@ -306,16 +331,26 @@ class MapboxMapViewModel extends ChangeNotifier {
               ),
               MapAnimationOptions(duration: 1500),
             );
-            debugPrint('[MapViewModel] Camera moved to user location');
+            debugPrint(
+              '[MapViewModel] Camera moved to user location successfully',
+            );
+          } else {
+            debugPrint(
+              '[MapViewModel] No user location available for flyTo operation',
+            );
           }
         } catch (e) {
           debugPrint('[MapViewModel] FlyTo error: $e');
+          // Don't set mapInitializationError here as the map can still function without flyTo
         }
 
         // Defer initial display until camera is idle so zoom is final
         _initialDisplayPending = true;
 
         debugPrint('[MapViewModel] Background onMapCreated setup finished.');
+
+        // Start real-time location tracking for smooth offline location updates
+        await _startLocationTracking();
 
         // Fallback: if camera idle doesn't trigger promptly, ensure we render once
         // with the current camera center/zoom so sizes are accurate enough.
@@ -334,17 +369,117 @@ class MapboxMapViewModel extends ChangeNotifier {
     }
   }
 
+  /// Start real-time location tracking for smooth offline/online location updates
+  Future<void> _startLocationTracking() async {
+    if (_isLocationTrackingActive || _locationStreamSubscription != null) {
+      debugPrint('[MapViewModel] Location tracking already active');
+      return;
+    }
+
+    try {
+      // Check if real-time tracking is available
+      final isAvailable = await _locationService.isRealTimeTrackingAvailable();
+      if (!isAvailable) {
+        debugPrint('[MapViewModel] Real-time location tracking not available');
+        return;
+      }
+
+      // Start the location service tracking
+      await _locationService.startLocationTracking();
+
+      // Listen to location updates
+      _locationStreamSubscription = _locationService.locationStream.listen(
+        (locator.Position position) {
+          debugPrint(
+            '[MapViewModel] Received location update: ${position.latitude}, ${position.longitude}',
+          );
+
+          // Update the map's location component with new position
+          _updateMapLocationComponent(position);
+
+          // Optionally notify listeners for UI updates
+          notifyListeners();
+        },
+        onError: (error) {
+          debugPrint('[MapViewModel] Location stream error: $error');
+        },
+      );
+
+      _isLocationTrackingActive = true;
+      debugPrint('[MapViewModel] Real-time location tracking started');
+    } catch (e) {
+      debugPrint('[MapViewModel] Error starting location tracking: $e');
+    }
+  }
+
+  /// Update the map's location component with new position
+  /// This ensures smooth location updates even when offline
+  Future<void> _updateMapLocationComponent(locator.Position position) async {
+    if (mapboxMap == null) return;
+
+    try {
+      // The Mapbox location component should automatically update if it's enabled
+      // and receiving location updates from the system. We just ensure it stays enabled.
+
+      // Update our internal location state
+      latitude = position.latitude;
+      longitude = position.longitude;
+
+      debugPrint(
+        '[MapViewModel] Location component updated with position: ${position.latitude}, ${position.longitude}',
+      );
+    } catch (e) {
+      debugPrint('[MapViewModel] Error updating location component: $e');
+    }
+  }
+
+  /// Stop real-time location tracking
+  Future<void> _stopLocationTracking() async {
+    if (_locationStreamSubscription != null) {
+      await _locationStreamSubscription!.cancel();
+      _locationStreamSubscription = null;
+    }
+
+    await _locationService.stopLocationTracking();
+    _isLocationTrackingActive = false;
+    debugPrint('[MapViewModel] Location tracking stopped');
+  }
+
+  /// Check if location tracking is currently active
+  bool get isLocationTrackingActive => _isLocationTrackingActive;
+
+  /// Restart location tracking (useful for refreshing location services)
+  Future<void> restartLocationTracking() async {
+    debugPrint('[MapViewModel] Restarting location tracking...');
+    await _stopLocationTracking();
+    await _startLocationTracking();
+  }
+
   // Update pending radius from UI slider and refresh helper circle. Auto-adjust center if needed.
   Future<void> setPendingRadius(double meters) async {
     pendingRadiusMeters = meters.clamp(1.0, 1000.0);
     // Use the helper's own latitude for accurate visual radius
     final lat = selectedPoint?.coordinates.lat.toDouble();
-    final mpp = await metersToPixelsAtCurrentLocationAndZoom(
-      latitudeOverride: lat,
-    );
+
+    // Use consistent calculation method with existing geofences
+    double mpp = 0.0;
+    if (lat != null && mapboxMap != null) {
+      final zoomLevel = await currentZoomLevel();
+      mpp = await mapboxMap!.projection.getMetersPerPixelAtLatitude(
+        lat,
+        zoomLevel,
+      );
+    }
+
+    // Fallback to camera-center method if geofence-specific calculation fails
+    if (mpp <= 0) {
+      mpp = await metersToPixelsAtCurrentLocationAndZoom(latitudeOverride: lat);
+    }
+
     if (mpp > 0) {
       _currentHelperRadiusInPixels = pendingRadiusMeters / mpp;
     }
+
     if (selectedPoint != null) {
       // Auto-adjust to avoid overlaps for the new radius
       selectedPoint = await _autoAdjustCenter(
@@ -774,9 +909,23 @@ class MapboxMapViewModel extends ChangeNotifier {
     // Update active helper if it's placed
     if (geofenceZoneHelper != null && geofenceZoneHelperIds.isNotEmpty) {
       final helperLat = selectedPoint?.coordinates.lat.toDouble();
-      final mppHelper = await metersToPixelsAtCurrentLocationAndZoom(
-        latitudeOverride: helperLat,
-      );
+
+      // Use consistent calculation method with existing geofences
+      double mppHelper = 0.0;
+      if (helperLat != null) {
+        final camera = await mapboxMap!.getCameraState();
+        mppHelper = await mapboxMap!.projection.getMetersPerPixelAtLatitude(
+          helperLat,
+          camera.zoom,
+        );
+      }
+
+      // Fallback to camera-center method if helper-specific calculation fails
+      if (mppHelper <= 0) {
+        mppHelper = await metersToPixelsAtCurrentLocationAndZoom(
+          latitudeOverride: helperLat,
+        );
+      }
       if (mppHelper == 0.0) {
         debugPrint("Cannot update helper radius: metersPerPixel is 0.");
       } else {
@@ -996,8 +1145,22 @@ class MapboxMapViewModel extends ChangeNotifier {
     latitude = point.coordinates.lat;
     longitude = point.coordinates.lng;
 
-    // Calculate radius in pixels for the current zoom level
-    final metersPerPixel = await metersToPixelsAtCurrentLocationAndZoom();
+    // Calculate radius in pixels for the current zoom level using geofence-specific latitude
+    double metersPerPixel = 0.0;
+    try {
+      final camera = await mapboxMap!.getCameraState();
+      metersPerPixel = await mapboxMap!.projection.getMetersPerPixelAtLatitude(
+        point.coordinates.lat.toDouble(),
+        camera.zoom,
+      );
+    } catch (e) {
+      debugPrint("Error getting meters per pixel at geofence latitude: $e");
+    }
+
+    // Fallback to camera-center method if geofence-specific calculation fails
+    if (metersPerPixel <= 0) {
+      metersPerPixel = await metersToPixelsAtCurrentLocationAndZoom();
+    }
     if (metersPerPixel == 0.0) {
       debugPrint("Cannot display existing geofence: metersPerPixel is 0.");
       return;
@@ -1037,6 +1200,63 @@ class MapboxMapViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Manually fly to user's current or last known location
+  /// This can be called when user taps a "locate me" button
+  Future<bool> flyToUserLocation() async {
+    if (mapboxMap == null) {
+      debugPrint('[MapViewModel] Cannot fly to user location: map not ready');
+      return false;
+    }
+
+    locator.Position? userPosition;
+    try {
+      debugPrint('[MapViewModel] Manually getting user location for flyTo...');
+      userPosition = await _locationService.getCurrentLocation();
+    } catch (e) {
+      debugPrint(
+        '[MapViewModel] Error getting current location for manual flyTo: $e',
+      );
+      // Try cached location
+      try {
+        userPosition = await _locationService.getLastKnownLocation();
+        if (userPosition != null) {
+          debugPrint('[MapViewModel] Using cached location for manual flyTo');
+        }
+      } catch (cacheError) {
+        debugPrint(
+          '[MapViewModel] Error getting cached location for manual flyTo: $cacheError',
+        );
+      }
+    }
+
+    if (userPosition != null) {
+      try {
+        await mapboxMap!.flyTo(
+          CameraOptions(
+            center: Point(
+              coordinates: Position(
+                userPosition.longitude,
+                userPosition.latitude,
+              ),
+            ),
+            zoom: 16,
+            bearing: 0,
+            pitch: 0,
+          ),
+          MapAnimationOptions(duration: 1500),
+        );
+        debugPrint('[MapViewModel] Manual flyTo user location completed');
+        return true;
+      } catch (e) {
+        debugPrint('[MapViewModel] Error during manual flyTo: $e');
+      }
+    } else {
+      debugPrint('[MapViewModel] No location available for manual flyTo');
+    }
+
+    return false;
+  }
+
   CircleAnnotationManager? getGeofenceZonePicker() => geofenceZoneHelper;
   CircleAnnotationManager? getGeofenceZoneSymbol() => geofenceZoneSymbol;
 
@@ -1049,6 +1269,9 @@ class MapboxMapViewModel extends ChangeNotifier {
     // Stop any running timers
     _debugTimer?.cancel();
     _debugTimer = null;
+
+    // Stop location tracking
+    _stopLocationTracking();
 
     // IMPORTANT: Do NOT dispose the singleton geofencing service here.
     // Instead, unregister this view model so the service knows not to use it.
