@@ -630,9 +630,15 @@ class GeofencingService {
 
       final zoomLevel = await _mapViewModel!.currentZoomLevel();
 
-      // Get the conversion factor
-      final metersPerPixelConversionFactor =
-          await _mapViewModel!.metersToPixelsAtCurrentLocationAndZoom();
+      // Get the conversion factor using the specific geofence latitude for consistency
+      // This ensures existing and new geofences use the same calculation method
+      final metersPerPixelConversionFactor = await _mapViewModel!
+          .mapboxMap!
+          .projection
+          .getMetersPerPixelAtLatitude(
+            geometry.coordinates.lat.toDouble(),
+            zoomLevel,
+          );
 
       if (metersPerPixelConversionFactor == 0.0) {
         developer.log(

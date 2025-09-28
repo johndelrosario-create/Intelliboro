@@ -36,6 +36,10 @@ class GeofenceData {
   }
 
   Map<String, dynamic> toJson() {
+    return toMap();
+  }
+
+  Map<String, dynamic> toMap() {
     return {
       'id': id,
       'latitude': latitude,

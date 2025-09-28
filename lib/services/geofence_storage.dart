@@ -92,6 +92,13 @@ class GeofenceStorage {
     }
   }
 
+  /// Clear all geofences from storage.
+  /// This is an alias for [clearGeofences] for backward compatibility.
+  Future<void> clearAll() async {
+    return clearGeofences();
+  }
+
+  /// Clear all geofences from storage.
   Future<void> clearGeofences() async {
     try {
       final db = await _db; // Use the getter
