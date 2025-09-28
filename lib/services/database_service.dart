@@ -8,7 +8,7 @@ class DatabaseService {
   static final DatabaseService _instance = DatabaseService._constructor();
   static Database? _mainIsolateDatabase; // Renamed for clarity
   static const String _dbName = 'intelliboro.db';
-  static const int _dbVersion = 9;
+  static const int _dbVersion = 10;
   static const String _geofencesTableName = 'geofences';
   static const String _tasksTableName = 'tasks';
   static const String _notificationHistoryTableName = 'notification_history';
@@ -128,8 +128,8 @@ class DatabaseService {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         taskName TEXT NOT NULL,
         taskPriority INTEGER NOT NULL,
-        taskTime TEXT NOT NULL,
-        taskDate TEXT NOT NULL,
+        taskTime TEXT,
+        taskDate TEXT,
         isRecurring INTEGER NOT NULL,
         isCompleted INTEGER NOT NULL,
         recurring_pattern TEXT,
@@ -356,6 +356,56 @@ class DatabaseService {
             '[DatabaseService] Error adding notification_sound column: $alterError',
           );
         }
+      }
+    }
+
+    if (oldVersion < 10) {
+      // Fix taskTime and taskDate columns to allow NULL values
+      // SQLite doesn't support ALTER COLUMN, so we need to recreate the table
+      try {
+        developer.log(
+          '[DatabaseService] Migrating tasks table to allow NULL taskTime/taskDate (v10)',
+        );
+
+        // Create new table with correct schema
+        await db.execute('''
+          CREATE TABLE tasks_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            taskName TEXT NOT NULL,
+            taskPriority INTEGER NOT NULL,
+            taskTime TEXT,
+            taskDate TEXT,
+            isRecurring INTEGER NOT NULL,
+            isCompleted INTEGER NOT NULL,
+            recurring_pattern TEXT,
+            geofence_id TEXT,
+            notification_sound TEXT,
+            created_at INTEGER DEFAULT (strftime('%s', 'now')),
+            FOREIGN KEY (geofence_id) REFERENCES $_geofencesTableName(id) ON DELETE SET NULL
+          )
+        ''');
+
+        // Copy data from old table to new table
+        await db.execute('''
+          INSERT INTO tasks_new (id, taskName, taskPriority, taskTime, taskDate, 
+                                isRecurring, isCompleted, recurring_pattern, geofence_id, 
+                                notification_sound, created_at)
+          SELECT id, taskName, taskPriority, taskTime, taskDate, 
+                 isRecurring, isCompleted, recurring_pattern, geofence_id, 
+                 notification_sound, created_at
+          FROM $_tasksTableName
+        ''');
+
+        // Drop old table and rename new table
+        await db.execute('DROP TABLE $_tasksTableName');
+        await db.execute('ALTER TABLE tasks_new RENAME TO $_tasksTableName');
+
+        developer.log(
+          '[DatabaseService] Successfully migrated tasks table to v10',
+        );
+      } catch (e) {
+        developer.log('[DatabaseService] Error migrating tasks table: $e');
+        // If migration fails, continue - the new schema in _createAllTables will be used for new installs
       }
     }
 
