@@ -34,10 +34,43 @@ class _MapboxMapViewState extends State<MapboxMapView> {
                       onMapCreated: mapViewModel.onMapCreated,
                       onLongTapListener: mapViewModel.onLongTap,
                       onZoomListener: mapViewModel.onZoom,
-                onMapIdleListener: mapViewModel.onCameraIdle,
+                      onMapIdleListener: mapViewModel.onCameraIdle,
                     ),
                     if (!mapViewModel.isMapReady)
                       const Center(child: CircularProgressIndicator()),
+                    if (mapViewModel.mapInitializationError != null)
+                      Center(
+                        child: Card(
+                          color: Colors.red.shade50,
+                          margin: const EdgeInsets.all(24),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'Map Error',
+                                  style: Theme.of(context).textTheme.titleMedium
+                                      ?.copyWith(color: Colors.red),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  mapViewModel.mapInitializationError ?? '',
+                                  style: const TextStyle(color: Colors.black87),
+                                ),
+                                const SizedBox(height: 8),
+                                ElevatedButton(
+                                  onPressed: () async {
+                                    // Retry by reloading saved geofences and re-running portions of setup
+                                    await mapViewModel.refreshSavedGeofences();
+                                  },
+                                  child: const Text('Retry'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 );
               },
@@ -62,15 +95,18 @@ class _MapboxMapViewState extends State<MapboxMapView> {
                           isExpanded: true,
                           value: _selectedGeofenceId,
                           hint: const Text('Select geofence to edit'),
-                          items: mapViewModel.savedGeofences
-                              .map((g) => DropdownMenuItem<String>(
-                                    value: g.id,
-                                    child: Text(
-                                      '${g.task ?? g.id} • ${g.radiusMeters.toStringAsFixed(0)}m',
-                                      overflow: TextOverflow.ellipsis,
+                          items:
+                              mapViewModel.savedGeofences
+                                  .map(
+                                    (g) => DropdownMenuItem<String>(
+                                      value: g.id,
+                                      child: Text(
+                                        '${g.task ?? g.id} • ${g.radiusMeters.toStringAsFixed(0)}m',
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
                                     ),
-                                  ))
-                              .toList(),
+                                  )
+                                  .toList(),
                           onChanged: (val) async {
                             setState(() {
                               _selectedGeofenceId = val;
@@ -83,15 +119,17 @@ class _MapboxMapViewState extends State<MapboxMapView> {
                       ),
                       const SizedBox(width: 8),
                       ElevatedButton(
-                        onPressed: _selectedGeofenceId == null
-                            ? null
-                            : () async {
-                                // Re-load to ensure helper is visible if user changed selection
-                                await mapViewModel.beginEditGeofence(
-                                    _selectedGeofenceId!);
-                              },
+                        onPressed:
+                            _selectedGeofenceId == null
+                                ? null
+                                : () async {
+                                  // Re-load to ensure helper is visible if user changed selection
+                                  await mapViewModel.beginEditGeofence(
+                                    _selectedGeofenceId!,
+                                  );
+                                },
                         child: const Text('Load'),
-                      )
+                      ),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -99,14 +137,19 @@ class _MapboxMapViewState extends State<MapboxMapView> {
                 if (mapViewModel.isEditing) ...[
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.secondaryContainer,
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       'Editing: ' +
-                          (mapViewModel.editingGeofence?.task ?? mapViewModel.editingGeofenceId ?? ''),
+                          (mapViewModel.editingGeofence?.task ??
+                              mapViewModel.editingGeofenceId ??
+                              ''),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ),
@@ -121,25 +164,29 @@ class _MapboxMapViewState extends State<MapboxMapView> {
                   min: 1,
                   max: 1000,
                   divisions: 999,
-                  label: '${mapViewModel.pendingRadiusMeters.toStringAsFixed(0)} m',
+                  label:
+                      '${mapViewModel.pendingRadiusMeters.toStringAsFixed(0)} m',
                   onChanged: (v) => mapViewModel.setPendingRadius(v),
                 ),
                 const SizedBox(height: 4),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: mapViewModel.isEditing
-                        ? null
-                        : () async {
-                      // Show dialog to get task name
-                      final taskName = await _showTaskNameDialog(context);
-                      if (taskName != null && taskName.isNotEmpty) {
-                        mapViewModel.createGeofenceAtSelectedPoint(
-                          context,
-                          taskName: taskName, // Pass the task name
-                        );
-                      }
-                    },
+                    onPressed:
+                        mapViewModel.isEditing
+                            ? null
+                            : () async {
+                              // Show dialog to get task name
+                              final taskName = await _showTaskNameDialog(
+                                context,
+                              );
+                              if (taskName != null && taskName.isNotEmpty) {
+                                mapViewModel.createGeofenceAtSelectedPoint(
+                                  context,
+                                  taskName: taskName, // Pass the task name
+                                );
+                              }
+                            },
                     child: const Text("Add geofence"),
                   ),
                 ),
@@ -147,11 +194,12 @@ class _MapboxMapViewState extends State<MapboxMapView> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: mapViewModel.isEditing
-                        ? () async {
-                            await mapViewModel.saveEditedGeofence(context);
-                          }
-                        : null,
+                    onPressed:
+                        mapViewModel.isEditing
+                            ? () async {
+                              await mapViewModel.saveEditedGeofence(context);
+                            }
+                            : null,
                     child: const Text('Save edits'),
                   ),
                 ),
