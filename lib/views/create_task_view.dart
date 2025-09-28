@@ -789,6 +789,44 @@ class _TaskCreationState extends State<TaskCreation> {
 
                   // Determine the geofence ID to use (if any)
                   String? geofenceIdForTask = _selectedGeofenceId;
+                  debugPrint(
+                    '[CreateTaskView] geofenceIdForTask: $geofenceIdForTask',
+                  );
+
+                  // Validate that either date/time OR geofence is provided
+                  final hasDateTime =
+                      selectedDate != null || selectedTime != null;
+                  final hasGeofence =
+                      geofenceIdForTask != null ||
+                      _mapViewModel.selectedPoint != null;
+
+                  debugPrint(
+                    '[CreateTaskView] hasDateTime: $hasDateTime, hasGeofence: $hasGeofence (selectedGeofenceId: $geofenceIdForTask, selectedPoint: ${_mapViewModel.selectedPoint})',
+                  );
+
+                  if (!hasDateTime && !hasGeofence) {
+                    showDialog(
+                      context: context,
+                      builder:
+                          (context) => AlertDialog(
+                            title: const Text('Task Timing Required'),
+                            content: const Text(
+                              'Every task needs either:\n\n'
+                              '• A specific date and/or time (for time-based reminders)\n'
+                              'OR\n'
+                              '• A geofence location (for location-based reminders)\n\n'
+                              'Please set one of these options to continue.',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.of(context).pop(),
+                                child: const Text('OK'),
+                              ),
+                            ],
+                          ),
+                    );
+                    return;
+                  }
 
                   // Persist default notification sound preference
                   try {
@@ -862,10 +900,26 @@ class _TaskCreationState extends State<TaskCreation> {
                       );
                     } else if (_mapViewModel.selectedPoint != null) {
                       try {
-                        await _mapViewModel.createGeofenceAtSelectedPoint(
-                          context,
-                          taskName: taskName,
-                        );
+                        final createdGeofenceId = await _mapViewModel
+                            .createGeofenceAtSelectedPoint(
+                              context,
+                              taskName: taskName,
+                            );
+
+                        // Set the newly created geofence as selected
+                        if (createdGeofenceId != null) {
+                          debugPrint(
+                            '[CreateTaskView] Setting _selectedGeofenceId to: $createdGeofenceId',
+                          );
+                          setState(() {
+                            _selectedGeofenceId = createdGeofenceId;
+                          });
+                        } else {
+                          debugPrint(
+                            '[CreateTaskView] Warning: createGeofenceAtSelectedPoint returned null',
+                          );
+                        }
+
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
