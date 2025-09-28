@@ -306,32 +306,86 @@ class _TaskListViewState extends State<TaskListView>
     }
   }
 
-  String _getTimeUntilTask(TaskModel task) {
-    final now = DateTime.now();
-    final taskDateTime = DateTime(
-      task.taskDate?.year ?? 0,
-      task.taskDate?.month ?? 1,
-      task.taskDate?.day ?? 1,
-      task.taskTime?.hour ?? 0,
-      task.taskTime?.minute ?? 0,
-    );
+  IconData _getTaskTriggerIcon(TaskModel task) {
+    final hasTime = task.taskTime != null && task.taskDate != null;
+    final hasGeofence = task.geofenceId != null;
 
-    final difference = taskDateTime.difference(now);
-
-    if (difference.isNegative) {
-      final overdue = -difference.inHours;
-      if (overdue < 24) {
-        return 'Overdue by ${overdue}h';
-      } else {
-        return 'Overdue by ${overdue ~/ 24}d';
-      }
-    } else if (difference.inHours < 1) {
-      return 'Due in ${difference.inMinutes}m';
-    } else if (difference.inHours < 24) {
-      return 'Due in ${difference.inHours}h';
+    if (hasTime && hasGeofence) {
+      // Both time and location triggers - use a hybrid icon
+      return Icons
+          .schedule_rounded; // Show time icon as primary, location is indicated in text
+    } else if (hasGeofence) {
+      // Only location trigger
+      return Icons.place_rounded;
+    } else if (hasTime) {
+      // Only time trigger
+      return Icons.schedule_rounded;
     } else {
-      return 'Due in ${difference.inDays}d';
+      return Icons.help_outline_rounded;
     }
+  }
+
+  String _getTaskTriggerText(TaskModel task) {
+    final hasTime = task.taskTime != null && task.taskDate != null;
+    final hasGeofence = task.geofenceId != null;
+
+    if (hasTime && hasGeofence) {
+      // Both time and location triggers
+      return '${task.taskTime!.format(context)} • ${task.taskDate!.day}/${task.taskDate!.month}/${task.taskDate!.year} + Location';
+    } else if (hasGeofence) {
+      // Only location trigger
+      return 'Location-based task';
+    } else if (hasTime) {
+      // Only time trigger
+      return '${task.taskTime!.format(context)} • ${task.taskDate!.day}/${task.taskDate!.month}/${task.taskDate!.year}';
+    } else {
+      return 'No trigger set';
+    }
+  }
+
+  String _getTimeUntilTask(TaskModel task) {
+    final hasTime = task.taskTime != null && task.taskDate != null;
+    final hasGeofence = task.geofenceId != null;
+
+    // For time-based tasks (with or without geofence), show time countdown
+    if (hasTime) {
+      final now = DateTime.now();
+      final taskDateTime = DateTime(
+        task.taskDate!.year,
+        task.taskDate!.month,
+        task.taskDate!.day,
+        task.taskTime!.hour,
+        task.taskTime!.minute,
+      );
+
+      final difference = taskDateTime.difference(now);
+
+      String timeText;
+      if (difference.isNegative) {
+        final overdue = -difference.inHours;
+        if (overdue < 24) {
+          timeText = 'Overdue by ${overdue}h';
+        } else {
+          timeText = 'Overdue by ${overdue ~/ 24}d';
+        }
+      } else if (difference.inHours < 1) {
+        timeText = 'Due in ${difference.inMinutes}m';
+      } else if (difference.inHours < 24) {
+        timeText = 'Due in ${difference.inHours}h';
+      } else {
+        timeText = 'Due in ${difference.inDays}d';
+      }
+
+      // Add location indicator if it also has geofence
+      return hasGeofence ? '$timeText + 📍' : timeText;
+    }
+
+    // Handle geofence-only tasks
+    if (hasGeofence) {
+      return 'Location-based';
+    }
+
+    return 'No schedule';
   }
 
   Widget _buildTaskCard(TaskModel task) {
@@ -561,20 +615,19 @@ class _TaskListViewState extends State<TaskListView>
                   child: Row(
                     children: [
                       Icon(
-                        Icons.schedule_rounded,
+                        _getTaskTriggerIcon(task),
                         size: 16,
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
                       const SizedBox(width: 8),
-                      Text(
-                        task.taskTime != null && task.taskDate != null
-                            ? '${task.taskTime!.format(context)} • ${task.taskDate!.day}/${task.taskDate!.month}/${task.taskDate!.year}'
-                            : 'No time set',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
+                      Expanded(
+                        child: Text(
+                          _getTaskTriggerText(task),
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
                         ),
                       ),
-                      const Spacer(),
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 8,
@@ -664,14 +717,17 @@ class _TaskListViewState extends State<TaskListView>
                       ),
                     IconButton.filledTonal(
                       onPressed: () async {
-                        // Toggle completion status and update DB
+                        // Toggle completion status with proper cleanup
                         try {
-                          final updated = task.copyWith(
-                            isCompleted: !task.isCompleted,
-                          );
-                          await TaskRepository().updateTask(updated);
-                          // Notify service that tasks changed so lists refresh
-                          _taskTimerService.tasksChanged.value = true;
+                          if (!task.isCompleted) {
+                            // Mark as completed with proper alarm/notification cleanup
+                            await _taskTimerService.completeTaskManually(task);
+                          } else {
+                            // Mark as incomplete (simple database update)
+                            final updated = task.copyWith(isCompleted: false);
+                            await TaskRepository().updateTask(updated);
+                            _taskTimerService.tasksChanged.value = true;
+                          }
                         } catch (e) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
@@ -1053,6 +1109,7 @@ class _TaskListViewState extends State<TaskListView>
                 );
               }
 
+              // Show empty state only if there are truly no tasks at all
               if (_tasks.isEmpty) {
                 return _buildEmptyState();
               }
@@ -1074,10 +1131,13 @@ class _TaskListViewState extends State<TaskListView>
               final completedTasks =
                   _tasks.where((t) => t.isCompleted).toList();
 
+              // If we have tasks but all are completed, still show the normal layout
               return RefreshIndicator(
                 onRefresh: _loadTasks,
                 child: CustomScrollView(
                   slivers: [
+                    // Always show some top spacing
+                    const SliverToBoxAdapter(child: SizedBox(height: 8)),
                     if (activeTasks.isNotEmpty) ...[
                       SliverToBoxAdapter(
                         child: Padding(
@@ -1195,6 +1255,41 @@ class _TaskListViewState extends State<TaskListView>
                             ),
                           );
                         }, childCount: _taskTimerService.pausedTasks.length),
+                      ),
+                    ],
+                    // Show a message when there are no active tasks
+                    if (activeTasks.isEmpty && completedTasks.isNotEmpty) ...[
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 32, 16, 8),
+                          child: Center(
+                            child: Column(
+                              children: [
+                                Icon(
+                                  Icons.celebration_rounded,
+                                  size: 48,
+                                  color: theme.colorScheme.primary,
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'All tasks completed! 🎉',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: theme.colorScheme.primary,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Great job! Create a new task to keep being productive.',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
                     ],
                     if (completedTasks.isNotEmpty) ...[
