@@ -1,7 +1,5 @@
 import 'dart:developer' as developer;
-import 'package:flutter/material.dart';
 import 'package:intelliboro/model/task_model.dart';
-import 'package:intelliboro/repository/task_repository.dart';
 import 'package:intelliboro/services/geofence_storage.dart';
 import 'package:sqflite/sqflite.dart';
 
@@ -23,31 +21,31 @@ class PriorityService {
         '[PriorityService] Finding highest priority task for geofence: $geofenceId',
       );
 
-      // Get geofence details to find associated task name
-      final geofenceStorage = GeofenceStorage(db: db);
-      final geofenceData = await geofenceStorage.getGeofenceById(geofenceId);
-
-      if (geofenceData == null) {
-        developer.log(
-          '[PriorityService] No geofence found with ID: $geofenceId',
-        );
-        return null;
-      }
-
-      final taskName = geofenceData.task;
-      if (taskName == null || taskName.isEmpty) {
-        developer.log(
-          '[PriorityService] No task associated with geofence: $geofenceId',
-        );
-        return null;
-      }
-
-      // Get all tasks with this name (there might be multiple instances)
-      final allTasks = await _getTasksByName(db, taskName);
+      // Get all tasks directly associated with this geofence ID
+      final allTasks = await _getTasksByGeofenceId(db, geofenceId);
 
       if (allTasks.isEmpty) {
-        developer.log('[PriorityService] No tasks found with name: $taskName');
-        return null;
+        developer.log(
+          '[PriorityService] No tasks found for geofence: $geofenceId',
+        );
+
+        // Fallback: check for legacy tasks using the old task name approach
+        final geofenceStorage = GeofenceStorage(db: db);
+        final geofenceData = await geofenceStorage.getGeofenceById(geofenceId);
+
+        if (geofenceData?.task != null && geofenceData!.task!.isNotEmpty) {
+          final legacyTasks = await _getTasksByName(db, geofenceData.task!);
+          if (legacyTasks.isNotEmpty) {
+            developer.log(
+              '[PriorityService] Found ${legacyTasks.length} legacy tasks for geofence: $geofenceId',
+            );
+            allTasks.addAll(legacyTasks);
+          }
+        }
+
+        if (allTasks.isEmpty) {
+          return null;
+        }
       }
 
       // Filter to only include non-completed tasks
@@ -55,7 +53,7 @@ class PriorityService {
 
       if (activeTasks.isEmpty) {
         developer.log(
-          '[PriorityService] All tasks with name "$taskName" are completed',
+          '[PriorityService] All tasks for geofence "$geofenceId" are completed',
         );
         return null;
       }
@@ -129,7 +127,30 @@ class PriorityService {
     }
   }
 
-  /// Helper method to get tasks by name
+  /// Helper method to get tasks by geofence ID
+  Future<List<TaskModel>> _getTasksByGeofenceId(
+    Database db,
+    String geofenceId,
+  ) async {
+    try {
+      final List<Map<String, dynamic>> maps = await db.query(
+        'tasks',
+        where: 'geofence_id = ?',
+        whereArgs: [geofenceId],
+      );
+
+      return maps.map((map) => TaskModel.fromMap(map)).toList();
+    } catch (e, stackTrace) {
+      developer.log(
+        '[PriorityService] Error getting tasks by geofence ID: $geofenceId',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return [];
+    }
+  }
+
+  /// Helper method to get tasks by name (for legacy support)
   Future<List<TaskModel>> _getTasksByName(Database db, String taskName) async {
     try {
       final List<Map<String, dynamic>> maps = await db.query(
@@ -138,20 +159,7 @@ class PriorityService {
         whereArgs: [taskName],
       );
 
-      return maps.map((map) {
-        return TaskModel(
-          id: map['id'] as int?,
-          taskName: map['taskName'] as String,
-          taskPriority: map['taskPriority'] as int,
-          taskTime: TimeOfDay(
-            hour: int.parse((map['taskTime'] as String).split(':')[0]),
-            minute: int.parse((map['taskTime'] as String).split(':')[1]),
-          ),
-          taskDate: DateTime.parse(map['taskDate'] as String),
-          isRecurring: (map['isRecurring'] as int) == 1,
-          isCompleted: (map['isCompleted'] as int) == 1,
-        );
-      }).toList();
+      return maps.map((map) => TaskModel.fromMap(map)).toList();
     } catch (e, stackTrace) {
       developer.log(
         '[PriorityService] Error getting tasks by name: $taskName',
@@ -193,11 +201,11 @@ class PriorityService {
   String _getUrgencyText(TaskModel task) {
     final now = DateTime.now();
     final taskDateTime = DateTime(
-      task.taskDate.year,
-      task.taskDate.month,
-      task.taskDate.day,
-      task.taskTime.hour,
-      task.taskTime.minute,
+      task.taskDate?.year ?? 0,
+      task.taskDate?.month ?? 1,
+      task.taskDate?.day ?? 1,
+      task.taskTime?.hour ?? 0,
+      task.taskTime?.minute ?? 0,
     );
 
     final hoursUntilTask = taskDateTime.difference(now).inHours;

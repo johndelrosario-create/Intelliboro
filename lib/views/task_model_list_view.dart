@@ -120,11 +120,11 @@ class _TaskModelListViewState extends State<TaskModelListView> {
   String _getTimeUntilTask(TaskModel task) {
     final now = DateTime.now();
     final taskDateTime = DateTime(
-      task.taskDate.year,
-      task.taskDate.month,
-      task.taskDate.day,
-      task.taskTime.hour,
-      task.taskTime.minute,
+      task.taskDate?.year ?? 0,
+      task.taskDate?.month ?? 1,
+      task.taskDate?.day ?? 1,
+      task.taskTime?.hour ?? 0,
+      task.taskTime?.minute ?? 0,
     );
 
     final difference = taskDateTime.difference(now);
@@ -197,7 +197,9 @@ class _TaskModelListViewState extends State<TaskModelListView> {
                   Icon(Icons.schedule, size: 14, color: Colors.grey[600]),
                   const SizedBox(width: 4),
                   Text(
-                    '${task.taskTime.format(context)} on ${task.taskDate.day}/${task.taskDate.month}/${task.taskDate.year}',
+                    task.taskTime != null && task.taskDate != null
+                        ? '${task.taskTime!.format(context)} on ${task.taskDate!.day}/${task.taskDate!.month}/${task.taskDate!.year}'
+                        : 'No time set',
                     style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                   ),
                 ],
@@ -350,18 +352,18 @@ class _TaskModelListViewState extends State<TaskModelListView> {
                 setState(() {
                   _tasks.sort((a, b) {
                     final aDateTime = DateTime(
-                      a.taskDate.year,
-                      a.taskDate.month,
-                      a.taskDate.day,
-                      a.taskTime.hour,
-                      a.taskTime.minute,
+                      a.taskDate?.year ?? 0,
+                      a.taskDate?.month ?? 1,
+                      a.taskDate?.day ?? 1,
+                      a.taskTime?.hour ?? 0,
+                      a.taskTime?.minute ?? 0,
                     );
                     final bDateTime = DateTime(
-                      b.taskDate.year,
-                      b.taskDate.month,
-                      b.taskDate.day,
-                      b.taskTime.hour,
-                      b.taskTime.minute,
+                      b.taskDate?.year ?? 0,
+                      b.taskDate?.month ?? 1,
+                      b.taskDate?.day ?? 1,
+                      b.taskTime?.hour ?? 0,
+                      b.taskTime?.minute ?? 0,
                     );
                     return aDateTime.compareTo(bDateTime);
                   });

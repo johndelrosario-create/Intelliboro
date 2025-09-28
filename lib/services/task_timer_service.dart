@@ -8,6 +8,7 @@ import 'package:intelliboro/services/database_service.dart';
 import 'package:intelliboro/repository/task_history_repository.dart';
 import 'package:intelliboro/services/geofence_storage.dart';
 import 'package:intelliboro/services/geofencing_service.dart';
+import 'package:intelliboro/services/flutter_alarm_service.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'dart:math';
 import 'dart:convert';
@@ -132,7 +133,9 @@ class TaskTimerService extends ChangeNotifier {
   Future<bool> resumePausedTask(int id) async {
     // Do not disturb if another task is already active
     if (_activeTask != null) {
-      developer.log('[TaskTimerService] Cannot resume paused task while another task is active');
+      developer.log(
+        '[TaskTimerService] Cannot resume paused task while another task is active',
+      );
       return false;
     }
     final info = _pausedTasks[id];
@@ -150,7 +153,9 @@ class TaskTimerService extends ChangeNotifier {
       });
       _pausedTasks.remove(id);
       await _persistActiveTaskId(_activeTask!.id);
-      developer.log('[TaskTimerService] Resumed paused task id=$id name=${_activeTask!.taskName}');
+      developer.log(
+        '[TaskTimerService] Resumed paused task id=$id name=${_activeTask!.taskName}',
+      );
       notifyListeners();
       return true;
     } catch (e) {
@@ -169,7 +174,10 @@ class TaskTimerService extends ChangeNotifier {
       }
       final id = _activeTask!.id;
       if (id != null) {
-        _pausedTasks[id] = _PausedInfo(task: _activeTask!, elapsed: _elapsedTime);
+        _pausedTasks[id] = _PausedInfo(
+          task: _activeTask!,
+          elapsed: _elapsedTime,
+        );
       }
 
       // Clear UI timer and active pointers
@@ -189,10 +197,14 @@ class TaskTimerService extends ChangeNotifier {
         await prefs.remove('active_task_id');
       } catch (_) {}
 
-      developer.log('[TaskTimerService] Stored previous active task into paused list');
+      developer.log(
+        '[TaskTimerService] Stored previous active task into paused list',
+      );
       notifyListeners();
     } catch (e) {
-      developer.log('[TaskTimerService] _storeCurrentAsPausedAndClear error: $e');
+      developer.log(
+        '[TaskTimerService] _storeCurrentAsPausedAndClear error: $e',
+      );
     }
   }
 
@@ -398,6 +410,14 @@ class TaskTimerService extends ChangeNotifier {
         developer.log(
           '[TaskTimerService] Active task found: ${_activeTask!.taskName}',
         );
+
+        // Only allow time-based tasks to override current task
+        if (task.taskTime == null || task.taskDate == null) {
+          developer.log(
+            '[TaskTimerService] New task has no time/date set, defaulting to current priority',
+          );
+          return false;
+        }
 
         // Compare priorities - higher effective priority wins
         final currentPriority =
@@ -826,18 +846,18 @@ class TaskTimerService extends ChangeNotifier {
   /// Reschedule a task to a later time
   Future<void> _rescheduleTask(TaskModel task) async {
     try {
-      // Calculate new time - add 1 hour to current time or original time, whichever is later
+      // Calculate new time using the default snooze duration instead of fixed 1 hour
       final now = DateTime.now();
       final originalDateTime = DateTime(
-        task.taskDate.year,
-        task.taskDate.month,
-        task.taskDate.day,
-        task.taskTime.hour,
-        task.taskTime.minute,
+        task.taskDate!.year,
+        task.taskDate!.month,
+        task.taskDate!.day,
+        task.taskTime!.hour,
+        task.taskTime!.minute,
       );
 
       final baseTime = originalDateTime.isAfter(now) ? originalDateTime : now;
-      final newDateTime = baseTime.add(const Duration(hours: 1));
+      final newDateTime = baseTime.add(defaultSnoozeDuration);
 
       // Create updated task
       final rescheduledTask = TaskModel(
@@ -858,8 +878,21 @@ class TaskTimerService extends ChangeNotifier {
       // Update in database
       await TaskRepository().updateTask(rescheduledTask);
 
+      // Reschedule the alarm for the new time
+      try {
+        final alarmService = FlutterAlarmService();
+        await alarmService.scheduleForTask(rescheduledTask);
+        developer.log(
+          '[TaskTimerService] Rescheduled alarm for task "${task.taskName}" to ${_formatDateTime(newDateTime)}',
+        );
+      } catch (e) {
+        developer.log(
+          '[TaskTimerService] Failed to reschedule alarm for task "${task.taskName}": $e',
+        );
+      }
+
       developer.log(
-        '[TaskTimerService] Rescheduled task "${task.taskName}" to ${_formatDateTime(newDateTime)}',
+        '[TaskTimerService] Rescheduled task "${task.taskName}" to ${_formatDateTime(newDateTime)} (snooze duration: ${defaultSnoozeDuration.inMinutes} minutes)',
       );
     } catch (e, stackTrace) {
       developer.log(
@@ -875,12 +908,132 @@ class TaskTimerService extends ChangeNotifier {
     await _rescheduleTask(task);
   }
 
+  /// Complete a task manually (called from UI)
+  /// This cancels alarms and notifications, but doesn't save to history since no timer was used
+  Future<void> completeTaskManually(TaskModel task) async {
+    try {
+      // Cancel any pending alarms and notifications for this task first
+      if (task.id != null) {
+        try {
+          // Cancel alarm service notifications
+          final alarmService = FlutterAlarmService();
+          await alarmService.cancelForTaskId(task.id!);
+          developer.log(
+            '[TaskTimerService] Cancelled alarm for manually completed task: ${task.taskName} (id=${task.id})',
+          );
+        } catch (e) {
+          developer.log(
+            '[TaskTimerService] Warning: Failed to cancel alarm for task ${task.id}: $e',
+          );
+        }
+
+        try {
+          // Cancel any persistent notifications for this task
+          await notificationPlugin.cancel(task.id!);
+          // Also cancel potential notification IDs that might be used (timer feedback, etc.)
+          await notificationPlugin.cancel(99999); // Timer started notification
+          developer.log(
+            '[TaskTimerService] Cancelled notifications for manually completed task: ${task.taskName} (id=${task.id})',
+          );
+        } catch (e) {
+          developer.log(
+            '[TaskTimerService] Warning: Failed to cancel notifications for task ${task.id}: $e',
+          );
+        }
+      }
+
+      // Handle recurring tasks vs non-recurring tasks
+      if (task.isRecurring) {
+        try {
+          final next = task.getNextOccurrence(DateTime.now());
+          if (next != null) {
+            // Update the existing task record to the next occurrence and keep it active (not completed)
+            final updatedTask = task.copyWith(
+              id: task.id,
+              taskDate: DateTime(next.year, next.month, next.day),
+              isCompleted: false,
+            );
+            await TaskRepository().updateTask(updatedTask);
+            developer.log(
+              '[TaskTimerService] Recurring task updated to next occurrence: ${updatedTask.taskName} -> ${_formatDateTime(next)}',
+            );
+          } else {
+            // No next occurrence: mark as completed as a fallback
+            final completedTask = task.copyWith(isCompleted: true);
+            await TaskRepository().updateTask(completedTask);
+            developer.log(
+              '[TaskTimerService] Recurring task had no next occurrence; marked completed: ${task.taskName}',
+            );
+          }
+        } catch (e, st) {
+          developer.log(
+            '[TaskTimerService] Error handling recurring update: $e',
+            error: e,
+            stackTrace: st,
+          );
+          // As a safe fallback, mark task completed so it's removed from active list
+          final completedTask = task.copyWith(isCompleted: true);
+          await TaskRepository().updateTask(completedTask);
+        }
+      } else {
+        // Non-recurring: mark task as completed so it is removed from active list
+        final completedTask = task.copyWith(isCompleted: true);
+        await TaskRepository().updateTask(completedTask);
+        developer.log(
+          '[TaskTimerService] Manually marked task as completed: ${task.taskName}',
+        );
+      }
+
+      // Signal listeners that persisted task records changed (so UI can refresh lists)
+      try {
+        tasksChanged.value = true;
+      } catch (_) {}
+    } catch (e, stackTrace) {
+      developer.log(
+        '[TaskTimerService] Error manually completing task',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow; // Let the UI handle the error
+    }
+  }
+
   /// Mark a task as completed in the database and save to task history
   Future<void> _markTaskCompleted(
     TaskModel task,
     Duration completionTime,
   ) async {
     try {
+      // Cancel any pending alarms and notifications for this task first
+      if (task.id != null) {
+        try {
+          // Cancel alarm service notifications
+          final alarmService = FlutterAlarmService();
+          await alarmService.cancelForTaskId(task.id!);
+          developer.log(
+            '[TaskTimerService] Cancelled alarm for completed task: ${task.taskName} (id=${task.id})',
+          );
+        } catch (e) {
+          developer.log(
+            '[TaskTimerService] Warning: Failed to cancel alarm for task ${task.id}: $e',
+          );
+        }
+
+        try {
+          // Cancel any persistent notifications for this task
+          await notificationPlugin.cancel(task.id!);
+          // Also cancel potential notification IDs that might be used (timer feedback, etc.)
+          await notificationPlugin.cancel(99999); // Timer started notification
+          developer.log(
+            '[TaskTimerService] Cancelled notifications for completed task: ${task.taskName} (id=${task.id})',
+          );
+        } catch (e) {
+          developer.log(
+            '[TaskTimerService] Warning: Failed to cancel notifications for task ${task.id}: $e',
+          );
+        }
+      }
+
       // Save to task history first (so we have a history entry even if update fails)
       await _saveTaskHistory(task, completionTime);
 
