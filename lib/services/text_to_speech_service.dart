@@ -30,11 +30,12 @@ class TextToSpeechService {
   /// Initialize the TTS service
   Future<void> init() async {
     if (_isInitialized) {
-      developer.log('[TextToSpeechService] Already initialized');
+      developer.log('[TextToSpeechService] Already initialized - skipping');
       return;
     }
 
     try {
+      developer.log('[TextToSpeechService] Starting initialization...');
       _flutterTts = FlutterTts();
 
       // Load settings from SharedPreferences
@@ -51,6 +52,9 @@ class TextToSpeechService {
         error: e,
         stackTrace: stackTrace,
       );
+      // Reset state on failure
+      _isInitialized = false;
+      _flutterTts = null;
       rethrow;
     }
   }
@@ -149,6 +153,14 @@ class TextToSpeechService {
     }
   }
 
+  // Getters and setters for configuration
+  bool get isEnabled => _isEnabled;
+  bool get isSpeaking => _isSpeaking;
+  double get speechRate => _speechRate;
+  double get volume => _volume;
+  double get pitch => _pitch;
+  String get language => _language;
+
   /// Create a natural-sounding notification text
   String _createNotificationText(String taskName, String context) {
     // Clean up the task name
@@ -156,8 +168,6 @@ class TextToSpeechService {
 
     // Create contextual messages based on the type of context
     switch (context.toLowerCase()) {
-      case 'priority':
-        return cleanTaskName;
       case 'location':
       case 'geofence':
         return "You have task: $cleanTaskName";
@@ -165,8 +175,6 @@ class TextToSpeechService {
         return "Time reminder: $cleanTaskName";
       case 'urgent':
         return "Urgent task: $cleanTaskName";
-      case 'snooze':
-        return '"$cleanTaskName" was added to do later';
       default:
         return "You have task: $cleanTaskName";
     }
@@ -222,14 +230,6 @@ class TextToSpeechService {
       return false;
     }
   }
-
-  // Getters and setters for configuration
-  bool get isEnabled => _isEnabled;
-  bool get isSpeaking => _isSpeaking;
-  double get speechRate => _speechRate;
-  double get volume => _volume;
-  double get pitch => _pitch;
-  String get language => _language;
 
   /// Enable or disable TTS
   Future<void> setEnabled(bool enabled) async {
