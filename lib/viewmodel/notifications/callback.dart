@@ -227,7 +227,7 @@ Future<void> geofenceTriggered(
 
     // Removed final progress notification before showing task alert
 
-    // Create the notification details with sound enabled (plays BEFORE TTS)
+    // Create the notification details with immediate display settings
     // Add action buttons for persistent notifications
     final AndroidNotificationDetails
     androidNotificationDetails = AndroidNotificationDetails(
@@ -244,16 +244,18 @@ Future<void> geofenceTriggered(
       category: AndroidNotificationCategory.alarm,
       showWhen: true,
       autoCancel: false, // Persistent until user acts
-      ongoing: true, // Make notification persistent
+      ongoing: false, // Changed from true - ongoing can be delayed
       icon: '@mipmap/ic_launcher',
       styleInformation: const BigTextStyleInformation(''),
-      fullScreenIntent:
-          true, // Force immediate display even when app in background
+      fullScreenIntent: false, // Disabled - can cause delays on newer Android
       channelShowBadge: true,
       enableLights: true,
       ledColor: const Color.fromARGB(255, 255, 200, 0),
       ledOnMs: 1000,
       ledOffMs: 500,
+      // Immediate display flags
+      timeoutAfter: null, // No timeout
+      when: DateTime.now().millisecondsSinceEpoch,
       actions: <AndroidNotificationAction>[
         const AndroidNotificationAction(
           'com.intelliboro.DO_NOW',
@@ -278,9 +280,48 @@ Future<void> geofenceTriggered(
       '[GeofenceCallback] Notification details created with channel: geofence_alerts',
     );
 
-    // --- Show the notification FIRST (with sound) to alert user ---
+    // --- Show the notification IMMEDIATELY with simplified logic ---
     // Use the earlyNotificationId so the UI isolate can correlate and cancel it.
     final notificationId = earlyNotificationId;
+
+    // Create simple payload for immediate notification
+    final immediatePayloadData = {
+      'notificationId': notificationId,
+      'title': notificationTitle,
+      'body': notificationBody,
+      'geofenceIds': params.geofences.map((g) => g.id).toList(),
+      'taskIds': <int>[], // Empty for now, will be populated later
+    };
+    final immediatePayloadJson = jsonEncode(immediatePayloadData);
+
+    // Show notification immediately without complex suppression logic first
+    try {
+      developer.log(
+        '[GeofenceCallback] Showing IMMEDIATE notification (id=$notificationId) - bypassing complex logic for reliability',
+      );
+
+      // Force immediate processing by showing notification right away
+      await plugin.show(
+        notificationId,
+        notificationTitle,
+        notificationBody,
+        platformChannelSpecifics,
+        payload: immediatePayloadJson,
+      );
+
+      // Add a small delay to ensure notification is processed
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      developer.log(
+        '[GeofenceCallback] IMMEDIATE notification shown successfully',
+      );
+    } catch (e, st) {
+      developer.log(
+        '[GeofenceCallback] Error showing IMMEDIATE notification: $e',
+        error: e,
+        stackTrace: st,
+      );
+    }
 
     // Gather task IDs matching these geofence ids using the background DB
     List<int> matchedTaskIds = [];
@@ -452,86 +493,11 @@ Future<void> geofenceTriggered(
       );
     }
 
-    // Then wait briefly for the UI isolate to ack suppression before doing TTS.
-    bool ackReceived = false;
-    try {
-      developer.log(
-        '[GeofenceCallback] Waiting up to 4000ms for suppression ack...',
-      );
-      final completer = Completer<void>();
-      late final StreamSubscription sub;
-      sub = receiveForAck.listen((message) {
-        try {
-          developer.log('[GeofenceCallback] Received ack message: $message');
-          if (!completer.isCompleted) completer.complete();
-        } catch (e) {
-          developer.log('[GeofenceCallback] Error processing ack message: $e');
-        }
-      });
-
-      try {
-        await Future.any([
-          completer.future,
-          Future.delayed(const Duration(milliseconds: 1000)),
-        ]);
-        if (completer.isCompleted) {
-          ackReceived = true;
-          developer.log(
-            '[GeofenceCallback] Suppression ack received from UI isolate.',
-          );
-        } else {
-          developer.log(
-            '[GeofenceCallback] No ack received within timeout; proceeding with TTS.',
-          );
-        }
-      } finally {
-        await sub.cancel();
-      }
-    } catch (e, st) {
-      developer.log(
-        '[GeofenceCallback] Error while waiting for ack: $e',
-        error: e,
-        stackTrace: st,
-      );
-    } finally {
-      // Clean up ack port registration
-      try {
-        IsolateNameServer.removePortNameMapping(ackPortName);
-      } catch (e) {
-        developer.log(
-          '[GeofenceCallback] Failed to remove ack port mapping: $e',
-        );
-      }
-    }
-
-    // If ack was received, UI handled it; do not show an early notification here.
-    if (ackReceived) {
-      developer.log(
-        '[GeofenceCallback] Ack received; UI will handle user-visible notification. Skipping early background notification.',
-      );
-    } else if (!preemptivelySuppressed) {
-      // No ack and not preemptively suppressed: show the early notification now.
-      try {
-        developer.log(
-          '[GeofenceCallback] No ack; showing deferred early notification (id=$notificationId)',
-        );
-        await plugin.show(
-          notificationId,
-          notificationTitle,
-          notificationBody,
-          platformChannelSpecifics,
-          payload: payloadJson,
-        );
-      } catch (e, st) {
-        developer.log(
-          '[GeofenceCallback] Error showing deferred early notification: $e',
-          error: e,
-          stackTrace: st,
-        );
-      }
-      // Small delay to allow system audio to settle before TTS
-      await Future.delayed(const Duration(milliseconds: 300));
-    }
+    // Simplified: Notification already shown immediately above
+    // Skip complex ack logic since we want reliable immediate notifications
+    developer.log(
+      '[GeofenceCallback] Skipping complex ack logic - notification already shown immediately',
+    );
 
     // --- Then Trigger Text-to-Speech Notifications AFTER notification sound ---
     try {
