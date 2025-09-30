@@ -66,6 +66,8 @@ dependencies:
   # Java compilation errors like "cannot find symbol: Registrar" during build.
   file_picker: ^10.3.3
   path_provider: ^2.1.2
+  # HTTP package for Mapbox Search API calls
+  http: ^1.1.0
   # permission_handler: ^11.3.0  # duplicate removed; keep ^12.0.0 above
 
 
