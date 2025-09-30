@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intelliboro/viewModel/Geofencing/map_viewmodel.dart';
+import 'package:intelliboro/services/mapbox_search_service.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
 class MapboxMapView extends StatefulWidget {
@@ -11,11 +12,27 @@ class MapboxMapView extends StatefulWidget {
 
 class _MapboxMapViewState extends State<MapboxMapView> {
   late final MapboxMapViewModel mapViewModel;
+  late final MapboxSearchService _searchService;
   String? _selectedGeofenceId;
+
+  // Search functionality
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
+  List<SearchResult> _searchResults = [];
+  bool _isSearching = false;
+  bool _showSearchResults = false;
+
   @override
   void initState() {
     super.initState();
     mapViewModel = MapboxMapViewModel();
+    _searchService = MapboxSearchService();
+
+    // Listen to search input changes
+    _searchController.addListener(_onSearchChanged);
+
+    // Listen to focus changes to control search results visibility
+    _searchFocusNode.addListener(_onSearchFocusChanged);
   }
 
   @override
@@ -23,6 +40,87 @@ class _MapboxMapViewState extends State<MapboxMapView> {
     return Scaffold(
       body: Column(
         children: [
+          // Search bar
+          Container(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              children: [
+                // Search input field
+                TextField(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  decoration: InputDecoration(
+                    hintText: 'Search for a location...',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon:
+                        _searchController.text.isNotEmpty
+                            ? IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: _clearSearch,
+                            )
+                            : null,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8.0),
+                    ),
+                    fillColor: Theme.of(context).colorScheme.surface,
+                    filled: true,
+                  ),
+                  onSubmitted: (value) {
+                    if (value.isNotEmpty) {
+                      _performSearch(value);
+                    }
+                  },
+                ),
+
+                // Search results dropdown
+                if (_showSearchResults && _searchResults.isNotEmpty)
+                  Container(
+                    margin: const EdgeInsets.only(top: 8.0),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surface,
+                      borderRadius: BorderRadius.circular(8.0),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 8.0,
+                          spreadRadius: 1.0,
+                        ),
+                      ],
+                    ),
+                    constraints: const BoxConstraints(maxHeight: 200),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: _searchResults.length,
+                      itemBuilder: (context, index) {
+                        final result = _searchResults[index];
+                        return ListTile(
+                          leading: const Icon(Icons.location_on, size: 20),
+                          title: Text(
+                            result.name,
+                            style: const TextStyle(fontWeight: FontWeight.w500),
+                          ),
+                          subtitle: Text(
+                            result.fullName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          dense: true,
+                          onTap: () => _selectSearchResult(result),
+                        );
+                      },
+                    ),
+                  ),
+
+                // Loading indicator
+                if (_isSearching)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8.0),
+                    child: LinearProgressIndicator(),
+                  ),
+              ],
+            ),
+          ),
+
           Expanded(
             child: ListenableBuilder(
               listenable: mapViewModel,
@@ -71,6 +169,28 @@ class _MapboxMapViewState extends State<MapboxMapView> {
                           ),
                         ),
                       ),
+
+                    // Floating action button for user location
+                    Positioned(
+                      bottom: 16,
+                      right: 16,
+                      child: FloatingActionButton(
+                        mini: true,
+                        onPressed: () async {
+                          final success =
+                              await mapViewModel.flyToUserLocation();
+                          if (!success && mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Unable to get current location'),
+                                duration: Duration(seconds: 2),
+                              ),
+                            );
+                          }
+                        },
+                        child: const Icon(Icons.my_location),
+                      ),
+                    ),
                   ],
                 );
               },
@@ -209,6 +329,171 @@ class _MapboxMapViewState extends State<MapboxMapView> {
         ],
       ),
     );
+  }
+
+  /// Handle search input changes
+  void _onSearchChanged() {
+    final query = _searchController.text.trim();
+    if (query.isEmpty) {
+      setState(() {
+        _searchResults.clear();
+        _showSearchResults = false;
+        _isSearching = false;
+      });
+      _searchService.cancelPendingSearches();
+    } else {
+      _performSearch(query);
+    }
+  }
+
+  /// Handle search focus changes
+  void _onSearchFocusChanged() {
+    if (!_searchFocusNode.hasFocus) {
+      // Delay hiding results to allow tapping on results
+      Future.delayed(const Duration(milliseconds: 150), () {
+        if (mounted) {
+          setState(() {
+            _showSearchResults = false;
+          });
+        }
+      });
+    }
+  }
+
+  /// Perform search using the search service
+  Future<void> _performSearch(String query) async {
+    if (query.isEmpty) return;
+
+    setState(() {
+      _isSearching = true;
+      _showSearchResults = true;
+    });
+
+    try {
+      // Get current map center for proximity bias
+      Point? proximityPoint;
+      if (mapViewModel.mapboxMap != null) {
+        final cameraState = await mapViewModel.mapboxMap!.getCameraState();
+        proximityPoint = cameraState.center;
+      }
+
+      final results = await _searchService.searchPlaces(
+        query: query,
+        proximity: proximityPoint,
+        limit: 5,
+      );
+
+      if (mounted) {
+        setState(() {
+          _searchResults = results;
+          _isSearching = false;
+          _showSearchResults = true;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isSearching = false;
+          _showSearchResults = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Search error: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Handle search result selection
+  Future<void> _selectSearchResult(SearchResult result) async {
+    // Hide search results and clear focus
+    setState(() {
+      _showSearchResults = false;
+    });
+    _searchFocusNode.unfocus();
+
+    // Update search field with selected result
+    _searchController.text = result.name;
+
+    try {
+      // Fly to the selected location
+      if (mapViewModel.mapboxMap != null) {
+        await mapViewModel.mapboxMap!.flyTo(
+          CameraOptions(
+            center: result.toMapboxPoint(),
+            zoom: 16,
+            bearing: 0,
+            pitch: 0,
+          ),
+          MapAnimationOptions(duration: 1500),
+        );
+
+        // Auto-place a geofence helper at the searched location
+        await _placeGeofenceAtSearchResult(result);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error navigating to location: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Place a geofence helper at the search result location
+  Future<void> _placeGeofenceAtSearchResult(SearchResult result) async {
+    try {
+      final point = result.toMapboxPoint();
+
+      // Use the map view model's method to display the helper at this location
+      await mapViewModel.displayExistingGeofence(
+        point,
+        mapViewModel.pendingRadiusMeters,
+      );
+
+      // Update the selected point in the view model
+      mapViewModel.selectedPoint = point;
+      mapViewModel.latitude = result.latitude;
+      mapViewModel.longitude = result.longitude;
+      mapViewModel.isGeofenceHelperPlaced = true;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error placing geofence helper: ${e.toString()}'),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Clear search input and results
+  void _clearSearch() {
+    _searchController.clear();
+    setState(() {
+      _searchResults.clear();
+      _showSearchResults = false;
+      _isSearching = false;
+    });
+    _searchService.cancelPendingSearches();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _searchFocusNode.dispose();
+    _searchService.dispose();
+    super.dispose();
   }
 
   Future<String?> _showTaskNameDialog(BuildContext context) async {
