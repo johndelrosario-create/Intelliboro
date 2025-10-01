@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:intelliboro/viewModel/Geofencing/map_viewmodel.dart';
+import 'package:intelliboro/viewModel/Geofencing/map_viewmodel.dart'
+    as MapViewModelImport;
 import 'package:intelliboro/services/mapbox_search_service.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
@@ -11,7 +12,7 @@ class MapboxMapView extends StatefulWidget {
 }
 
 class _MapboxMapViewState extends State<MapboxMapView> {
-  late final MapboxMapViewModel mapViewModel;
+  late final MapViewModelImport.MapboxMapViewModel mapViewModel;
   late final MapboxSearchService _searchService;
   String? _selectedGeofenceId;
 
@@ -25,7 +26,7 @@ class _MapboxMapViewState extends State<MapboxMapView> {
   @override
   void initState() {
     super.initState();
-    mapViewModel = MapboxMapViewModel();
+    mapViewModel = MapViewModelImport.MapboxMapViewModel();
     _searchService = MapboxSearchService();
 
     // Listen to search input changes
