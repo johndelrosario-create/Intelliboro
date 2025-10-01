@@ -248,6 +248,10 @@ class _TaskCreationState extends State<TaskCreation> {
 
   Future<void> _placeGeofenceAtSearchResult(SearchResult place) async {
     final point = Point(coordinates: Position(place.longitude, place.latitude));
+    
+    debugPrint('[Search] Original search point: lat=${place.latitude}, lng=${place.longitude}');
+    debugPrint('[Search] Current pending radius: ${_mapViewModel.pendingRadiusMeters}m');
+    debugPrint('[Search] Existing geofences count: ${_mapViewModel.savedGeofences.length}');
 
     // Move map to the selected location
     if (_mapViewModel.mapboxMap != null) {
@@ -260,6 +264,17 @@ class _TaskCreationState extends State<TaskCreation> {
       point,
       _mapViewModel.pendingRadiusMeters,
     );
+    
+    debugPrint('[Search] Adjusted point: lat=${adjustedPoint.coordinates.lat}, lng=${adjustedPoint.coordinates.lng}');
+    
+    // Check if adjustment occurred
+    final latDiff = (adjustedPoint.coordinates.lat - point.coordinates.lat).abs();
+    final lngDiff = (adjustedPoint.coordinates.lng - point.coordinates.lng).abs();
+    if (latDiff > 0.000001 || lngDiff > 0.000001) {
+      debugPrint('[Search] Point was adjusted to avoid overlap!');
+    } else {
+      debugPrint('[Search] No adjustment needed - no overlaps detected');
+    }
 
     // Set the adjusted point for geofence creation by calling displayExistingGeofence
     // This will show the geofence preview at the adjusted location
@@ -270,6 +285,8 @@ class _TaskCreationState extends State<TaskCreation> {
 
     // Update the selected point in the view model for later geofence creation
     _mapViewModel.selectedPoint = adjustedPoint;
+    
+    debugPrint('[Search] Geofence helper placed at adjusted position');
   }
 
   void _clearSearch() {
