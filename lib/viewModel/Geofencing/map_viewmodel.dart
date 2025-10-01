@@ -482,7 +482,7 @@ class MapboxMapViewModel extends ChangeNotifier {
 
     if (selectedPoint != null) {
       // Auto-adjust to avoid overlaps for the new radius
-      selectedPoint = await _autoAdjustCenter(
+      selectedPoint = await autoAdjustCenter(
         selectedPoint!,
         pendingRadiusMeters,
         excludeId: _editingGeofenceId,
@@ -604,7 +604,7 @@ class MapboxMapViewModel extends ChangeNotifier {
   }
 
   // Auto-adjust center to avoid overlaps with existing geofences
-  Future<Point> _autoAdjustCenter(
+  Future<Point> autoAdjustCenter(
     Point start,
     double radiusMeters, {
     String? excludeId,
@@ -790,7 +790,7 @@ class MapboxMapViewModel extends ChangeNotifier {
   onLongTap(MapContentGestureContext context) async {
     try {
       // Place selection and auto-adjust to avoid overlaps
-      selectedPoint = await _autoAdjustCenter(
+      selectedPoint = await autoAdjustCenter(
         context.point,
         pendingRadiusMeters,
         excludeId: _editingGeofenceId,
