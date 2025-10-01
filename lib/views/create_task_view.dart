@@ -11,6 +11,8 @@ import 'package:intelliboro/widgets/recurring_selector.dart';
 import 'package:intelliboro/services/task_timer_service.dart';
 import 'package:intelliboro/services/notification_preferences_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:intelliboro/services/mapbox_search_service.dart';
+import 'dart:async';
 
 class TaskCreation extends StatefulWidget {
   final bool showMap;
@@ -62,6 +64,15 @@ class _TaskCreationState extends State<TaskCreation> {
   int _currentSnoozeDuration = 5; // Default 5 minutes
   bool _isLoadingSnoozeSettings = false;
 
+  // Search functionality state
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
+  List<SearchResult> _searchResults = [];
+  bool _isSearching = false;
+  bool _showSearchResults = false;
+  MapboxSearchService? _searchService;
+  Timer? _searchDebounceTimer;
+
   @override
   void initState() {
     super.initState();
@@ -82,6 +93,13 @@ class _TaskCreationState extends State<TaskCreation> {
     }
     _loadGeofences();
     _loadSnoozeSettings();
+    
+    // Initialize search service if Mapbox is configured
+    if (MapboxSearchService.isConfigured) {
+      _searchService = MapboxSearchService();
+      _searchFocusNode.addListener(_onSearchFocusChanged);
+    }
+    
     // Load default notification sound preference
     Future.microtask(() async {
       final key = await NotificationPreferencesService().getDefaultSound();
@@ -152,8 +170,109 @@ class _TaskCreationState extends State<TaskCreation> {
   @override
   void dispose() {
     _nameController.dispose();
+    _searchController.dispose();
+    _searchFocusNode.dispose();
+    _searchDebounceTimer?.cancel();
+    _searchService?.dispose();
     _mapViewModel.dispose();
     super.dispose();
+  }
+
+  // Search functionality methods
+  void _onSearchChanged(String query) {
+    if (query.trim().isEmpty) {
+      _clearSearch();
+      return;
+    }
+
+    _searchDebounceTimer?.cancel();
+    _searchDebounceTimer = Timer(const Duration(milliseconds: 500), () {
+      _performSearch(query);
+    });
+  }
+
+  void _onSearchFocusChanged() {
+    setState(() {
+      _showSearchResults = _searchFocusNode.hasFocus && _searchResults.isNotEmpty;
+    });
+  }
+
+  Future<void> _performSearch(String query) async {
+    if (_searchService == null || query.trim().isEmpty) return;
+
+    setState(() {
+      _isSearching = true;
+    });
+
+    try {
+      final results = await _searchService!.searchPlaces(query: query);
+      if (mounted) {
+        setState(() {
+          _searchResults = results;
+          _showSearchResults = _searchFocusNode.hasFocus && results.isNotEmpty;
+          _isSearching = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _searchResults = [];
+          _showSearchResults = false;
+          _isSearching = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Search failed: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _selectSearchResult(SearchResult result) async {
+    if (_searchService == null) return;
+
+    try {
+      final retrievedPlace = await _searchService!.retrievePlace(result.id);
+      if (retrievedPlace != null && mounted) {
+        await _placeGeofenceAtSearchResult(retrievedPlace);
+        _clearSearch();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to get location details: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _placeGeofenceAtSearchResult(SearchResult place) async {
+    final point = Point(coordinates: Position(place.longitude, place.latitude));
+    
+    // Move map to the selected location
+    if (_mapViewModel.mapboxMap != null) {
+      final cameraOptions = CameraOptions(
+        center: point,
+        zoom: 15.0,
+      );
+      await _mapViewModel.mapboxMap!.flyTo(cameraOptions, null);
+    }
+
+    // Set the selected point for geofence creation by calling displayExistingGeofence
+    // This will show the geofence preview at the search result location
+    await _mapViewModel.displayExistingGeofence(point, _mapViewModel.pendingRadiusMeters);
+    
+    // Update the selected point in the view model for later geofence creation
+    _mapViewModel.selectedPoint = point;
+  }
+
+  void _clearSearch() {
+    setState(() {
+      _searchController.clear();
+      _searchResults = [];
+      _showSearchResults = false;
+      _isSearching = false;
+    });
+    _searchFocusNode.unfocus();
   }
 
   // Configure date format
@@ -482,9 +601,97 @@ class _TaskCreationState extends State<TaskCreation> {
                   ),
                   if (!_mapViewModel.isMapReady)
                     const Center(child: CircularProgressIndicator()),
-                  if (_mapViewModel.selectedPoint != null)
+                  
+                  // Search UI - only show if search service is available
+                  if (_searchService != null)
                     Positioned(
                       top: 10,
+                      left: 10,
+                      right: 80, // Leave space for the "Saved" indicator
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black26,
+                                  blurRadius: 4,
+                                  offset: Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: TextField(
+                              controller: _searchController,
+                              focusNode: _searchFocusNode,
+                              onChanged: _onSearchChanged,
+                              decoration: InputDecoration(
+                                hintText: 'Search for places...',
+                                prefixIcon: Icon(Icons.search),
+                                suffixIcon: _isSearching
+                                    ? SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                      )
+                                    : (_searchController.text.isNotEmpty
+                                        ? IconButton(
+                                            icon: Icon(Icons.clear),
+                                            onPressed: _clearSearch,
+                                          )
+                                        : null),
+                                border: InputBorder.none,
+                                contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              ),
+                            ),
+                          ),
+                          
+                          // Search results dropdown
+                          if (_showSearchResults && _searchResults.isNotEmpty)
+                            Container(
+                              margin: EdgeInsets.only(top: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black26,
+                                    blurRadius: 4,
+                                    offset: Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              constraints: BoxConstraints(maxHeight: 200),
+                              child: ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: _searchResults.length,
+                                itemBuilder: (context, index) {
+                                  final result = _searchResults[index];
+                                  return ListTile(
+                                    leading: Icon(Icons.location_on, color: Colors.blue),
+                                    title: Text(
+                                      result.name,
+                                      style: TextStyle(fontWeight: FontWeight.w500),
+                                    ),
+                                    subtitle: Text(
+                                      result.fullName,
+                                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                                    ),
+                                    onTap: () => _selectSearchResult(result),
+                                    dense: true,
+                                  );
+                                },
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  
+                  if (_mapViewModel.selectedPoint != null)
+                    Positioned(
+                      bottom: 10,
                       left: 10,
                       child: Chip(
                         label: Text('Location Selected for Geofence'),
