@@ -26,21 +26,39 @@ class SearchResult {
   });
 
   factory SearchResult.fromJson(Map<String, dynamic> json) {
+    // Handle suggestion format from /suggest endpoint
+    if (json.containsKey('mapbox_id')) {
+      return SearchResult(
+        id: json['mapbox_id']?.toString() ?? '',
+        name: json['name']?.toString() ?? 'Unknown',
+        fullName: json['full_address']?.toString() ?? 
+                  json['place_formatted']?.toString() ?? 
+                  json['name']?.toString() ?? 
+                  'Unknown',
+        latitude: 0.0, // Coordinates not available in suggestions
+        longitude: 0.0,
+        category: json['feature_type']?.toString(),
+        address: json['full_address']?.toString(),
+      );
+    }
+    
+    // Handle feature format from /retrieve endpoint
     final properties = json['properties'] ?? {};
     final geometry = json['geometry'] ?? {};
     final coordinates = geometry['coordinates'] ?? [0.0, 0.0];
 
     return SearchResult(
-      id: json['id']?.toString() ?? '',
-      name: properties['name']?.toString() ?? 'Unknown',
+      id: json['id']?.toString() ?? properties['mapbox_id']?.toString() ?? '',
+      name: properties['name']?.toString() ?? json['name']?.toString() ?? 'Unknown',
       fullName:
           properties['full_address']?.toString() ??
+          json['full_address']?.toString() ??
           properties['name']?.toString() ??
           'Unknown',
       latitude: (coordinates[1] as num?)?.toDouble() ?? 0.0,
       longitude: (coordinates[0] as num?)?.toDouble() ?? 0.0,
-      category: properties['category']?.toString(),
-      address: properties['address']?.toString(),
+      category: properties['category']?.toString() ?? json['feature_type']?.toString(),
+      address: properties['address']?.toString() ?? json['full_address']?.toString(),
     );
   }
 
@@ -159,10 +177,17 @@ class MapboxSearchService {
         final data = json.decode(response.body);
         final suggestions = data['suggestions'] as List? ?? [];
 
+        developer.log(
+          '[MapboxSearchService] Raw API response: ${json.encode(data)}',
+        );
+
         final List<SearchResult> results =
             suggestions
                 .map((item) {
                   try {
+                    developer.log(
+                      '[MapboxSearchService] Parsing suggestion: ${json.encode(item)}',
+                    );
                     return SearchResult.fromJson(item);
                   } catch (e) {
                     developer.log(
@@ -216,12 +241,26 @@ class MapboxSearchService {
           .get(uri, headers: {'Content-Type': 'application/json'})
           .timeout(const Duration(seconds: 10));
 
+      developer.log(
+        '[MapboxSearchService] Retrieve response status: ${response.statusCode}',
+      );
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final features = data['features'] as List? ?? [];
 
+        developer.log(
+          '[MapboxSearchService] Retrieve response: ${json.encode(data)}',
+        );
+
         if (features.isNotEmpty) {
-          return SearchResult.fromJson(features.first);
+          final result = SearchResult.fromJson(features.first);
+          developer.log(
+            '[MapboxSearchService] Retrieved place: ${result.toString()}',
+          );
+          return result;
+        } else {
+          developer.log('[MapboxSearchService] No features in retrieve response');
         }
       } else {
         developer.log(
