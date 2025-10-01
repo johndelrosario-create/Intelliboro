@@ -93,13 +93,13 @@ class _TaskCreationState extends State<TaskCreation> {
     }
     _loadGeofences();
     _loadSnoozeSettings();
-    
+
     // Initialize search service if Mapbox is configured
     if (MapboxSearchService.isConfigured) {
       _searchService = MapboxSearchService();
       _searchFocusNode.addListener(_onSearchFocusChanged);
     }
-    
+
     // Load default notification sound preference
     Future.microtask(() async {
       final key = await NotificationPreferencesService().getDefaultSound();
@@ -193,7 +193,8 @@ class _TaskCreationState extends State<TaskCreation> {
 
   void _onSearchFocusChanged() {
     setState(() {
-      _showSearchResults = _searchFocusNode.hasFocus && _searchResults.isNotEmpty;
+      _showSearchResults =
+          _searchFocusNode.hasFocus && _searchResults.isNotEmpty;
     });
   }
 
@@ -220,9 +221,9 @@ class _TaskCreationState extends State<TaskCreation> {
           _showSearchResults = false;
           _isSearching = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Search failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Search failed: $e')));
       }
     }
   }
@@ -247,22 +248,28 @@ class _TaskCreationState extends State<TaskCreation> {
 
   Future<void> _placeGeofenceAtSearchResult(SearchResult place) async {
     final point = Point(coordinates: Position(place.longitude, place.latitude));
-    
+
     // Move map to the selected location
     if (_mapViewModel.mapboxMap != null) {
-      final cameraOptions = CameraOptions(
-        center: point,
-        zoom: 15.0,
-      );
+      final cameraOptions = CameraOptions(center: point, zoom: 15.0);
       await _mapViewModel.mapboxMap!.flyTo(cameraOptions, null);
     }
 
-    // Set the selected point for geofence creation by calling displayExistingGeofence
-    // This will show the geofence preview at the search result location
-    await _mapViewModel.displayExistingGeofence(point, _mapViewModel.pendingRadiusMeters);
-    
+    // Auto-adjust the point to avoid overlapping with existing geofences
+    final adjustedPoint = await _mapViewModel.autoAdjustCenter(
+      point,
+      _mapViewModel.pendingRadiusMeters,
+    );
+
+    // Set the adjusted point for geofence creation by calling displayExistingGeofence
+    // This will show the geofence preview at the adjusted location
+    await _mapViewModel.displayExistingGeofence(
+      adjustedPoint,
+      _mapViewModel.pendingRadiusMeters,
+    );
+
     // Update the selected point in the view model for later geofence creation
-    _mapViewModel.selectedPoint = point;
+    _mapViewModel.selectedPoint = adjustedPoint;
   }
 
   void _clearSearch() {
@@ -601,7 +608,7 @@ class _TaskCreationState extends State<TaskCreation> {
                   ),
                   if (!_mapViewModel.isMapReady)
                     const Center(child: CircularProgressIndicator()),
-                  
+
                   // Search UI - only show if search service is available
                   if (_searchService != null)
                     Positioned(
@@ -630,24 +637,30 @@ class _TaskCreationState extends State<TaskCreation> {
                               decoration: InputDecoration(
                                 hintText: 'Search for places...',
                                 prefixIcon: Icon(Icons.search),
-                                suffixIcon: _isSearching
-                                    ? SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(strokeWidth: 2),
-                                      )
-                                    : (_searchController.text.isNotEmpty
-                                        ? IconButton(
-                                            icon: Icon(Icons.clear),
-                                            onPressed: _clearSearch,
-                                          )
-                                        : null),
+                                suffixIcon:
+                                    _isSearching
+                                        ? SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                        : (_searchController.text.isNotEmpty
+                                            ? IconButton(
+                                              icon: Icon(Icons.clear),
+                                              onPressed: _clearSearch,
+                                            )
+                                            : null),
                                 border: InputBorder.none,
-                                contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 12,
+                                ),
                               ),
                             ),
                           ),
-                          
+
                           // Search results dropdown
                           if (_showSearchResults && _searchResults.isNotEmpty)
                             Container(
@@ -670,14 +683,22 @@ class _TaskCreationState extends State<TaskCreation> {
                                 itemBuilder: (context, index) {
                                   final result = _searchResults[index];
                                   return ListTile(
-                                    leading: Icon(Icons.location_on, color: Colors.blue),
+                                    leading: Icon(
+                                      Icons.location_on,
+                                      color: Colors.blue,
+                                    ),
                                     title: Text(
                                       result.name,
-                                      style: TextStyle(fontWeight: FontWeight.w500),
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w500,
+                                      ),
                                     ),
                                     subtitle: Text(
                                       result.fullName,
-                                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey[600],
+                                      ),
                                     ),
                                     onTap: () => _selectSearchResult(result),
                                     dense: true,
@@ -688,7 +709,7 @@ class _TaskCreationState extends State<TaskCreation> {
                         ],
                       ),
                     ),
-                  
+
                   if (_mapViewModel.selectedPoint != null)
                     Positioned(
                       bottom: 10,
