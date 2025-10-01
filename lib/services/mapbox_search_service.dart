@@ -31,17 +31,18 @@ class SearchResult {
       return SearchResult(
         id: json['mapbox_id']?.toString() ?? '',
         name: json['name']?.toString() ?? 'Unknown',
-        fullName: json['full_address']?.toString() ?? 
-                  json['place_formatted']?.toString() ?? 
-                  json['name']?.toString() ?? 
-                  'Unknown',
+        fullName:
+            json['full_address']?.toString() ??
+            json['place_formatted']?.toString() ??
+            json['name']?.toString() ??
+            'Unknown',
         latitude: 0.0, // Coordinates not available in suggestions
         longitude: 0.0,
         category: json['feature_type']?.toString(),
         address: json['full_address']?.toString(),
       );
     }
-    
+
     // Handle feature format from /retrieve endpoint
     final properties = json['properties'] ?? {};
     final geometry = json['geometry'] ?? {};
@@ -49,7 +50,10 @@ class SearchResult {
 
     return SearchResult(
       id: json['id']?.toString() ?? properties['mapbox_id']?.toString() ?? '',
-      name: properties['name']?.toString() ?? json['name']?.toString() ?? 'Unknown',
+      name:
+          properties['name']?.toString() ??
+          json['name']?.toString() ??
+          'Unknown',
       fullName:
           properties['full_address']?.toString() ??
           json['full_address']?.toString() ??
@@ -57,8 +61,11 @@ class SearchResult {
           'Unknown',
       latitude: (coordinates[1] as num?)?.toDouble() ?? 0.0,
       longitude: (coordinates[0] as num?)?.toDouble() ?? 0.0,
-      category: properties['category']?.toString() ?? json['feature_type']?.toString(),
-      address: properties['address']?.toString() ?? json['full_address']?.toString(),
+      category:
+          properties['category']?.toString() ??
+          json['feature_type']?.toString(),
+      address:
+          properties['address']?.toString() ?? json['full_address']?.toString(),
     );
   }
 
@@ -260,7 +267,9 @@ class MapboxSearchService {
           );
           return result;
         } else {
-          developer.log('[MapboxSearchService] No features in retrieve response');
+          developer.log(
+            '[MapboxSearchService] No features in retrieve response',
+          );
         }
       } else {
         developer.log(

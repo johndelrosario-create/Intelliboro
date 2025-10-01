@@ -2,16 +2,15 @@
 class AppConfig {
   /// Mapbox access token for map and search services
   ///
-  /// To use this app with Mapbox services, you need to:
-  /// 1. Sign up for a Mapbox account at https://account.mapbox.com/
-  /// 2. Create a new access token with the following scopes:
-  ///    - Maps SDK for Flutter
-  ///    - Search API
-  /// 3. Replace the token below with your actual token
+  /// This reads from the ACCESS_TOKEN environment variable defined in .vscode/launch.json
+  /// or falls back to a placeholder. The token is passed via --dart-define arguments.
   ///
   /// For production apps, consider using environment variables or secure storage
   /// instead of hardcoding the token here.
-  static const String mapboxAccessToken = 'pk.your_mapbox_access_token_here';
+  static const String mapboxAccessToken = String.fromEnvironment(
+    'ACCESS_TOKEN',
+    defaultValue: 'pk.your_mapbox_access_token_here',
+  );
 
   /// Check if Mapbox is properly configured
   static bool get isMapboxConfigured =>
