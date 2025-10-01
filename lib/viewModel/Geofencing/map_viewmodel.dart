@@ -609,12 +609,24 @@ class MapboxMapViewModel extends ChangeNotifier {
     double radiusMeters, {
     String? excludeId,
   }) async {
-    if (_savedGeofences.isEmpty) return start;
+    debugPrint('[AutoAdjust] Starting adjustment check...');
+    debugPrint('[AutoAdjust] Start point: lat=${start.coordinates.lat}, lng=${start.coordinates.lng}');
+    debugPrint('[AutoAdjust] New radius: ${radiusMeters}m');
+    debugPrint('[AutoAdjust] Saved geofences count: ${_savedGeofences.length}');
+    
+    if (_savedGeofences.isEmpty) {
+      debugPrint('[AutoAdjust] No saved geofences, returning original point');
+      return start;
+    }
+    
     // Check nearest overlap
     GeofenceData? nearest;
     double nearestDist = double.infinity;
     for (final g in _savedGeofences) {
-      if (excludeId != null && g.id == excludeId) continue;
+      if (excludeId != null && g.id == excludeId) {
+        debugPrint('[AutoAdjust] Skipping geofence ${g.id} (excluded)');
+        continue;
+      }
       final d = _distanceMeters(
         start.coordinates.lat.toDouble(),
         start.coordinates.lng.toDouble(),
@@ -622,12 +634,23 @@ class MapboxMapViewModel extends ChangeNotifier {
         g.longitude,
       );
       final minAllowed = g.radiusMeters + radiusMeters + _overlapPaddingMeters;
+      debugPrint('[AutoAdjust] Geofence ${g.id}: distance=${d.toStringAsFixed(2)}m, minAllowed=${minAllowed.toStringAsFixed(2)}m, radius=${g.radiusMeters}m');
+      
       if (d < minAllowed && d < nearestDist) {
         nearest = g;
         nearestDist = d;
+        debugPrint('[AutoAdjust] Found potential overlap with ${g.id}');
       }
     }
-    if (nearest == null) return start; // no overlap
+    
+    if (nearest == null) {
+      debugPrint('[AutoAdjust] No overlaps detected, returning original point');
+      return start; // no overlap
+    }
+
+    debugPrint('[AutoAdjust] Overlap detected with geofence ${nearest.id}');
+    debugPrint('[AutoAdjust] Nearest distance: ${nearestDist.toStringAsFixed(2)}m');
+    debugPrint('[AutoAdjust] Required distance: ${(nearest.radiusMeters + radiusMeters + _overlapPaddingMeters).toStringAsFixed(2)}m');
 
     // Compute bearing from nearest center to start and push outward
     final dy = (start.coordinates.lat.toDouble() - nearest.latitude);
@@ -644,11 +667,16 @@ class MapboxMapViewModel extends ChangeNotifier {
     if (dy == 0 && dx == 0) {
       // Pick an arbitrary bearing if exactly overlapping
       bearing = 0.0;
+      debugPrint('[AutoAdjust] Exact overlap detected, using bearing 0°');
     }
     final needed =
         (nearest.radiusMeters + radiusMeters + _overlapPaddingMeters) -
         nearestDist;
+    debugPrint('[AutoAdjust] Distance to push outward: ${needed.toStringAsFixed(2)}m');
+    
     final adjusted = _offsetPoint(start, needed, bearing);
+    debugPrint('[AutoAdjust] Adjusted point: lat=${adjusted.coordinates.lat}, lng=${adjusted.coordinates.lng}');
+    
     return adjusted;
   }
 
