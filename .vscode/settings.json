@@ -1,9 +1,0 @@
-{
-    "vim.statusBarColors.visualline": "",
-    "vim.handleKeys": {
-       "<C-p>": false, 
-        "<C-d>": true,
-        "<C-s>": false,
-        "<C-z>": false
-    }
-}
