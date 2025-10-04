@@ -1139,9 +1139,11 @@ class _TaskCreationState extends State<TaskCreation> {
                       ),
                     );
 
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Task "$taskName" created.')),
-                    );
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Task "$taskName" created.')),
+                      );
+                    }
                   } else {
                     // Update existing task
                     final existing = widget.initialTask!;
@@ -1164,22 +1166,26 @@ class _TaskCreationState extends State<TaskCreation> {
                     // Notify listeners that tasks changed
                     TaskTimerService().tasksChanged.value = true;
 
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Task "$taskName" updated.')),
-                    );
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Task "$taskName" updated.')),
+                      );
+                    }
                   }
 
                   // Handle geofence creation or association
                   if (widget.showMap) {
                     if (_selectedGeofenceId != null) {
                       // Task is already associated with the existing geofence via geofenceId
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            'Task associated with existing geofence.',
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Task associated with existing geofence.',
+                            ),
                           ),
-                        ),
-                      );
+                        );
+                      }
                     } else if (_mapViewModel.selectedPoint != null) {
                       try {
                         final createdGeofenceId = await _mapViewModel
