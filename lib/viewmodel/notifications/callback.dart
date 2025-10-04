@@ -121,7 +121,7 @@ Future<void> geofenceTriggered(
       '[GeofenceCallback] Starting geofence callback for event: ${params.event.name}',
     );
     developer.log(
-      '[GeofenceCallback] Event: ${params.event}, Geofence IDs: ${params.geofences.map((g) => g.id).toList()}, Location: ${params.location}',
+      '[GeofenceCallback] Event: ${params.event}, Geofence IDs: ${params.geofences.map((g) => g.id).toList()}, Location available: ${params.location != null}',
     );
 
     // First, try to send the event through the port. Generate a notificationId
@@ -653,8 +653,8 @@ Future<void> geofenceTriggered(
                   geofence.id,
                   metadata: {
                     'event_type': params.event.name,
-                    'latitude': params.location?.latitude,
-                    'longitude': params.location?.longitude,
+                    // Do not log precise location coordinates for privacy
+                    'has_location': params.location != null,
                     'timestamp': DateTime.now().millisecondsSinceEpoch,
                   },
                 );

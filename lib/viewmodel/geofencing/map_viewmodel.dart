@@ -282,9 +282,7 @@ class MapboxMapViewModel extends ChangeNotifier {
         try {
           debugPrint('[MapViewModel] Getting current location...');
           userPosition = await _locationService.getCurrentLocation();
-          debugPrint(
-            '[MapViewModel] Current location: ${userPosition.latitude}, ${userPosition.longitude}',
-          );
+          debugPrint('[MapViewModel] Current location acquired successfully');
         } catch (e) {
           debugPrint('[MapViewModel] Error getting current location: $e');
           // Try to get last known location for offline scenarios
@@ -295,7 +293,7 @@ class MapboxMapViewModel extends ChangeNotifier {
             userPosition = await _locationService.getLastKnownLocation();
             if (userPosition != null) {
               debugPrint(
-                '[MapViewModel] Got cached/last known location: ${userPosition.latitude}, ${userPosition.longitude}',
+                '[MapViewModel] Got cached/last known location for offline use',
               );
             } else {
               debugPrint('[MapViewModel] No cached location available');
@@ -390,9 +388,7 @@ class MapboxMapViewModel extends ChangeNotifier {
       // Listen to location updates
       _locationStreamSubscription = _locationService.locationStream.listen(
         (locator.Position position) {
-          debugPrint(
-            '[MapViewModel] Received location update: ${position.latitude}, ${position.longitude}',
-          );
+          debugPrint('[MapViewModel] Received location update');
 
           // Update the map's location component with new position
           _updateMapLocationComponent(position);
@@ -425,9 +421,7 @@ class MapboxMapViewModel extends ChangeNotifier {
       latitude = position.latitude;
       longitude = position.longitude;
 
-      debugPrint(
-        '[MapViewModel] Location component updated with position: ${position.latitude}, ${position.longitude}',
-      );
+      debugPrint('[MapViewModel] Location component updated with new position');
     } catch (e) {
       debugPrint('[MapViewModel] Error updating location component: $e');
     }
