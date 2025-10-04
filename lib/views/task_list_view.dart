@@ -794,43 +794,47 @@ class _TaskListViewState extends State<TaskListView>
                             // Notify listeners to refresh
                             _taskTimerService.tasksChanged.value = true;
 
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Deleted "${task.taskName}"'),
-                                action: SnackBarAction(
-                                  label: 'Undo',
-                                  onPressed: () async {
-                                    try {
-                                      await TaskRepository().insertTask(
-                                        deletedCopy,
-                                      );
-                                      _taskTimerService.tasksChanged.value =
-                                          true;
-                                    } catch (e) {
-                                      developer.log(
-                                        '[TaskListView] Undo insert failed: $e',
-                                      );
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        SnackBar(
-                                          content: Text('Undo failed: $e'),
-                                        ),
-                                      );
-                                    }
-                                  },
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Deleted "${task.taskName}"'),
+                                  action: SnackBarAction(
+                                    label: 'Undo',
+                                    onPressed: () async {
+                                      try {
+                                        await TaskRepository().insertTask(
+                                          deletedCopy,
+                                        );
+                                        _taskTimerService.tasksChanged.value =
+                                            true;
+                                      } catch (e) {
+                                        developer.log(
+                                          '[TaskListView] Undo insert failed: $e',
+                                        );
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text('Undo failed: $e'),
+                                          ),
+                                        );
+                                      }
+                                    },
+                                  ),
                                 ),
-                              ),
-                            );
+                              );
+                            }
                           } catch (e) {
                             developer.log(
                               '[TaskListView] Error deleting task: $e',
                             );
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Failed to delete task: $e'),
-                              ),
-                            );
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Failed to delete task: $e'),
+                                ),
+                              );
+                            }
                           }
                         }
                       },

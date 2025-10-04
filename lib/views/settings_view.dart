@@ -278,20 +278,24 @@ class _SettingsViewState extends State<SettingsView> {
         ),
       );
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to post test notification: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to post test notification: $e')),
+        );
+      }
       return;
     }
 
     if (!Platform.isAndroid) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Test notification sent (non-Android status not available)',
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Test notification sent (non-Android status not available)',
+            ),
           ),
-        ),
-      );
+        );
+      }
       return;
     }
 
@@ -303,35 +307,41 @@ class _SettingsViewState extends State<SettingsView> {
       );
       final bool enabled = status['enabled'] as bool? ?? false;
       final int importance = status['channelImportance'] as int? ?? -1;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Notifications enabled: $enabled, channel importance: $importance',
-          ),
-        ),
-      );
-    } catch (e) {
-      if (e is MissingPluginException) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'Platform plugin not available yet. Please fully stop the app and rebuild (flutter run) to apply native changes.',
+              'Notifications enabled: $enabled, channel importance: $importance',
             ),
           ),
         );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to query notification status: $e')),
-        );
+      }
+    } catch (e) {
+      if (mounted) {
+        if (e is MissingPluginException) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Platform plugin not available yet. Please fully stop the app and rebuild (flutter run) to apply native changes.',
+              ),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to query notification status: $e')),
+          );
+        }
       }
     }
   }
 
   Future<void> _scheduleTestSystemAlarm() async {
     if (!Platform.isAndroid) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('System alarms are Android-only')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('System alarms are Android-only')),
+        );
+      }
       return;
     }
     try {
@@ -351,15 +361,19 @@ class _SettingsViewState extends State<SettingsView> {
         'body': 'This is a 1-minute test system alarm',
       };
       await platform.invokeMethod('scheduleAlarm', args);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Scheduled system alarm in ~1 minute (id=123456)'),
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Scheduled system alarm in ~1 minute (id=123456)'),
+          ),
+        );
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to schedule system alarm: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to schedule system alarm: $e')),
+        );
+      }
     }
   }
 
@@ -438,7 +452,9 @@ class _SettingsViewState extends State<SettingsView> {
       msg += 'Could not read pending notifications: $e\n';
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
   }
 
   Future<void> _disablePin() async {
@@ -555,11 +571,13 @@ class _SettingsViewState extends State<SettingsView> {
             ),
             onTap: () async {
               if (!Platform.isAndroid) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Exact alarms are Android-only'),
-                  ),
-                );
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Exact alarms are Android-only'),
+                    ),
+                  );
+                }
                 return;
               }
               try {
@@ -567,23 +585,27 @@ class _SettingsViewState extends State<SettingsView> {
                 final bool result = await platform.invokeMethod(
                   'requestExactAlarmPermission',
                 );
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      result
-                          ? 'Requested exact alarm permission'
-                          : 'Could not request exact alarm permission',
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        result
+                            ? 'Requested exact alarm permission'
+                            : 'Could not request exact alarm permission',
+                      ),
                     ),
-                  ),
-                );
+                  );
+                }
               } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'Error requesting exact alarm permission: $e',
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Error requesting exact alarm permission: $e',
+                      ),
                     ),
-                  ),
-                );
+                  );
+                }
               }
             },
           ),
