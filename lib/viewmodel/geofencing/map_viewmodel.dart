@@ -1046,8 +1046,17 @@ class MapboxMapViewModel extends ChangeNotifier {
     BuildContext context, {
     required String taskName,
   }) async {
+    // Lock check: prevent duplicate geofence creation
     if (_isCreatingGeofence) {
-      debugPrint('Already creating a geofence, ignoring duplicate request');
+      debugPrint(
+        '[MapViewModel] Geofence creation already in progress, blocking duplicate request',
+      );
+      if (context.mounted) {
+        _showError(
+          context,
+          'Geofence creation already in progress. Please wait...',
+        );
+      }
       return null;
     }
 
@@ -1062,7 +1071,9 @@ class MapboxMapViewModel extends ChangeNotifier {
       return null;
     }
 
+    // Acquire lock
     _isCreatingGeofence = true;
+    debugPrint('[MapViewModel] Geofence creation lock acquired');
     String? createdGeofenceId;
     try {
       debugPrint('Creating geofence at ${selectedPoint!.coordinates}');
@@ -1166,7 +1177,9 @@ class MapboxMapViewModel extends ChangeNotifier {
       }
       return null;
     } finally {
+      // Release lock
       _isCreatingGeofence = false;
+      debugPrint('[MapViewModel] Geofence creation lock released');
     }
   }
 
