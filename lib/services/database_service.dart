@@ -41,10 +41,18 @@ class DatabaseService {
           readOnly: false,
           singleInstance: true,
         );
+
+        // Verify the connection is actually open
+        if (!db.isOpen) {
+          throw Exception('Database connection failed to open');
+        }
+
         _mainIsolateDatabase = db;
         return db;
       } catch (e) {
         developer.log("[DatabaseService] Failed to initialize database: $e");
+        // Reset the database variable on failure so next call can retry
+        _mainIsolateDatabase = null;
         rethrow;
       }
     });
@@ -753,5 +761,22 @@ class DatabaseService {
     _mainIsolateDatabase = null; // Clear the static instance
     _dbInitializingCompleter =
         null; // Reset completer so next mainDb call starts fresh
+  }
+
+  /// Validate database connection is open and ready
+  /// Returns true if connection is valid, false otherwise
+  bool isDatabaseOpen() {
+    return _mainIsolateDatabase != null && _mainIsolateDatabase!.isOpen;
+  }
+
+  /// Get database status for debugging
+  String getDatabaseStatus() {
+    if (_mainIsolateDatabase == null) {
+      return 'Database not initialized';
+    }
+    if (!_mainIsolateDatabase!.isOpen) {
+      return 'Database initialized but closed';
+    }
+    return 'Database open at ${_mainIsolateDatabase!.path}';
   }
 }
