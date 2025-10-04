@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/foundation.dart';
 import 'package:intelliboro/repository/task_repository.dart';
 import 'package:intl/intl.dart';
 import 'package:intelliboro/model/task_model.dart';
@@ -621,77 +623,51 @@ class _TaskCreationState extends State<TaskCreation> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(
-              height: MediaQuery.of(context).size.height * 0.3,
+            // Map container with proper gesture handling
+            Container(
+              height: MediaQuery.of(context).size.height * 0.35,
               width: MediaQuery.of(context).size.width,
-              child: Stack(
-                children: [
-                  MapWidget(
-                    key: const ValueKey("embedded_mapwidget"),
-                    onMapCreated: _mapViewModel.onMapCreated,
-                    onLongTapListener: _mapViewModel.onLongTap,
-                    onZoomListener: _mapViewModel.onZoom,
-                    onMapIdleListener: _mapViewModel.onCameraIdle,
-                  ),
-                  if (!_mapViewModel.isMapReady)
-                    const Center(child: CircularProgressIndicator()),
-
-                  // Search UI - only show if search service is available
-                  if (_searchService != null)
-                    Positioned(
-                      top: 10,
-                      left: 10,
-                      right: 80, // Leave space for the "Saved" indicator
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(8),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black26,
-                                  blurRadius: 4,
-                                  offset: Offset(0, 2),
-                                ),
-                              ],
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.outline.withOpacity(0.5),
+                  width: 1,
+                ),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(11),
+                child: Stack(
+                  children: [
+                    MapWidget(
+                      key: const ValueKey("embedded_mapwidget"),
+                      onMapCreated: _mapViewModel.onMapCreated,
+                      onLongTapListener: _mapViewModel.onLongTap,
+                      onZoomListener: _mapViewModel.onZoom,
+                      onMapIdleListener: _mapViewModel.onCameraIdle,
+                      // ScaleGestureRecognizer handles both panning and pinch-to-zoom
+                      gestureRecognizers:
+                          <Factory<OneSequenceGestureRecognizer>>{
+                            Factory<ScaleGestureRecognizer>(
+                              () => ScaleGestureRecognizer(),
                             ),
-                            child: TextField(
-                              controller: _searchController,
-                              focusNode: _searchFocusNode,
-                              onChanged: _onSearchChanged,
-                              decoration: InputDecoration(
-                                hintText: 'Search for places...',
-                                prefixIcon: Icon(Icons.search),
-                                suffixIcon:
-                                    _isSearching
-                                        ? SizedBox(
-                                          width: 20,
-                                          height: 20,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        )
-                                        : (_searchController.text.isNotEmpty
-                                            ? IconButton(
-                                              icon: Icon(Icons.clear),
-                                              onPressed: _clearSearch,
-                                            )
-                                            : null),
-                                border: InputBorder.none,
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 12,
-                                ),
-                              ),
+                            Factory<EagerGestureRecognizer>(
+                              () => EagerGestureRecognizer(),
                             ),
-                          ),
+                          },
+                    ),
+                    if (!_mapViewModel.isMapReady)
+                      const Center(child: CircularProgressIndicator()),
 
-                          // Search results dropdown
-                          if (_showSearchResults && _searchResults.isNotEmpty)
+                    // Search UI - only show if search service is available
+                    if (_searchService != null)
+                      Positioned(
+                        top: 10,
+                        left: 10,
+                        right: 80, // Leave space for the "Saved" indicator
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
                             Container(
-                              margin: EdgeInsets.only(top: 4),
                               decoration: BoxDecoration(
                                 color: Colors.white,
                                 borderRadius: BorderRadius.circular(8),
@@ -703,74 +679,121 @@ class _TaskCreationState extends State<TaskCreation> {
                                   ),
                                 ],
                               ),
-                              constraints: BoxConstraints(maxHeight: 200),
-                              child: ListView.builder(
-                                shrinkWrap: true,
-                                itemCount: _searchResults.length,
-                                itemBuilder: (context, index) {
-                                  final result = _searchResults[index];
-                                  return ListTile(
-                                    leading: Icon(
-                                      Icons.location_on,
-                                      color: Colors.blue,
-                                    ),
-                                    title: Text(
-                                      result.name,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    subtitle: Text(
-                                      result.fullName,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey[600],
-                                      ),
-                                    ),
-                                    onTap: () => _selectSearchResult(result),
-                                    dense: true,
-                                  );
-                                },
+                              child: TextField(
+                                controller: _searchController,
+                                focusNode: _searchFocusNode,
+                                onChanged: _onSearchChanged,
+                                decoration: InputDecoration(
+                                  hintText: 'Search for places...',
+                                  prefixIcon: Icon(Icons.search),
+                                  suffixIcon:
+                                      _isSearching
+                                          ? SizedBox(
+                                            width: 20,
+                                            height: 20,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                          : (_searchController.text.isNotEmpty
+                                              ? IconButton(
+                                                icon: Icon(Icons.clear),
+                                                onPressed: _clearSearch,
+                                              )
+                                              : null),
+                                  border: InputBorder.none,
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 12,
+                                  ),
+                                ),
                               ),
                             ),
-                        ],
-                      ),
-                    ),
 
-                  if (_mapViewModel.selectedPoint != null)
+                            // Search results dropdown
+                            if (_showSearchResults && _searchResults.isNotEmpty)
+                              Container(
+                                margin: EdgeInsets.only(top: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(8),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black26,
+                                      blurRadius: 4,
+                                      offset: Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                constraints: BoxConstraints(maxHeight: 200),
+                                child: ListView.builder(
+                                  shrinkWrap: true,
+                                  itemCount: _searchResults.length,
+                                  itemBuilder: (context, index) {
+                                    final result = _searchResults[index];
+                                    return ListTile(
+                                      leading: Icon(
+                                        Icons.location_on,
+                                        color: Colors.blue,
+                                      ),
+                                      title: Text(
+                                        result.name,
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                      subtitle: Text(
+                                        result.fullName,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[600],
+                                        ),
+                                      ),
+                                      onTap: () => _selectSearchResult(result),
+                                      dense: true,
+                                    );
+                                  },
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+
+                    if (_mapViewModel.selectedPoint != null)
+                      Positioned(
+                        bottom: 10,
+                        left: 10,
+                        child: Chip(
+                          label: Text('Location Selected for Geofence'),
+                          backgroundColor: Colors.greenAccent,
+                        ),
+                      ),
                     Positioned(
-                      bottom: 10,
-                      left: 10,
-                      child: Chip(
-                        label: Text('Location Selected for Geofence'),
-                        backgroundColor: Colors.greenAccent,
-                      ),
-                    ),
-                  Positioned(
-                    top: 10,
-                    right: 10,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        'Saved: ${_mapViewModel.savedGeofences.length}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
+                      top: 10,
+                      right: 10,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'Saved: ${_mapViewModel.savedGeofences.length}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Text(
               'Radius: ${_mapViewModel.pendingRadiusMeters.toStringAsFixed(0)} m',
               style: Theme.of(context).textTheme.bodyMedium,
