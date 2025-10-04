@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:intelliboro/repository/task_repository.dart';
 import 'package:intl/intl.dart';
 import 'package:intelliboro/model/task_model.dart';
-import 'package:intelliboro/viewmodel/Geofencing/map_viewmodel.dart';
+import 'package:intelliboro/viewmodel/geofencing/map_viewmodel.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:intelliboro/models/geofence_data.dart';
 import 'package:intelliboro/services/geofence_storage.dart';
@@ -262,9 +262,17 @@ class _TaskCreationState extends State<TaskCreation> {
     );
 
     // Move map to the selected location
-    if (_mapViewModel.mapboxMap != null) {
-      final cameraOptions = CameraOptions(center: point, zoom: 15.0);
-      await _mapViewModel.mapboxMap!.flyTo(cameraOptions, null);
+    // Null safety: Verify map is initialized before camera operations
+    if (_mapViewModel.mapboxMap != null && _mapViewModel.isMapReady) {
+      try {
+        final cameraOptions = CameraOptions(center: point, zoom: 15.0);
+        await _mapViewModel.mapboxMap!.flyTo(cameraOptions, null);
+      } catch (e) {
+        debugPrint('[Search] Error flying to location: $e');
+        // Continue with geofence placement even if flyTo fails
+      }
+    } else {
+      debugPrint('[Search] Warning: Map not ready for flyTo operation');
     }
 
     // Auto-adjust the point to avoid overlapping with existing geofences
