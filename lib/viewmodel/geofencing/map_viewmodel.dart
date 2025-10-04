@@ -675,7 +675,7 @@ class MapboxMapViewModel extends ChangeNotifier {
     if (dy == 0 && dx == 0) {
       // Pick an arbitrary bearing if exactly overlapping
       bearing = 0.0;
-      debugPrint('[AutoAdjust] Exact overlap detected, using bearing 0°');
+      debugPrint('[AutoAdjust] Exact overlap detected, using bearing 0-�');
     }
     final needed =
         (nearest.radiusMeters + radiusMeters + _overlapPaddingMeters) -

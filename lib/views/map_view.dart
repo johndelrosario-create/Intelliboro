@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:intelliboro/viewmodel/Geofencing/map_viewmodel.dart'
+import 'package:intelliboro/viewmodel/geofencing/map_viewmodel.dart'
     as MapViewModelImport;
 import 'package:intelliboro/services/mapbox_search_service.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
