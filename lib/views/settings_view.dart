@@ -508,7 +508,7 @@ class _SettingsViewState extends State<SettingsView> {
         children: [
           // Offline operation queue status
           const OfflineQueueStatus(),
-          
+
           SwitchListTile(
             value: _pinEnabled,
             title: const Text('PIN Protection'),

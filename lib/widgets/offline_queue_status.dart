@@ -31,18 +31,18 @@ class _OfflineQueueStatusState extends State<OfflineQueueStatus> {
           color: isOnline ? Colors.blue : Colors.orange,
         ),
         title: Text(
-          isOnline 
-            ? 'Syncing $queueSize operation${queueSize > 1 ? 's' : ''}...'
-            : '$queueSize operation${queueSize > 1 ? 's' : ''} pending (offline)',
+          isOnline
+              ? 'Syncing $queueSize operation${queueSize > 1 ? 's' : ''}...'
+              : '$queueSize operation${queueSize > 1 ? 's' : ''} pending (offline)',
           style: TextStyle(
             color: isOnline ? Colors.blue.shade900 : Colors.orange.shade900,
             fontWeight: FontWeight.w500,
           ),
         ),
         subtitle: Text(
-          isOnline 
-            ? 'Operations will sync automatically'
-            : 'Will sync when connection is restored',
+          isOnline
+              ? 'Operations will sync automatically'
+              : 'Will sync when connection is restored',
           style: TextStyle(
             color: isOnline ? Colors.blue.shade700 : Colors.orange.shade700,
             fontSize: 12,
@@ -56,10 +56,7 @@ class _OfflineQueueStatusState extends State<OfflineQueueStatus> {
               children: [
                 Text(
                   'Queued operations will be executed when online.',
-                  style: TextStyle(
-                    color: Colors.grey.shade700,
-                    fontSize: 13,
-                  ),
+                  style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
                 ),
                 const SizedBox(height: 12),
                 Row(
@@ -85,27 +82,30 @@ class _OfflineQueueStatusState extends State<OfflineQueueStatus> {
                       onPressed: () async {
                         final confirm = await showDialog<bool>(
                           context: context,
-                          builder: (context) => AlertDialog(
-                            title: const Text('Clear Queue'),
-                            content: Text(
-                              'Are you sure you want to clear $queueSize pending operation${queueSize > 1 ? 's' : ''}? This cannot be undone.',
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(context, false),
-                                child: const Text('Cancel'),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.pop(context, true),
-                                style: TextButton.styleFrom(
-                                  foregroundColor: Colors.red,
+                          builder:
+                              (context) => AlertDialog(
+                                title: const Text('Clear Queue'),
+                                content: Text(
+                                  'Are you sure you want to clear $queueSize pending operation${queueSize > 1 ? 's' : ''}? This cannot be undone.',
                                 ),
-                                child: const Text('Clear'),
+                                actions: [
+                                  TextButton(
+                                    onPressed:
+                                        () => Navigator.pop(context, false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  TextButton(
+                                    onPressed:
+                                        () => Navigator.pop(context, true),
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: Colors.red,
+                                    ),
+                                    child: const Text('Clear'),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
                         );
-                        
+
                         if (confirm == true && mounted) {
                           await _queue.clearQueue();
                           setState(() {});
@@ -121,9 +121,7 @@ class _OfflineQueueStatusState extends State<OfflineQueueStatus> {
                       },
                       icon: const Icon(Icons.delete_outline, size: 18),
                       label: const Text('Clear Queue'),
-                      style: TextButton.styleFrom(
-                        foregroundColor: Colors.red,
-                      ),
+                      style: TextButton.styleFrom(foregroundColor: Colors.red),
                     ),
                   ],
                 ),

@@ -12,13 +12,14 @@ import '../models/geofence_data.dart';
 /// Service to manage offline operations queue
 /// Stores operations when offline and syncs when connectivity is restored
 class OfflineOperationQueue {
-  static final OfflineOperationQueue _instance = OfflineOperationQueue._internal();
+  static final OfflineOperationQueue _instance =
+      OfflineOperationQueue._internal();
   factory OfflineOperationQueue() => _instance;
   OfflineOperationQueue._internal();
 
   static const String _queueKey = 'offline_operation_queue';
   static const int _maxRetries = 3;
-  
+
   final List<QueuedOperation> _queue = [];
   final _connectivity = Connectivity();
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
@@ -30,7 +31,7 @@ class OfflineOperationQueue {
     await _loadQueue();
     await _checkConnectivity();
     _startConnectivityMonitoring();
-    
+
     // Process queue if online
     if (_isOnline && _queue.isNotEmpty) {
       unawaited(_processQueue());
@@ -42,7 +43,7 @@ class OfflineOperationQueue {
     debugPrint('[OfflineQueue] Enqueuing operation: ${operation.type}');
     _queue.add(operation);
     await _saveQueue();
-    
+
     // Try to process immediately if online
     if (_isOnline && !_isProcessing) {
       unawaited(_processQueue());
@@ -96,7 +97,8 @@ class OfflineOperationQueue {
   /// Create a queued geofence update operation
   Future<void> queueGeofenceUpdate(GeofenceData geofence) async {
     final operation = QueuedOperation(
-      id: 'geofence_update_${geofence.id}_${DateTime.now().millisecondsSinceEpoch}',
+      id:
+          'geofence_update_${geofence.id}_${DateTime.now().millisecondsSinceEpoch}',
       type: 'geofence_update',
       data: geofence.toJson(),
       timestamp: DateTime.now(),
@@ -107,7 +109,8 @@ class OfflineOperationQueue {
   /// Create a queued geofence delete operation
   Future<void> queueGeofenceDelete(String geofenceId) async {
     final operation = QueuedOperation(
-      id: 'geofence_delete_${geofenceId}_${DateTime.now().millisecondsSinceEpoch}',
+      id:
+          'geofence_delete_${geofenceId}_${DateTime.now().millisecondsSinceEpoch}',
       type: 'geofence_delete',
       data: {'geofenceId': geofenceId},
       timestamp: DateTime.now(),
@@ -134,7 +137,7 @@ class OfflineOperationQueue {
     debugPrint('[OfflineQueue] Processing ${_queue.length} queued operations');
 
     final operationsToProcess = List<QueuedOperation>.from(_queue);
-    
+
     for (final operation in operationsToProcess) {
       try {
         await _executeOperation(operation);
@@ -142,7 +145,7 @@ class OfflineOperationQueue {
         debugPrint('[OfflineQueue] Successfully executed: ${operation.type}');
       } catch (e) {
         debugPrint('[OfflineQueue] Error executing ${operation.type}: $e');
-        
+
         // Update retry count
         final index = _queue.indexOf(operation);
         if (index >= 0) {
@@ -150,9 +153,11 @@ class OfflineOperationQueue {
             retryCount: operation.retryCount + 1,
             error: e.toString(),
           );
-          
+
           if (updated.retryCount >= _maxRetries) {
-            debugPrint('[OfflineQueue] Max retries reached for ${operation.type}, removing from queue');
+            debugPrint(
+              '[OfflineQueue] Max retries reached for ${operation.type}, removing from queue',
+            );
             _queue.removeAt(index);
           } else {
             _queue[index] = updated;
@@ -163,8 +168,10 @@ class OfflineOperationQueue {
 
     await _saveQueue();
     _isProcessing = false;
-    
-    debugPrint('[OfflineQueue] Queue processing complete. Remaining: ${_queue.length}');
+
+    debugPrint(
+      '[OfflineQueue] Queue processing complete. Remaining: ${_queue.length}',
+    );
   }
 
   /// Execute a single operation
@@ -174,32 +181,32 @@ class OfflineOperationQueue {
         final task = TaskModel.fromMap(operation.data);
         await TaskRepository().insertTask(task);
         break;
-        
+
       case 'task_update':
         final task = TaskModel.fromMap(operation.data);
         await TaskRepository().updateTask(task);
         break;
-        
+
       case 'task_delete':
         final taskId = operation.data['taskId'] as int;
         await TaskRepository().deleteTask(taskId);
         break;
-        
+
       case 'geofence_create':
         final geofence = GeofenceData.fromJson(operation.data);
         await GeofenceStorage().saveGeofence(geofence);
         break;
-        
+
       case 'geofence_update':
         final geofence = GeofenceData.fromJson(operation.data);
         await GeofenceStorage().saveGeofence(geofence);
         break;
-        
+
       case 'geofence_delete':
         final geofenceId = operation.data['geofenceId'] as String;
         await GeofenceStorage().deleteGeofence(geofenceId);
         break;
-        
+
       default:
         debugPrint('[OfflineQueue] Unknown operation type: ${operation.type}');
     }
@@ -210,14 +217,18 @@ class OfflineOperationQueue {
     try {
       final prefs = await SharedPreferences.getInstance();
       final queueJson = prefs.getString(_queueKey);
-      
+
       if (queueJson != null) {
         final List<dynamic> decoded = jsonDecode(queueJson);
         _queue.clear();
         _queue.addAll(
-          decoded.map((json) => QueuedOperation.fromJson(json as Map<String, dynamic>)),
+          decoded.map(
+            (json) => QueuedOperation.fromJson(json as Map<String, dynamic>),
+          ),
         );
-        debugPrint('[OfflineQueue] Loaded ${_queue.length} operations from storage');
+        debugPrint(
+          '[OfflineQueue] Loaded ${_queue.length} operations from storage',
+        );
       }
     } catch (e) {
       debugPrint('[OfflineQueue] Error loading queue: $e');
@@ -241,7 +252,9 @@ class OfflineOperationQueue {
     try {
       final result = await _connectivity.checkConnectivity();
       _isOnline = result.any((r) => r != ConnectivityResult.none);
-      debugPrint('[OfflineQueue] Connectivity check: ${_isOnline ? "Online" : "Offline"}');
+      debugPrint(
+        '[OfflineQueue] Connectivity check: ${_isOnline ? "Online" : "Offline"}',
+      );
     } catch (e) {
       debugPrint('[OfflineQueue] Error checking connectivity: $e');
       _isOnline = true; // Assume online on error
@@ -254,9 +267,11 @@ class OfflineOperationQueue {
       (List<ConnectivityResult> results) {
         final wasOnline = _isOnline;
         _isOnline = results.any((r) => r != ConnectivityResult.none);
-        
-        debugPrint('[OfflineQueue] Connectivity changed: ${_isOnline ? "Online" : "Offline"}');
-        
+
+        debugPrint(
+          '[OfflineQueue] Connectivity changed: ${_isOnline ? "Online" : "Offline"}',
+        );
+
         // If we just came online and have queued operations, process them
         if (!wasOnline && _isOnline && _queue.isNotEmpty) {
           debugPrint('[OfflineQueue] Connection restored, processing queue');

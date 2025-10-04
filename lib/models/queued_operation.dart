@@ -1,7 +1,8 @@
 /// Model for operations queued for execution when offline
 class QueuedOperation {
   final String id;
-  final String type; // 'task_create', 'task_update', 'task_delete', 'geofence_create', etc.
+  final String
+  type; // 'task_create', 'task_update', 'task_delete', 'geofence_create', etc.
   final Map<String, dynamic> data;
   final DateTime timestamp;
   final int retryCount;
