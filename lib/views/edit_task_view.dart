@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intelliboro/models/geofence_data.dart';
 import 'package:intelliboro/services/geofence_storage.dart';
+import 'package:intelliboro/model/task_model.dart';
+import 'package:intelliboro/services/geofencing_service.dart';
 import 'package:intelliboro/viewModel/Geofencing/map_viewmodel.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'dart:developer' as developer;
