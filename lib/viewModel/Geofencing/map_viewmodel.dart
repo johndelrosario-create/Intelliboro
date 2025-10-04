@@ -610,15 +610,17 @@ class MapboxMapViewModel extends ChangeNotifier {
     String? excludeId,
   }) async {
     debugPrint('[AutoAdjust] Starting adjustment check...');
-    debugPrint('[AutoAdjust] Start point: lat=${start.coordinates.lat}, lng=${start.coordinates.lng}');
+    debugPrint(
+      '[AutoAdjust] Start point: lat=${start.coordinates.lat}, lng=${start.coordinates.lng}',
+    );
     debugPrint('[AutoAdjust] New radius: ${radiusMeters}m');
     debugPrint('[AutoAdjust] Saved geofences count: ${_savedGeofences.length}');
-    
+
     if (_savedGeofences.isEmpty) {
       debugPrint('[AutoAdjust] No saved geofences, returning original point');
       return start;
     }
-    
+
     // Check nearest overlap
     GeofenceData? nearest;
     double nearestDist = double.infinity;
@@ -634,23 +636,29 @@ class MapboxMapViewModel extends ChangeNotifier {
         g.longitude,
       );
       final minAllowed = g.radiusMeters + radiusMeters + _overlapPaddingMeters;
-      debugPrint('[AutoAdjust] Geofence ${g.id}: distance=${d.toStringAsFixed(2)}m, minAllowed=${minAllowed.toStringAsFixed(2)}m, radius=${g.radiusMeters}m');
-      
+      debugPrint(
+        '[AutoAdjust] Geofence ${g.id}: distance=${d.toStringAsFixed(2)}m, minAllowed=${minAllowed.toStringAsFixed(2)}m, radius=${g.radiusMeters}m',
+      );
+
       if (d < minAllowed && d < nearestDist) {
         nearest = g;
         nearestDist = d;
         debugPrint('[AutoAdjust] Found potential overlap with ${g.id}');
       }
     }
-    
+
     if (nearest == null) {
       debugPrint('[AutoAdjust] No overlaps detected, returning original point');
       return start; // no overlap
     }
 
     debugPrint('[AutoAdjust] Overlap detected with geofence ${nearest.id}');
-    debugPrint('[AutoAdjust] Nearest distance: ${nearestDist.toStringAsFixed(2)}m');
-    debugPrint('[AutoAdjust] Required distance: ${(nearest.radiusMeters + radiusMeters + _overlapPaddingMeters).toStringAsFixed(2)}m');
+    debugPrint(
+      '[AutoAdjust] Nearest distance: ${nearestDist.toStringAsFixed(2)}m',
+    );
+    debugPrint(
+      '[AutoAdjust] Required distance: ${(nearest.radiusMeters + radiusMeters + _overlapPaddingMeters).toStringAsFixed(2)}m',
+    );
 
     // Compute bearing from nearest center to start and push outward
     final dy = (start.coordinates.lat.toDouble() - nearest.latitude);
@@ -672,11 +680,15 @@ class MapboxMapViewModel extends ChangeNotifier {
     final needed =
         (nearest.radiusMeters + radiusMeters + _overlapPaddingMeters) -
         nearestDist;
-    debugPrint('[AutoAdjust] Distance to push outward: ${needed.toStringAsFixed(2)}m');
-    
+    debugPrint(
+      '[AutoAdjust] Distance to push outward: ${needed.toStringAsFixed(2)}m',
+    );
+
     final adjusted = _offsetPoint(start, needed, bearing);
-    debugPrint('[AutoAdjust] Adjusted point: lat=${adjusted.coordinates.lat}, lng=${adjusted.coordinates.lng}');
-    
+    debugPrint(
+      '[AutoAdjust] Adjusted point: lat=${adjusted.coordinates.lat}, lng=${adjusted.coordinates.lng}',
+    );
+
     return adjusted;
   }
 
@@ -1298,20 +1310,37 @@ class MapboxMapViewModel extends ChangeNotifier {
     _debugTimer?.cancel();
     _debugTimer = null;
 
-    // Stop location tracking
-    _stopLocationTracking();
+    // Stop location tracking synchronously by canceling subscription immediately
+    _locationStreamSubscription?.cancel();
+    _locationStreamSubscription = null;
+    _isLocationTrackingActive = false;
+
+    // Stop the location service without awaiting (let it clean up in background)
+    _locationService.stopLocationTracking().catchError((e) {
+      debugPrint('[MapViewModel] Error stopping location service: $e');
+    });
 
     // IMPORTANT: Do NOT dispose the singleton geofencing service here.
     // Instead, unregister this view model so the service knows not to use it.
     _geofencingService.unregisterMapViewModel();
 
     // Clear any resources held by this specific view model
-    geofenceZoneHelper?.deleteAll().then((_) {
-      geofenceZoneHelper = null;
-    });
-    geofenceZoneSymbol?.deleteAll().then((_) {
-      geofenceZoneSymbol = null;
-    });
+    geofenceZoneHelper
+        ?.deleteAll()
+        .then((_) {
+          geofenceZoneHelper = null;
+        })
+        .catchError((e) {
+          debugPrint('[MapViewModel] Error deleting helper annotations: $e');
+        });
+    geofenceZoneSymbol
+        ?.deleteAll()
+        .then((_) {
+          geofenceZoneSymbol = null;
+        })
+        .catchError((e) {
+          debugPrint('[MapViewModel] Error deleting symbol annotations: $e');
+        });
     mapboxMap = null;
 
     super.dispose();

@@ -6,6 +6,8 @@ import 'dart:ui' show IsolateNameServer;
 import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:native_geofence/native_geofence.dart' as native_geofence;
+import 'package:intelliboro/model/geofence_model.dart';
+import 'package:intelliboro/services/database_service.dart';
 import 'package:intelliboro/viewModel/Geofencing/map_viewmodel.dart';
 import 'package:intelliboro/viewModel/notifications/callback.dart'
     show geofenceTriggered;
