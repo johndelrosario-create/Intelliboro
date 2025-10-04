@@ -169,9 +169,7 @@ class LocationService {
         _lastLocationTimestampKey,
         DateTime.now().millisecondsSinceEpoch,
       );
-      debugPrint(
-        "[LocationService] Location cached: ${position.latitude}, ${position.longitude}",
-      );
+      debugPrint("[LocationService] Location cached successfully");
     } catch (e) {
       debugPrint("[LocationService] Error caching location: $e");
     }
@@ -289,9 +287,7 @@ class LocationService {
         locationSettings: locationSettings,
       ).listen(
         (Position position) {
-          debugPrint(
-            "[LocationService] New location: ${position.latitude}, ${position.longitude}",
-          );
+          debugPrint("[LocationService] New location received and cached");
 
           // Cache the new location for offline use
           _cacheLocation(position);
@@ -368,7 +364,7 @@ class LocationService {
       await prefs.setDouble(_homeRegionCenterLngKey, centerLng);
       await prefs.setDouble(_homeRegionRadiusKey, radiusMeters);
       debugPrint(
-        "[LocationService] Hometown region cached: center($centerLat, $centerLng) radius: ${radiusMeters}m",
+        "[LocationService] Hometown region cached with radius: ${radiusMeters}m",
       );
     } catch (e) {
       debugPrint("[LocationService] Error caching hometown region: $e");
