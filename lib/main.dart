@@ -33,6 +33,7 @@ import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'package:intelliboro/services/audio_focus_guard.dart';
+import 'package:intelliboro/services/offline_operation_queue.dart';
 
 const String _kPermissionsPromptShown = 'permissions_prompt_shown_v1';
 
@@ -826,6 +827,18 @@ void main() async {
 
   // Defer other initializations to microtasks so first frame can render.
   Future.microtask(() async {
+    // Initialize offline operation queue
+    try {
+      await OfflineOperationQueue().init();
+      developer.log('[main] OfflineOperationQueue initialized');
+    } catch (e, st) {
+      developer.log(
+        '[main] Error initializing OfflineOperationQueue: $e',
+        error: e,
+        stackTrace: st,
+      );
+    }
+
     // Initialize geofencing service early so the port listener is registered
     try {
       await GeofencingService().init();
