@@ -1177,6 +1177,21 @@ class TaskTimerService extends ChangeNotifier {
   @override
   void dispose() {
     _timer?.cancel();
+    _timer = null;
+
+    // Cancel all running timers for individual tasks
+    for (final stopwatch in _runningTimers.values) {
+      stopwatch.stop();
+    }
+    _runningTimers.clear();
+
+    // Close the switch request stream controller
+    _switchController.close();
+    _pendingSwitchRequests.clear();
+
+    // Clear any pending timers that may be scheduled for _pendingUntil
+    _pendingUntil.clear();
+
     super.dispose();
   }
 
