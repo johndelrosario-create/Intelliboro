@@ -62,9 +62,11 @@ class TaskRepository {
   }
 
   Future<List<TaskModel>> getTasks() async {
-    final db = await DatabaseService().mainDb;
-    final List<Map<String, dynamic>> maps = await db.query('tasks');
-    return maps.map((map) => TaskModel.fromMap(map)).toList();
+    return _lock.synchronized(() async {
+      final db = await DatabaseService().mainDb;
+      final List<Map<String, dynamic>> maps = await db.query('tasks');
+      return maps.map((map) => TaskModel.fromMap(map)).toList();
+    });
   }
 
   // Update a task
@@ -99,33 +101,37 @@ class TaskRepository {
   }
 
   Future<TaskModel?> getTaskById(int id) async {
-    final db = await DatabaseService().mainDb;
-    final rows = await db.query(
-      'tasks',
-      where: 'id = ?',
-      whereArgs: [id],
-      limit: 1,
-    );
-    if (rows.isEmpty) return null;
-    return TaskModel.fromMap(rows.first);
+    return _lock.synchronized(() async {
+      final db = await DatabaseService().mainDb;
+      final rows = await db.query(
+        'tasks',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (rows.isEmpty) return null;
+      return TaskModel.fromMap(rows.first);
+    });
   }
 
   /// Update geofence_id for a task by its database id.
   Future<int> updateTaskGeofenceIdById(int id, String geofenceId) async {
-    final db = await DatabaseService().mainDb;
-    developer.log(
-      '[TaskRepository] updateTaskGeofenceIdById: id=$id -> geofence_id=$geofenceId',
-    );
-    final count = await db.update(
-      _tableName,
-      {'geofence_id': geofenceId},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
-    developer.log(
-      '[TaskRepository] updateTaskGeofenceIdById: updated $count row(s) for id=$id',
-    );
-    return count;
+    return _lock.synchronized(() async {
+      final db = await DatabaseService().mainDb;
+      developer.log(
+        '[TaskRepository] updateTaskGeofenceIdById: id=$id -> geofence_id=$geofenceId',
+      );
+      final count = await db.update(
+        _tableName,
+        {'geofence_id': geofenceId},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      developer.log(
+        '[TaskRepository] updateTaskGeofenceIdById: updated $count row(s) for id=$id',
+      );
+      return count;
+    });
   }
 
   /// Update geofence_id for task(s) by name. Returns number of rows affected.
@@ -134,20 +140,22 @@ class TaskRepository {
     String taskName,
     String geofenceId,
   ) async {
-    final db = await DatabaseService().mainDb;
-    developer.log(
-      '[TaskRepository] updateTaskGeofenceIdByName: name="$taskName" -> geofence_id=$geofenceId',
-    );
-    final count = await db.update(
-      _tableName,
-      {'geofence_id': geofenceId},
-      where: 'taskName = ?',
-      whereArgs: [taskName],
-    );
-    developer.log(
-      '[TaskRepository] updateTaskGeofenceIdByName: updated $count row(s) for name="$taskName"',
-    );
-    return count;
+    return _lock.synchronized(() async {
+      final db = await DatabaseService().mainDb;
+      developer.log(
+        '[TaskRepository] updateTaskGeofenceIdByName: name="$taskName" -> geofence_id=$geofenceId',
+      );
+      final count = await db.update(
+        _tableName,
+        {'geofence_id': geofenceId},
+        where: 'taskName = ?',
+        whereArgs: [taskName],
+      );
+      developer.log(
+        '[TaskRepository] updateTaskGeofenceIdByName: updated $count row(s) for name="$taskName"',
+      );
+      return count;
+    });
   }
 
   /// Delete a task by id
