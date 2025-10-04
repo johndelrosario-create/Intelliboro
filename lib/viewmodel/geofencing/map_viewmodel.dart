@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:intelliboro/services/geofencing_service.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
@@ -11,8 +10,79 @@ import 'package:intelliboro/services/offline_map_service.dart';
 import 'package:intelliboro/repository/task_repository.dart';
 import 'package:intelliboro/models/geofence_data.dart';
 
+// Simple grid cell for spatial index
+class GridCell {
+  final int x;
+  final int y;
+  const GridCell(this.x, this.y);
+
+  @override
+  bool operator ==(Object other) =>
+      other is GridCell && other.x == x && other.y == y;
+  @override
+  int get hashCode => x.hashCode ^ y.hashCode;
+}
+
 // Change Notifier, re-renderviews when data is changed.
 class MapboxMapViewModel extends ChangeNotifier {
+  // Spatial index: grid-based for simplicity
+  final Map<GridCell, List<GeofenceData>> _spatialGrid = {};
+  final double _cellSize = 0.01; // ~1km grid cells (latitude/longitude)
+
+  void buildSpatialIndex() {
+    _spatialGrid.clear();
+    for (var geofence in _savedGeofences) {
+      final cell = _getCell(geofence.latitude, geofence.longitude);
+      _spatialGrid.putIfAbsent(cell, () => []).add(geofence);
+    }
+  }
+
+  GridCell _getCell(double lat, double lng) {
+    return GridCell((lat / _cellSize).floor(), (lng / _cellSize).floor());
+  }
+
+  List<GeofenceData> queryNearbyGeofences(
+    double lat,
+    double lng, {
+    double radiusKm = 1.0,
+  }) {
+    final centerCell = _getCell(lat, lng);
+    final cellsToCheck = <GridCell>[];
+    final cellRadius = (radiusKm / _cellSize).ceil();
+    for (int dx = -cellRadius; dx <= cellRadius; dx++) {
+      for (int dy = -cellRadius; dy <= cellRadius; dy++) {
+        cellsToCheck.add(GridCell(centerCell.x + dx, centerCell.y + dy));
+      }
+    }
+    final results = <GeofenceData>[];
+    for (var cell in cellsToCheck) {
+      if (_spatialGrid.containsKey(cell)) {
+        results.addAll(_spatialGrid[cell]!);
+      }
+    }
+    // Optionally filter by exact distance
+    return results
+        .where(
+          (g) => _distanceKm(lat, lng, g.latitude, g.longitude) <= radiusKm,
+        )
+        .toList();
+  }
+
+  double _distanceKm(double lat1, double lng1, double lat2, double lng2) {
+    // Haversine formula (approximate, returns km)
+    const R = 6371.0; // Earth radius in km
+    final dLat = _deg2rad(lat2 - lat1);
+    final dLng = _deg2rad(lng2 - lng1);
+    final a =
+        math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_deg2rad(lat1)) *
+            math.cos(_deg2rad(lat2)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return R * c;
+  }
+
   final LocationService _locationService;
   // Get the singleton instance of the GeofencingService
   final GeofencingService _geofencingService = GeofencingService();
@@ -116,6 +186,7 @@ class MapboxMapViewModel extends ChangeNotifier {
       debugPrint(
         '[MapViewModel] Found ${_savedGeofences.length} saved geofences',
       );
+      buildSpatialIndex();
 
       if (isMapReady && mapboxMap != null) {
         await _displaySavedGeofences();
@@ -185,27 +256,25 @@ class MapboxMapViewModel extends ChangeNotifier {
   }
 
   void _showError(BuildContext context, String message) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 5),
-        ),
-      );
-    }
+    if (!context.mounted || _isDisposed) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 5),
+      ),
+    );
   }
 
   void _showSuccess(BuildContext context, String message) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Colors.green,
-          duration: const Duration(seconds: 2),
-        ),
-      );
-    }
+    if (!context.mounted || _isDisposed) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   void startDebugLogging() {
@@ -506,7 +575,9 @@ class MapboxMapViewModel extends ChangeNotifier {
   // Save the edited geofence (radius and/or center) back to DB and native
   Future<void> saveEditedGeofence(BuildContext context) async {
     if (_editingGeofenceId == null || selectedPoint == null) {
-      _showError(context, 'No geofence selected to edit.');
+      if (context.mounted) {
+        _showError(context, 'No geofence selected to edit.');
+      }
       return;
     }
     try {
@@ -547,13 +618,17 @@ class MapboxMapViewModel extends ChangeNotifier {
 
       // Refresh visual display
       await _displaySavedGeofences();
-      _showSuccess(context, 'Geofence updated.');
+      if (context.mounted) {
+        _showSuccess(context, 'Geofence updated.');
+      }
       // Exit editing mode
       _editingGeofenceId = null;
       notifyListeners();
     } catch (e, st) {
       debugPrint('Failed to save edited geofence: $e\n$st');
-      _showError(context, 'Failed to update geofence: $e');
+      if (context.mounted) {
+        _showError(context, 'Failed to update geofence: $e');
+      }
     }
   }
 
