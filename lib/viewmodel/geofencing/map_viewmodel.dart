@@ -24,8 +24,8 @@ class GridCell {
 }
 
 // Change Notifier, re-renderviews when data is changed.
-class MapboxMapViewModel extends ChangeNotifier {
   // Spatial index: grid-based for simplicity
+class MapboxMapViewModel extends ChangeNotifier {
   final Map<GridCell, List<GeofenceData>> _spatialGrid = {};
   final double _cellSize = 0.01; // ~1km grid cells (latitude/longitude)
 
