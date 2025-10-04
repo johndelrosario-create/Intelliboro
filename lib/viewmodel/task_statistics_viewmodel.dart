@@ -10,6 +10,13 @@ class TaskStatisticsViewModel extends ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
 
+  // Pagination state
+  static const int _pageSize = 20;
+  int _currentPage = 0;
+  bool _hasMoreData = true;
+  bool _isLoadingMore = false;
+  List<TaskHistoryModel> _allLoadedHistory = [];
+
   // Statistics data
   List<TaskHistoryModel> _weeklyHistory = [];
   List<TaskHistoryModel> _monthlyHistory = [];
@@ -26,7 +33,10 @@ class TaskStatisticsViewModel extends ChangeNotifier {
 
   // Getters
   bool get isLoading => _isLoading;
+  bool get isLoadingMore => _isLoadingMore;
+  bool get hasMoreData => _hasMoreData;
   String? get errorMessage => _errorMessage;
+  List<TaskHistoryModel> get allLoadedHistory => _allLoadedHistory;
   List<TaskHistoryModel> get weeklyHistory => _weeklyHistory;
   List<TaskHistoryModel> get monthlyHistory => _monthlyHistory;
   Map<String, int> get taskCountByDay => _taskCountByDay;
@@ -37,6 +47,8 @@ class TaskStatisticsViewModel extends ChangeNotifier {
   Duration get averageTaskDuration => _averageTaskDuration;
   int get currentWeekTasks => _currentWeekTasks;
   int get currentMonthTasks => _currentMonthTasks;
+  int get currentPage => _currentPage;
+  int get pageSize => _pageSize;
 
   TaskStatisticsViewModel() {
     loadStatistics();
@@ -55,11 +67,25 @@ class TaskStatisticsViewModel extends ChangeNotifier {
       final startOfWeek = now.subtract(Duration(days: now.weekday - 1));
       final startOfMonth = DateTime(now.year, now.month, 1);
 
-      // Load task history for the past 30 days
-      // Get all history and filter locally for the date range we care about
-      final allHistory = await _taskRepository.getAllTaskHistory();
+      // Load initial page of task history with pagination
+      final initialHistory = await _taskRepository.getTaskHistoryPaginated(
+        limit: _pageSize,
+        offset: 0,
+      );
+
+      // Store the loaded history
+      _allLoadedHistory = initialHistory;
+      _currentPage = 0;
+      _hasMoreData = initialHistory.length >= _pageSize;
+
+      developer.log(
+        '[TaskStatisticsViewModel] Loaded ${initialHistory.length} initial history records',
+      );
+
+      // For statistics calculations, we need data from the past 30 days
+      // Filter the loaded data for the date range we care about
       final filteredHistory =
-          allHistory
+          initialHistory
               .where(
                 (h) =>
                     h.completionDate.isAfter(
@@ -70,7 +96,7 @@ class TaskStatisticsViewModel extends ChangeNotifier {
               .toList();
 
       developer.log(
-        '[TaskStatisticsViewModel] Loaded ${allHistory.length} history records',
+        '[TaskStatisticsViewModel] Filtered to ${filteredHistory.length} records for statistics',
       );
 
       // Filter for weekly and monthly data
@@ -230,5 +256,82 @@ class TaskStatisticsViewModel extends ChangeNotifier {
   @override
   void dispose() {
     super.dispose();
+  }
+
+  /// Load more task history (for pagination)
+  Future<void> loadMoreHistory() async {
+    if (_isLoadingMore || !_hasMoreData || _isLoading) {
+      developer.log(
+        '[TaskStatisticsViewModel] Skipping loadMoreHistory - isLoadingMore: $_isLoadingMore, hasMoreData: $_hasMoreData, isLoading: $_isLoading',
+      );
+      return;
+    }
+
+    _isLoadingMore = true;
+    notifyListeners();
+
+    try {
+      developer.log(
+        '[TaskStatisticsViewModel] Loading more history - page: ${_currentPage + 1}, pageSize: $_pageSize',
+      );
+
+      final offset = (_currentPage + 1) * _pageSize;
+      final newHistory = await _taskRepository.getTaskHistoryPaginated(
+        limit: _pageSize,
+        offset: offset,
+      );
+
+      developer.log(
+        '[TaskStatisticsViewModel] Loaded ${newHistory.length} more history records',
+      );
+
+      if (newHistory.isEmpty || newHistory.length < _pageSize) {
+        _hasMoreData = false;
+        developer.log('[TaskStatisticsViewModel] No more data to load');
+      }
+
+      if (newHistory.isNotEmpty) {
+        _allLoadedHistory.addAll(newHistory);
+        _currentPage++;
+        developer.log(
+          '[TaskStatisticsViewModel] Current page: $_currentPage, Total records: ${_allLoadedHistory.length}',
+        );
+      }
+
+      _isLoadingMore = false;
+      notifyListeners();
+    } catch (e, stackTrace) {
+      developer.log(
+        '[TaskStatisticsViewModel] Error loading more history',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      _errorMessage = 'Failed to load more history: ${e.toString()}';
+      _isLoadingMore = false;
+      notifyListeners();
+    }
+  }
+
+  /// Reset pagination and reload from the beginning
+  Future<void> resetPagination() async {
+    developer.log('[TaskStatisticsViewModel] Resetting pagination');
+    _currentPage = 0;
+    _hasMoreData = true;
+    _allLoadedHistory.clear();
+    await loadStatistics();
+  }
+
+  /// Get total count of all task history records
+  Future<int> getTotalHistoryCount() async {
+    try {
+      return await _taskRepository.getTaskHistoryCount();
+    } catch (e, stackTrace) {
+      developer.log(
+        '[TaskStatisticsViewModel] Error getting total history count',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return 0;
+    }
   }
 }

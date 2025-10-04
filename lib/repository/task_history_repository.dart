@@ -140,6 +140,131 @@ class TaskHistoryRepository {
     }
   }
 
+  /// Get paginated task history entries
+  /// [limit] - Maximum number of records to return (default: 20)
+  /// [offset] - Number of records to skip (default: 0)
+  /// Returns a list of TaskHistoryModel with the specified pagination
+  Future<List<TaskHistoryModel>> getTaskHistoryPaginated({
+    int limit = 20,
+    int offset = 0,
+  }) async {
+    try {
+      final db = await _databaseService.mainDb;
+      final historyData = await _databaseService.getTaskHistoryPaginated(
+        db,
+        limit: limit,
+        offset: offset,
+      );
+
+      developer.log(
+        '[TaskHistoryRepository] Retrieved ${historyData.length} paginated task history records (limit: $limit, offset: $offset)',
+      );
+
+      return historyData.map((data) => TaskHistoryModel.fromMap(data)).toList();
+    } catch (e, stackTrace) {
+      developer.log(
+        '[TaskHistoryRepository] Error getting paginated task history',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return [];
+    }
+  }
+
+  /// Get total count of task history records
+  Future<int> getTaskHistoryCount() async {
+    try {
+      final db = await _databaseService.mainDb;
+      return await _databaseService.getTaskHistoryCount(db);
+    } catch (e, stackTrace) {
+      developer.log(
+        '[TaskHistoryRepository] Error getting task history count',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return 0;
+    }
+  }
+
+  /// Get paginated task history for a specific task
+  Future<List<TaskHistoryModel>> getTaskHistoryByTaskIdPaginated(
+    int taskId, {
+    int limit = 20,
+    int offset = 0,
+  }) async {
+    try {
+      final db = await _databaseService.mainDb;
+      final historyData = await _databaseService
+          .getTaskHistoryByTaskIdPaginated(
+            db,
+            taskId,
+            limit: limit,
+            offset: offset,
+          );
+
+      developer.log(
+        '[TaskHistoryRepository] Retrieved ${historyData.length} paginated task history records for task $taskId (limit: $limit, offset: $offset)',
+      );
+
+      return historyData.map((data) => TaskHistoryModel.fromMap(data)).toList();
+    } catch (e, stackTrace) {
+      developer.log(
+        '[TaskHistoryRepository] Error getting paginated task history by task ID',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return [];
+    }
+  }
+
+  /// Get count of task history records for a specific task
+  Future<int> getTaskHistoryCountByTaskId(int taskId) async {
+    try {
+      final db = await _databaseService.mainDb;
+      return await _databaseService.getTaskHistoryCountByTaskId(db, taskId);
+    } catch (e, stackTrace) {
+      developer.log(
+        '[TaskHistoryRepository] Error getting task history count by task ID',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return 0;
+    }
+  }
+
+  /// Get paginated task history by date range
+  Future<List<TaskHistoryModel>> getTaskHistoryByDateRangePaginated(
+    String startDate,
+    String endDate, {
+    int limit = 20,
+    int offset = 0,
+  }) async {
+    try {
+      final db = await _databaseService.mainDb;
+      final historyData = await _databaseService
+          .getTaskHistoryByDateRangePaginated(
+            db,
+            startDate,
+            endDate,
+            limit: limit,
+            offset: offset,
+          );
+
+      developer.log(
+        '[TaskHistoryRepository] Retrieved ${historyData.length} paginated task history records for date range (limit: $limit, offset: $offset)',
+      );
+
+      return historyData.map((data) => TaskHistoryModel.fromMap(data)).toList();
+    } catch (e, stackTrace) {
+      developer.log(
+        '[TaskHistoryRepository] Error getting paginated task history by date range',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return [];
+    }
+  }
+
   /// Get task history aggregated by date
   Future<Map<DateTime, List<TaskHistoryModel>>> getTaskHistoryByDate() async {
     try {
