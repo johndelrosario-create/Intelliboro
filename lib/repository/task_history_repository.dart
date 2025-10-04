@@ -208,4 +208,59 @@ class TaskHistoryRepository {
       );
     });
   }
+
+  /// Get formatted total times for multiple tasks in a single batch query
+  /// This is much more efficient than calling getFormattedTotalTime for each task
+  Future<Map<int, String>> getBatchFormattedTotalTimes(
+    List<int> taskIds,
+  ) async {
+    if (taskIds.isEmpty) return {};
+
+    try {
+      final db = await _databaseService.mainDb;
+
+      // Create placeholders for IN clause
+      final placeholders = List.filled(taskIds.length, '?').join(',');
+
+      // Single query to get total duration for all tasks
+      final results = await db.rawQuery('''
+        SELECT task_id, SUM(duration_seconds) as total_seconds
+        FROM task_history
+        WHERE task_id IN ($placeholders)
+        GROUP BY task_id
+      ''', taskIds);
+
+      // Convert to formatted strings
+      final Map<int, String> formattedTimes = {};
+      for (final row in results) {
+        final taskId = row['task_id'] as int;
+        final totalSeconds = row['total_seconds'] as int? ?? 0;
+        final duration = Duration(seconds: totalSeconds);
+        formattedTimes[taskId] = _formatDuration(duration);
+      }
+
+      // Add "No time tracked" for tasks with no history
+      for (final taskId in taskIds) {
+        if (!formattedTimes.containsKey(taskId)) {
+          formattedTimes[taskId] = 'No time tracked';
+        }
+      }
+
+      developer.log(
+        '[TaskHistoryRepository] Batch loaded times for ${taskIds.length} tasks',
+      );
+
+      return formattedTimes;
+    } catch (e) {
+      developer.log(
+        '[TaskHistoryRepository] Error batch loading task times: $e',
+      );
+      // Return empty times on error
+      return Map.fromIterable(
+        taskIds,
+        key: (id) => id,
+        value: (_) => 'Error loading time',
+      );
+    }
+  }
 }
