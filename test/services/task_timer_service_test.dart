@@ -33,7 +33,10 @@ void main() {
     });
 
     test('should have default snooze duration of 5 minutes', () {
-      expect(timerService.defaultSnoozeDuration, equals(const Duration(minutes: 5)));
+      expect(
+        timerService.defaultSnoozeDuration,
+        equals(const Duration(minutes: 5)),
+      );
     });
 
     test('should update default snooze duration', () {
@@ -69,7 +72,7 @@ void main() {
 
       await timerService.addToPending(task, const Duration(seconds: 5));
       expect(timerService.isPending(1), isTrue);
-      
+
       final pendingUntil = timerService.getPendingUntil(1);
       expect(pendingUntil, isNotNull);
       expect(pendingUntil!.isAfter(DateTime.now()), isTrue);
@@ -87,17 +90,20 @@ void main() {
       );
 
       await timerService.addToPending(task, const Duration(minutes: 5));
-      
+
       final remaining = timerService.getPendingRemaining(1);
       expect(remaining, isNotNull);
       expect(remaining!.inMinutes, lessThanOrEqualTo(5));
-      expect(remaining.inMinutes, greaterThanOrEqualTo(4)); // Should be close to 5 minutes
+      expect(
+        remaining.inMinutes,
+        greaterThanOrEqualTo(4),
+      ); // Should be close to 5 minutes
     });
 
     test('should return null for non-pending task', () {
       final remaining = timerService.getPendingRemaining(999);
       expect(remaining, isNull);
-      
+
       final pendingUntil = timerService.getPendingUntil(999);
       expect(pendingUntil, isNull);
     });
@@ -324,9 +330,12 @@ void main() {
 
       // Wait for expiration
       await Future.delayed(const Duration(milliseconds: 200));
-      
+
       // Should be cleared (though actual cleanup happens in timer callback)
-      expect(timerService.getPendingRemaining(1)?.inMilliseconds ?? 0, lessThanOrEqualTo(0));
+      expect(
+        timerService.getPendingRemaining(1)?.inMilliseconds ?? 0,
+        lessThanOrEqualTo(0),
+      );
     });
   });
 }

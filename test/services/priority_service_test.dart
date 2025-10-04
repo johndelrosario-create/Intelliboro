@@ -16,7 +16,7 @@ void main() {
 
   setUp(() async {
     priorityService = PriorityService();
-    
+
     // Create in-memory database for testing
     db = await openDatabase(
       inMemoryDatabasePath,
@@ -178,10 +178,11 @@ void main() {
         'geofence_id': 'geo_c',
       });
 
-      final results = await priorityService.getTasksForLocation(
-        db,
-        ['geo_a', 'geo_b', 'geo_c'],
-      );
+      final results = await priorityService.getTasksForLocation(db, [
+        'geo_a',
+        'geo_b',
+        'geo_c',
+      ]);
 
       expect(results.length, equals(3));
       expect(results[0].taskPriority, equals(4)); // Highest first
@@ -219,10 +220,10 @@ void main() {
         'geofence_id': 'geo_y',
       });
 
-      final results = await priorityService.getTasksForLocation(
-        db,
-        ['geo_x', 'geo_y'],
-      );
+      final results = await priorityService.getTasksForLocation(db, [
+        'geo_x',
+        'geo_y',
+      ]);
 
       expect(results.length, equals(1)); // Should deduplicate
       expect(results[0].taskPriority, equals(4)); // Should keep higher priority
@@ -303,7 +304,7 @@ void main() {
 
     test('should prioritize tasks with effective priority calculation', () async {
       final now = DateTime.now();
-      
+
       // Task with lower priority but sooner deadline
       await db.insert('tasks', {
         'taskName': 'Soon Low Priority',

@@ -30,7 +30,7 @@ void main() {
 
     test('should enqueue operations', () async {
       await queue.init();
-      
+
       final operation = QueuedOperation(
         id: 'test_1',
         type: 'task_create',
@@ -45,7 +45,7 @@ void main() {
 
     test('should queue task creation', () async {
       await queue.init();
-      
+
       final task = TaskModel(
         taskName: 'Test Task',
         taskPriority: 3,
@@ -61,7 +61,7 @@ void main() {
 
     test('should queue task update', () async {
       await queue.init();
-      
+
       final task = TaskModel(
         id: 123,
         taskName: 'Updated Task',
@@ -78,14 +78,14 @@ void main() {
 
     test('should queue task deletion', () async {
       await queue.init();
-      
+
       await queue.queueTaskDelete(456);
       expect(queue.queueSize, equals(1));
     });
 
     test('should queue geofence creation', () async {
       await queue.init();
-      
+
       final geofence = GeofenceData(
         id: 'geo_123',
         latitude: 37.7749,
@@ -104,7 +104,7 @@ void main() {
 
     test('should queue geofence update', () async {
       await queue.init();
-      
+
       final geofence = GeofenceData(
         id: 'geo_456',
         latitude: 40.7128,
@@ -123,14 +123,14 @@ void main() {
 
     test('should queue geofence deletion', () async {
       await queue.init();
-      
+
       await queue.queueGeofenceDelete('geo_789');
       expect(queue.queueSize, equals(1));
     });
 
     test('should persist queue to storage', () async {
       await queue.init();
-      
+
       final operation = QueuedOperation(
         id: 'persist_test',
         type: 'task_create',
@@ -139,22 +139,22 @@ void main() {
       );
 
       await queue.enqueue(operation);
-      
+
       // Create new instance to test persistence
       final newQueue = OfflineOperationQueue();
       await newQueue.init();
-      
+
       expect(newQueue.queueSize, equals(1));
       newQueue.dispose();
     });
 
     test('should clear queue', () async {
       await queue.init();
-      
+
       await queue.queueTaskDelete(1);
       await queue.queueTaskDelete(2);
       expect(queue.queueSize, equals(2));
-      
+
       await queue.clearQueue();
       expect(queue.queueSize, equals(0));
       expect(queue.hasPendingOperations, isFalse);
@@ -162,7 +162,7 @@ void main() {
 
     test('should handle operation with retry count', () async {
       await queue.init();
-      
+
       final operation = QueuedOperation(
         id: 'retry_test',
         type: 'task_create',
@@ -177,7 +177,7 @@ void main() {
 
     test('should handle operation with error', () async {
       await queue.init();
-      
+
       final operation = QueuedOperation(
         id: 'error_test',
         type: 'task_create',
@@ -220,10 +220,7 @@ void main() {
         retryCount: 0,
       );
 
-      final updated = original.copyWith(
-        retryCount: 3,
-        error: 'New error',
-      );
+      final updated = original.copyWith(retryCount: 3, error: 'New error');
 
       expect(updated.id, equals(original.id));
       expect(updated.type, equals(original.type));
@@ -234,28 +231,32 @@ void main() {
 
     test('should handle multiple operations in order', () async {
       await queue.init();
-      
-      await queue.queueTaskCreate(TaskModel(
-        taskName: 'Task 1',
-        taskPriority: 1,
-        taskTime: null,
-        taskDate: null,
-        isRecurring: false,
-        isCompleted: false,
-      ));
-      
+
+      await queue.queueTaskCreate(
+        TaskModel(
+          taskName: 'Task 1',
+          taskPriority: 1,
+          taskTime: null,
+          taskDate: null,
+          isRecurring: false,
+          isCompleted: false,
+        ),
+      );
+
       await queue.queueTaskDelete(123);
-      
-      await queue.queueGeofenceCreate(GeofenceData(
-        id: 'geo_1',
-        latitude: 0.0,
-        longitude: 0.0,
-        radiusMeters: 50.0,
-        fillColor: 'FFFFFFFF',
-        fillOpacity: 0.5,
-        strokeColor: 'FF000000',
-        strokeWidth: 1.0,
-      ));
+
+      await queue.queueGeofenceCreate(
+        GeofenceData(
+          id: 'geo_1',
+          latitude: 0.0,
+          longitude: 0.0,
+          radiusMeters: 50.0,
+          fillColor: 'FFFFFFFF',
+          fillOpacity: 0.5,
+          strokeColor: 'FF000000',
+          strokeWidth: 1.0,
+        ),
+      );
 
       expect(queue.queueSize, equals(3));
     });

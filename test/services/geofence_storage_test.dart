@@ -145,7 +145,7 @@ void main() {
       );
 
       await storage.saveGeofence(geofence);
-      
+
       var geofences = await storage.loadGeofences();
       expect(geofences.length, equals(1));
 
