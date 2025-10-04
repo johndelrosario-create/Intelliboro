@@ -2,10 +2,12 @@ import 'dart:developer' as developer;
 import 'package:intelliboro/model/task_history_model.dart';
 import 'package:intelliboro/services/database_service.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:synchronized/synchronized.dart';
 
 /// Repository for managing task history data
 class TaskHistoryRepository {
   final DatabaseService _databaseService = DatabaseService();
+  final _lock = Lock();
 
   /// Get all task history entries for a specific task ID
   Future<List<TaskHistoryModel>> getTaskHistory(int taskId) async {
@@ -175,13 +177,16 @@ class TaskHistoryRepository {
     required int taskId,
     required DateTime startedAt,
   }) async {
-    final db = await DatabaseService().mainDb;
-    await db.insert('task_history', {
-      'task_id': taskId,
-      'start_time': (startedAt.millisecondsSinceEpoch ~/ 1000), // store seconds
-      'end_time': null,
-      'duration_seconds': null,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    return _lock.synchronized(() async {
+      final db = await DatabaseService().mainDb;
+      await db.insert('task_history', {
+        'task_id': taskId,
+        'start_time':
+            (startedAt.millisecondsSinceEpoch ~/ 1000), // store seconds
+        'end_time': null,
+        'duration_seconds': null,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
   Future<void> endSession({
@@ -189,16 +194,18 @@ class TaskHistoryRepository {
     required DateTime endedAt,
     required Duration duration,
   }) async {
-    final db = await DatabaseService().mainDb;
-    // Update the most recent open session for this task (end_time is NULL)
-    await db.update(
-      'task_history',
-      {
-        'end_time': (endedAt.millisecondsSinceEpoch ~/ 1000), // seconds
-        'duration_seconds': duration.inSeconds,
-      },
-      where: 'task_id = ? AND end_time IS NULL',
-      whereArgs: [taskId],
-    );
+    return _lock.synchronized(() async {
+      final db = await DatabaseService().mainDb;
+      // Update the most recent open session for this task (end_time is NULL)
+      await db.update(
+        'task_history',
+        {
+          'end_time': (endedAt.millisecondsSinceEpoch ~/ 1000), // seconds
+          'duration_seconds': duration.inSeconds,
+        },
+        where: 'task_id = ? AND end_time IS NULL',
+        whereArgs: [taskId],
+      );
+    });
   }
 }
