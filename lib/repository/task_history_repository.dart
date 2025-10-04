@@ -2,10 +2,12 @@ import 'dart:developer' as developer;
 import 'package:intelliboro/model/task_history_model.dart';
 import 'package:intelliboro/services/database_service.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:synchronized/synchronized.dart';
 
 /// Repository for managing task history data
 class TaskHistoryRepository {
   final DatabaseService _databaseService = DatabaseService();
+  final _lock = Lock();
 
   /// Get all task history entries for a specific task ID
   Future<List<TaskHistoryModel>> getTaskHistory(int taskId) async {
@@ -175,13 +177,16 @@ class TaskHistoryRepository {
     required int taskId,
     required DateTime startedAt,
   }) async {
-    final db = await DatabaseService().mainDb;
-    await db.insert('task_history', {
-      'task_id': taskId,
-      'start_time': (startedAt.millisecondsSinceEpoch ~/ 1000), // store seconds
-      'end_time': null,
-      'duration_seconds': null,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    return _lock.synchronized(() async {
+      final db = await DatabaseService().mainDb;
+      await db.insert('task_history', {
+        'task_id': taskId,
+        'start_time':
+            (startedAt.millisecondsSinceEpoch ~/ 1000), // store seconds
+        'end_time': null,
+        'duration_seconds': null,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
   Future<void> endSession({
@@ -189,16 +194,73 @@ class TaskHistoryRepository {
     required DateTime endedAt,
     required Duration duration,
   }) async {
-    final db = await DatabaseService().mainDb;
-    // Update the most recent open session for this task (end_time is NULL)
-    await db.update(
-      'task_history',
-      {
-        'end_time': (endedAt.millisecondsSinceEpoch ~/ 1000), // seconds
-        'duration_seconds': duration.inSeconds,
-      },
-      where: 'task_id = ? AND end_time IS NULL',
-      whereArgs: [taskId],
-    );
+    return _lock.synchronized(() async {
+      final db = await DatabaseService().mainDb;
+      // Update the most recent open session for this task (end_time is NULL)
+      await db.update(
+        'task_history',
+        {
+          'end_time': (endedAt.millisecondsSinceEpoch ~/ 1000), // seconds
+          'duration_seconds': duration.inSeconds,
+        },
+        where: 'task_id = ? AND end_time IS NULL',
+        whereArgs: [taskId],
+      );
+    });
+  }
+
+  /// Get formatted total times for multiple tasks in a single batch query
+  /// This is much more efficient than calling getFormattedTotalTime for each task
+  Future<Map<int, String>> getBatchFormattedTotalTimes(
+    List<int> taskIds,
+  ) async {
+    if (taskIds.isEmpty) return {};
+
+    try {
+      final db = await _databaseService.mainDb;
+
+      // Create placeholders for IN clause
+      final placeholders = List.filled(taskIds.length, '?').join(',');
+
+      // Single query to get total duration for all tasks
+      final results = await db.rawQuery('''
+        SELECT task_id, SUM(duration_seconds) as total_seconds
+        FROM task_history
+        WHERE task_id IN ($placeholders)
+        GROUP BY task_id
+      ''', taskIds);
+
+      // Convert to formatted strings
+      final Map<int, String> formattedTimes = {};
+      for (final row in results) {
+        final taskId = row['task_id'] as int;
+        final totalSeconds = row['total_seconds'] as int? ?? 0;
+        final duration = Duration(seconds: totalSeconds);
+        formattedTimes[taskId] = _formatDuration(duration);
+      }
+
+      // Add "No time tracked" for tasks with no history
+      for (final taskId in taskIds) {
+        if (!formattedTimes.containsKey(taskId)) {
+          formattedTimes[taskId] = 'No time tracked';
+        }
+      }
+
+      developer.log(
+        '[TaskHistoryRepository] Batch loaded times for ${taskIds.length} tasks',
+      );
+
+      return formattedTimes;
+    } catch (e) {
+      developer.log(
+        '[TaskHistoryRepository] Error batch loading task times: $e',
+      );
+      // Return empty times on error
+      return Map.fromIterable(
+        taskIds,
+        key: (id) => id,
+        value: (_) => 'Error loading time',
+      );
+    }
   }
 }

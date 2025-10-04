@@ -708,6 +708,19 @@ Future<void> geofenceTriggered(
         developer.log(
           '[GeofenceCallback] WARNING: Database connection is not open, reconnecting...',
         );
+
+        // Close the old connection first
+        if (database.isOpen && database != currentDb) {
+          try {
+            await database.close();
+            developer.log('[GeofenceCallback] Closed old database connection');
+          } catch (closeError) {
+            developer.log(
+              '[GeofenceCallback] Error closing old connection: $closeError',
+            );
+          }
+        }
+
         final newDb = await dbService.openNewBackgroundConnection(
           readOnly: false,
         );
@@ -718,6 +731,8 @@ Future<void> geofenceTriggered(
           return;
         }
         currentDb = newDb;
+        database =
+            newDb; // Update the outer variable so finally block closes the right connection
       }
 
       // Log database path for debugging
@@ -778,6 +793,21 @@ Future<void> geofenceTriggered(
             developer.log(
               '[GeofenceCallback] Retrying with fresh database connection...',
             );
+
+            // Close the old connection if it's different from the database variable
+            if (currentDb != database && currentDb.isOpen) {
+              try {
+                await currentDb.close();
+                developer.log(
+                  '[GeofenceCallback] Closed previous database connection before retry',
+                );
+              } catch (closeError) {
+                developer.log(
+                  '[GeofenceCallback] Error closing old connection: $closeError',
+                );
+              }
+            }
+
             // Ensure the retry connection is writable
             final retryDb = await dbService.openNewBackgroundConnection(
               readOnly: false,
@@ -796,7 +826,11 @@ Future<void> geofenceTriggered(
               };
 
               await dbService.insertNotificationHistory(retryDb, recordMap);
-              currentDb = retryDb; // Update current DB reference
+
+              // Update current DB reference and the outer database variable
+              currentDb = retryDb;
+              database = retryDb;
+
               developer.log(
                 '[GeofenceCallback] Successfully saved record on retry for geofence ID: ${geofence.id}', // Added geofence.id for clarity
               );

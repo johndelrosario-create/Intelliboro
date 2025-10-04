@@ -41,10 +41,18 @@ class DatabaseService {
           readOnly: false,
           singleInstance: true,
         );
+
+        // Verify the connection is actually open
+        if (!db.isOpen) {
+          throw Exception('Database connection failed to open');
+        }
+
         _mainIsolateDatabase = db;
         return db;
       } catch (e) {
         developer.log("[DatabaseService] Failed to initialize database: $e");
+        // Reset the database variable on failure so next call can retry
+        _mainIsolateDatabase = null;
         rethrow;
       }
     });
@@ -80,6 +88,19 @@ class DatabaseService {
       onDowngrade: onDatabaseDowngradeDelete,
       readOnly: readOnly,
       singleInstance: singleInstance,
+      onConfigure: (Database db) async {
+        // Enable WAL mode for better concurrent access
+        // WAL allows multiple readers and one writer at the same time
+        await db.execute('PRAGMA journal_mode=WAL;');
+
+        // Set busy timeout to 5 seconds to handle concurrent access
+        // This prevents immediate "database is locked" errors
+        await db.execute('PRAGMA busy_timeout=5000;');
+
+        developer.log(
+          '[DatabaseService] Configured database with WAL mode and busy timeout',
+        );
+      },
     );
 
     if (!db.isOpen) {
@@ -753,5 +774,22 @@ class DatabaseService {
     _mainIsolateDatabase = null; // Clear the static instance
     _dbInitializingCompleter =
         null; // Reset completer so next mainDb call starts fresh
+  }
+
+  /// Validate database connection is open and ready
+  /// Returns true if connection is valid, false otherwise
+  bool isDatabaseOpen() {
+    return _mainIsolateDatabase != null && _mainIsolateDatabase!.isOpen;
+  }
+
+  /// Get database status for debugging
+  String getDatabaseStatus() {
+    if (_mainIsolateDatabase == null) {
+      return 'Database not initialized';
+    }
+    if (!_mainIsolateDatabase!.isOpen) {
+      return 'Database initialized but closed';
+    }
+    return 'Database open at ${_mainIsolateDatabase!.path}';
   }
 }

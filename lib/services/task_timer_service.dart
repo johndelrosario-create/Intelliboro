@@ -17,6 +17,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:intelliboro/services/notification_service.dart'
     show notificationPlugin;
 import 'package:intelliboro/services/text_to_speech_service.dart';
+import 'package:sqflite/sqflite.dart';
 
 /// Request emitted when a higher-priority task arrives and a user decision is needed.
 class TaskSwitchRequest {
@@ -1108,12 +1109,36 @@ class TaskTimerService extends ChangeNotifier {
         geofenceId: task.geofenceId,
       );
 
-      final db = await DatabaseService().mainDb;
-      await DatabaseService().insertTaskHistory(db, historyModel.toMap());
+      try {
+        final db = await DatabaseService().mainDb;
+        if (!db.isOpen) {
+          throw Exception('Database connection is closed');
+        }
+        await DatabaseService().insertTaskHistory(db, historyModel.toMap());
 
-      developer.log(
-        '[TaskTimerService] Saved task history for: ${task.taskName}',
-      );
+        developer.log(
+          '[TaskTimerService] Saved task history for: ${task.taskName}',
+        );
+      } on DatabaseException catch (e) {
+        developer.log(
+          '[TaskTimerService] Database error saving task history: $e',
+          error: e,
+        );
+        // Retry once with a fresh database instance
+        try {
+          final db = await DatabaseService().mainDb;
+          if (db.isOpen) {
+            await DatabaseService().insertTaskHistory(db, historyModel.toMap());
+            developer.log(
+              '[TaskTimerService] Successfully saved task history on retry',
+            );
+          }
+        } catch (retryError) {
+          developer.log(
+            '[TaskTimerService] Failed to save task history on retry: $retryError',
+          );
+        }
+      }
     } catch (e, stackTrace) {
       developer.log(
         '[TaskTimerService] Error saving task history',

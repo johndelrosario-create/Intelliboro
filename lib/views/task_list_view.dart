@@ -129,18 +129,28 @@ class _TaskListViewState extends State<TaskListView>
     try {
       _taskTimeCache.clear();
 
-      for (final task in _tasks) {
-        if (task.id != null) {
-          final timeString = await _taskHistoryRepository.getFormattedTotalTime(
-            task.id!,
-          );
-          _taskTimeCache[task.id!] = timeString;
-        }
-      }
+      // Collect all task IDs
+      final taskIds =
+          _tasks
+              .where((task) => task.id != null)
+              .map((task) => task.id!)
+              .toList();
+
+      if (taskIds.isEmpty) return;
+
+      // Batch load all times in a single query
+      final times = await _taskHistoryRepository.getBatchFormattedTotalTimes(
+        taskIds,
+      );
+      _taskTimeCache.addAll(times);
 
       if (mounted) {
         setState(() {}); // Refresh UI with loaded time data
       }
+
+      developer.log(
+        '[TaskListView] Batch loaded times for ${taskIds.length} tasks',
+      );
     } catch (e) {
       developer.log('[TaskListView] Error loading task times: $e');
     }
