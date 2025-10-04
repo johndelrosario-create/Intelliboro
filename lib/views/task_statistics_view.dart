@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:intelliboro/viewModel/task_statistics_viewmodel.dart';
+import 'package:intelliboro/viewmodel/task_statistics_viewmodel.dart';
 
 class TaskStatisticsView extends StatefulWidget {
   const TaskStatisticsView({Key? key}) : super(key: key);

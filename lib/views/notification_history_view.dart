@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:intelliboro/viewModel/notification_history_viewmodel.dart';
+import 'package:intelliboro/viewmodel/notification_history_viewmodel.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
 class NotificationHistoryView extends StatefulWidget {

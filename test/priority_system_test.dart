@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:intelliboro/viewModel/task_list_viewmodel.dart';
+import 'package:intelliboro/viewmodel/task_list_viewmodel.dart';
 import 'dart:developer' as developer;
 import 'package:intelliboro/views/notification_history_view.dart';
 import 'package:intelliboro/views/create_task_view.dart'; // Add this import
-import 'package:intelliboro/viewModel/notification_history_viewmodel.dart';
+import 'package:intelliboro/viewmodel/notification_history_viewmodel.dart';
 
 class TaskListView extends StatefulWidget {
   const TaskListView({Key? key}) : super(key: key);
