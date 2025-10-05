@@ -99,17 +99,22 @@ class DatabaseService {
         // Only configure WAL mode and busy timeout for writable databases
         // Read-only databases cannot execute PRAGMA statements
         if (!readOnly) {
-          // Enable WAL mode for better concurrent access
-          // WAL allows multiple readers and one writer at the same time
-          await db.execute('PRAGMA journal_mode=WAL;');
+          try {
+            // Use rawQuery instead of execute for PRAGMA statements in onConfigure
+            // This is required on Android to avoid "Queries can be performed using
+            // SQLiteDatabase query or rawQuery methods only" error
+            await db.rawQuery('PRAGMA journal_mode=WAL');
+            await db.rawQuery('PRAGMA busy_timeout=5000');
 
-          // Set busy timeout to 5 seconds to handle concurrent access
-          // This prevents immediate "database is locked" errors
-          await db.execute('PRAGMA busy_timeout=5000;');
-
-          developer.log(
-            '[DatabaseService] Configured database with WAL mode and busy timeout',
-          );
+            developer.log(
+              '[DatabaseService] Configured database with WAL mode and busy timeout',
+            );
+          } catch (e) {
+            developer.log(
+              '[DatabaseService] Warning: Could not configure PRAGMA settings: $e',
+            );
+            // Continue anyway - these are optimizations, not critical
+          }
         } else {
           developer.log(
             '[DatabaseService] Skipping WAL configuration for read-only database',
