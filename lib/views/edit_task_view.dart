@@ -31,7 +31,6 @@ class _EditTaskViewState extends State<EditTaskView> {
   GeofenceData? _originalGeofenceData;
   bool _isLoading = true;
   String? _errorMessage;
-  bool _isMapReadyForInitialDisplay = false;
 
   // Snooze settings state
   int _currentSnoozeDuration = 5;
@@ -73,9 +72,13 @@ class _EditTaskViewState extends State<EditTaskView> {
         _originalGeofenceData = data;
         _taskNameController.text = _originalGeofenceData!.task ?? '';
 
-        if (_isMapReadyForInitialDisplay && _mapViewModel.mapboxMap != null) {
+        // Wait for map to be ready before displaying geofence
+        _mapViewModel.mapReadyFuture.then((_) async {
+          if (!mounted) return;
           await _displayInitialGeofenceOnMap();
-        }
+        }).catchError((error) {
+          developer.log('Error waiting for map ready: $error');
+        });
       } else {
         _errorMessage = 'Task not found.';
       }
@@ -83,6 +86,7 @@ class _EditTaskViewState extends State<EditTaskView> {
       developer.log('Error loading geofence data: $e');
       _errorMessage = 'Failed to load task details: ${e.toString()}';
     } finally {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
@@ -152,12 +156,8 @@ class _EditTaskViewState extends State<EditTaskView> {
 
   void _onMapCreatedEditView(MapboxMap mapboxMap) async {
     await _mapViewModel.onMapCreated(mapboxMap);
-    setState(() {
-      _isMapReadyForInitialDisplay = true;
-    });
-    if (!_isLoading && _originalGeofenceData != null) {
-      await _displayInitialGeofenceOnMap();
-    }
+    // The map is now ready and _loadGeofenceData will be notified via mapReadyFuture
+    // No need to manually trigger display here as it's handled in _loadGeofenceData
   }
 
   Future<void> _saveTask() async {
