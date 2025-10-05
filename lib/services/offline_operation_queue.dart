@@ -19,7 +19,8 @@ class OfflineOperationQueue {
 
   static const String _queueKey = 'offline_operation_queue';
   static const int _maxRetries = 3;
-  static const int _baseBackoffSeconds = 2; // Base delay for exponential backoff
+  static const int _baseBackoffSeconds =
+      2; // Base delay for exponential backoff
 
   final List<QueuedOperation> _queue = [];
   final _connectivity = Connectivity();
@@ -42,7 +43,7 @@ class OfflineOperationQueue {
   /// Add an operation to the queue
   Future<void> enqueue(QueuedOperation operation) async {
     debugPrint('[OfflineQueue] Enqueuing operation: ${operation.type}');
-    
+
     // Check for duplicates - remove older operations with same deduplication key
     final dedupKey = operation.deduplicationKey;
     _queue.removeWhere((existingOp) {
@@ -54,16 +55,16 @@ class OfflineOperationQueue {
       }
       return false;
     });
-    
+
     _queue.add(operation);
-    
+
     // Sort queue by priority (high to low) and then by timestamp (old to new)
     _queue.sort((a, b) {
       final priorityCompare = b.priority.value.compareTo(a.priority.value);
       if (priorityCompare != 0) return priorityCompare;
       return a.timestamp.compareTo(b.timestamp);
     });
-    
+
     await _saveQueue();
 
     // Try to process immediately if online
@@ -182,7 +183,7 @@ class OfflineOperationQueue {
         final index = _queue.indexOf(operation);
         if (index >= 0) {
           final newRetryCount = operation.retryCount + 1;
-          
+
           // Calculate exponential backoff: 2^retryCount * base seconds
           final backoffSeconds =
               _baseBackoffSeconds * (1 << newRetryCount.clamp(0, 5));

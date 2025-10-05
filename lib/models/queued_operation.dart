@@ -54,12 +54,15 @@ class QueuedOperation {
       retryCount: json['retryCount'] as int? ?? 0,
       error: json['error'] as String?,
       priority: OperationPriority.values.firstWhere(
-        (p) => p.value == (json['priority'] as int? ?? OperationPriority.normal.value),
+        (p) =>
+            p.value ==
+            (json['priority'] as int? ?? OperationPriority.normal.value),
         orElse: () => OperationPriority.normal,
       ),
-      nextRetryTime: json['nextRetryTime'] != null
-          ? DateTime.parse(json['nextRetryTime'] as String)
-          : null,
+      nextRetryTime:
+          json['nextRetryTime'] != null
+              ? DateTime.parse(json['nextRetryTime'] as String)
+              : null,
     );
   }
 
@@ -89,7 +92,7 @@ class QueuedOperation {
   String toString() {
     return 'QueuedOperation(id: $id, type: $type, timestamp: $timestamp, retryCount: $retryCount, priority: $priority)';
   }
-  
+
   /// Generate a deduplication key for this operation
   /// Operations with the same key are considered duplicates
   String get deduplicationKey {

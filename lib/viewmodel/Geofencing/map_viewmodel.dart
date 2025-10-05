@@ -90,10 +90,10 @@ class MapboxMapViewModel extends ChangeNotifier {
   MapboxMap? mapboxMap;
   bool isMapReady = false;
   bool _isCreatingGeofence = false; // Add state tracking
-  
+
   // Completer to ensure proper initialization sequence
   final Completer<void> _mapReadyCompleter = Completer<void>();
-  
+
   /// Future that completes when the map is fully initialized and ready to use
   Future<void> get mapReadyFuture => _mapReadyCompleter.future;
   CircleAnnotationManager? geofenceZoneHelper;
@@ -423,7 +423,7 @@ class MapboxMapViewModel extends ChangeNotifier {
         _initialDisplayPending = true;
 
         debugPrint('[MapViewModel] Background onMapCreated setup finished.');
-        
+
         // Complete the map ready completer now that critical initialization is done
         if (!_mapReadyCompleter.isCompleted) {
           _mapReadyCompleter.complete();
@@ -446,12 +446,12 @@ class MapboxMapViewModel extends ChangeNotifier {
     } catch (e, stackTrace) {
       debugPrint('Error in onMapCreated outer: $e\n$stackTrace');
       mapInitializationError = e.toString();
-      
+
       // Complete the completer with error
       if (!_mapReadyCompleter.isCompleted) {
         _mapReadyCompleter.completeError(e, stackTrace);
       }
-      
+
       notifyListeners();
     }
   }
@@ -1410,7 +1410,7 @@ class MapboxMapViewModel extends ChangeNotifier {
       debugPrint('[MapViewModel] dispose() called multiple times, ignoring');
       return;
     }
-    
+
     _isDisposed = true;
     debugPrint('[MapViewModel] Starting dispose sequence');
 
@@ -1434,7 +1434,9 @@ class MapboxMapViewModel extends ChangeNotifier {
       _geofencingService.unregisterMapViewModel();
       debugPrint('[MapViewModel] Unregistered from geofencing service');
     } catch (e) {
-      debugPrint('[MapViewModel] Error unregistering from geofencing service: $e');
+      debugPrint(
+        '[MapViewModel] Error unregistering from geofencing service: $e',
+      );
     }
 
     // Clear annotation lists to free memory
@@ -1457,7 +1459,7 @@ class MapboxMapViewModel extends ChangeNotifier {
             geofenceZoneHelper = null;
           });
     }
-    
+
     if (geofenceZoneSymbol != null) {
       geofenceZoneSymbol!
           .deleteAll()
@@ -1470,12 +1472,12 @@ class MapboxMapViewModel extends ChangeNotifier {
             geofenceZoneSymbol = null;
           });
     }
-    
+
     // Clear map reference
     mapboxMap = null;
     selectedPoint = null;
     cameraState = null;
-    
+
     debugPrint('[MapViewModel] Dispose sequence complete');
     super.dispose();
   }
