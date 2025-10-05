@@ -567,6 +567,52 @@ class DatabaseService {
     }, operationName: 'getAllTaskHistory');
   }
 
+  /// Get task history with pagination support
+  Future<List<Map<String, dynamic>>> getTaskHistoryPaginated(
+    Database db, {
+    int limit = 20,
+    int offset = 0,
+  }) async {
+    try {
+      final result = await db.query(
+        _taskHistoryTableName,
+        orderBy: 'completion_date DESC, end_time DESC',
+        limit: limit,
+        offset: offset,
+      );
+      developer.log(
+        '[DatabaseService] Retrieved ${result.length} task history records (limit: $limit, offset: $offset)',
+      );
+      return result;
+    } catch (e, stackTrace) {
+      developer.log(
+        '[DatabaseService] Error getting paginated task history',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  /// Get total count of task history records
+  Future<int> getTaskHistoryCount(Database db) async {
+    try {
+      final result = await db.rawQuery(
+        'SELECT COUNT(*) as count FROM $_taskHistoryTableName',
+      );
+      final count = Sqflite.firstIntValue(result) ?? 0;
+      developer.log('[DatabaseService] Total task history count: $count');
+      return count;
+    } catch (e, stackTrace) {
+      developer.log(
+        '[DatabaseService] Error getting task history count',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
   Future<List<Map<String, dynamic>>> getTaskHistoryByDateRange(
     Database db,
     String startDate,
@@ -604,6 +650,89 @@ class DatabaseService {
       );
       return result;
     }, operationName: 'getTaskHistoryByTaskId');
+  }
+
+  /// Get task history by task ID with pagination
+  Future<List<Map<String, dynamic>>> getTaskHistoryByTaskIdPaginated(
+    Database db,
+    int taskId, {
+    int limit = 20,
+    int offset = 0,
+  }) async {
+    try {
+      final result = await db.query(
+        _taskHistoryTableName,
+        where: 'task_id = ?',
+        whereArgs: [taskId],
+        orderBy: 'end_time DESC',
+        limit: limit,
+        offset: offset,
+      );
+      developer.log(
+        '[DatabaseService] Retrieved ${result.length} task history records for task ID $taskId (limit: $limit, offset: $offset)',
+      );
+      return result;
+    } catch (e, stackTrace) {
+      developer.log(
+        '[DatabaseService] Error getting paginated task history by task ID',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  /// Get count of task history records for a specific task
+  Future<int> getTaskHistoryCountByTaskId(Database db, int taskId) async {
+    try {
+      final result = await db.rawQuery(
+        'SELECT COUNT(*) as count FROM $_taskHistoryTableName WHERE task_id = ?',
+        [taskId],
+      );
+      final count = Sqflite.firstIntValue(result) ?? 0;
+      developer.log(
+        '[DatabaseService] Task history count for task ID $taskId: $count',
+      );
+      return count;
+    } catch (e, stackTrace) {
+      developer.log(
+        '[DatabaseService] Error getting task history count by task ID',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  /// Get task history by date range with pagination
+  Future<List<Map<String, dynamic>>> getTaskHistoryByDateRangePaginated(
+    Database db,
+    String startDate,
+    String endDate, {
+    int limit = 20,
+    int offset = 0,
+  }) async {
+    try {
+      final result = await db.query(
+        _taskHistoryTableName,
+        where: 'completion_date >= ? AND completion_date <= ?',
+        whereArgs: [startDate, endDate],
+        orderBy: 'completion_date DESC, end_time DESC',
+        limit: limit,
+        offset: offset,
+      );
+      developer.log(
+        '[DatabaseService] Retrieved ${result.length} task history records for date range $startDate to $endDate (limit: $limit, offset: $offset)',
+      );
+      return result;
+    } catch (e, stackTrace) {
+      developer.log(
+        '[DatabaseService] Error getting paginated task history by date range',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
   }
 
   Future<Map<String, dynamic>?> getTaskStatistics(Database db) async {

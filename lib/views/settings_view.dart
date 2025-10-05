@@ -17,6 +17,7 @@ import 'package:intelliboro/services/notification_service.dart'
 import 'package:intelliboro/views/tts_settings_view.dart';
 import 'package:intelliboro/widgets/numeric_keypad.dart';
 import 'package:intelliboro/widgets/pin_display.dart';
+import 'package:intelliboro/widgets/offline_queue_status.dart';
 
 class SettingsView extends StatefulWidget {
   const SettingsView({super.key});
@@ -505,6 +506,9 @@ class _SettingsViewState extends State<SettingsView> {
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         children: [
+          // Offline operation queue status
+          const OfflineQueueStatus(),
+
           SwitchListTile(
             value: _pinEnabled,
             title: const Text('PIN Protection'),

@@ -24,8 +24,8 @@ class GridCell {
 }
 
 // Change Notifier, re-renderviews when data is changed.
+// Spatial index: grid-based for simplicity
 class MapboxMapViewModel extends ChangeNotifier {
-  // Spatial index: grid-based for simplicity
   final Map<GridCell, List<GeofenceData>> _spatialGrid = {};
   final double _cellSize = 0.01; // ~1km grid cells (latitude/longitude)
 
@@ -166,7 +166,9 @@ class MapboxMapViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  MapboxMapViewModel() : _locationService = LocationService() {
+  MapboxMapViewModel() : _locationService = LocationService();
+
+  void init() {
     // Register this view model with the singleton service
     _geofencingService.registerMapViewModel(this);
     // Ensure the service is initialized. It has internal guards to run only once.

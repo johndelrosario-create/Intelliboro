@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:intelliboro/repository/task_repository.dart';
 import 'package:intl/intl.dart';
 import 'package:intelliboro/model/task_model.dart';
-import 'package:intelliboro/viewmodel/geofencing/map_viewmodel.dart';
+import 'package:intelliboro/viewmodel/Geofencing/map_viewmodel.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:intelliboro/models/geofence_data.dart';
 import 'package:intelliboro/services/geofence_storage.dart';
