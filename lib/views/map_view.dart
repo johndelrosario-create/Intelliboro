@@ -365,6 +365,7 @@ class _MapboxMapViewState extends State<MapboxMapView> {
   Future<void> _performSearch(String query) async {
     if (query.isEmpty) return;
 
+    if (!mounted) return;
     setState(() {
       _isSearching = true;
       _showSearchResults = true;
@@ -412,6 +413,7 @@ class _MapboxMapViewState extends State<MapboxMapView> {
   /// Handle search result selection
   Future<void> _selectSearchResult(SearchResult result) async {
     // Hide search results and clear focus
+    if (!mounted) return;
     setState(() {
       _showSearchResults = false;
     });
