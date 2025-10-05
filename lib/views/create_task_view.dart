@@ -251,9 +251,7 @@ class _TaskCreationState extends State<TaskCreation> {
   Future<void> _placeGeofenceAtSearchResult(SearchResult place) async {
     final point = Point(coordinates: Position(place.longitude, place.latitude));
 
-    debugPrint(
-      '[Search] Original search point: lat=${place.latitude}, lng=${place.longitude}',
-    );
+    debugPrint('[Search] Search result location received');
     debugPrint(
       '[Search] Current pending radius: ${_mapViewModel.pendingRadiusMeters}m',
     );
@@ -281,9 +279,7 @@ class _TaskCreationState extends State<TaskCreation> {
       _mapViewModel.pendingRadiusMeters,
     );
 
-    debugPrint(
-      '[Search] Adjusted point: lat=${adjustedPoint.coordinates.lat}, lng=${adjustedPoint.coordinates.lng}',
-    );
+    debugPrint('[Search] Point adjusted to avoid overlap');
 
     // Check if adjustment occurred
     final latDiff =
