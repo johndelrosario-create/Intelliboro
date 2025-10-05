@@ -316,8 +316,9 @@ class MapboxMapViewModel extends ChangeNotifier {
             styleUri: 'mapbox://styles/mapbox/streets-v12',
           );
           // Kick off home region caching in background
+          // Disabled automatic download - user can manually trigger from settings
           // ignore: unawaited_futures
-          OfflineMapService().ensureHomeRegion();
+          // OfflineMapService().ensureHomeRegion();
         } catch (e) {
           debugPrint('[MapViewModel] OfflineMapService init error: $e');
         }
