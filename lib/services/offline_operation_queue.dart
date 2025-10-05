@@ -19,6 +19,7 @@ class OfflineOperationQueue {
 
   static const String _queueKey = 'offline_operation_queue';
   static const int _maxRetries = 3;
+  static const int _baseBackoffSeconds = 2; // Base delay for exponential backoff
 
   final List<QueuedOperation> _queue = [];
   final _connectivity = Connectivity();
@@ -41,7 +42,28 @@ class OfflineOperationQueue {
   /// Add an operation to the queue
   Future<void> enqueue(QueuedOperation operation) async {
     debugPrint('[OfflineQueue] Enqueuing operation: ${operation.type}');
+    
+    // Check for duplicates - remove older operations with same deduplication key
+    final dedupKey = operation.deduplicationKey;
+    _queue.removeWhere((existingOp) {
+      if (existingOp.deduplicationKey == dedupKey) {
+        debugPrint(
+          '[OfflineQueue] Removing duplicate operation: ${existingOp.id}',
+        );
+        return true;
+      }
+      return false;
+    });
+    
     _queue.add(operation);
+    
+    // Sort queue by priority (high to low) and then by timestamp (old to new)
+    _queue.sort((a, b) {
+      final priorityCompare = b.priority.value.compareTo(a.priority.value);
+      if (priorityCompare != 0) return priorityCompare;
+      return a.timestamp.compareTo(b.timestamp);
+    });
+    
     await _saveQueue();
 
     // Try to process immediately if online
@@ -137,8 +159,18 @@ class OfflineOperationQueue {
     debugPrint('[OfflineQueue] Processing ${_queue.length} queued operations');
 
     final operationsToProcess = List<QueuedOperation>.from(_queue);
+    final now = DateTime.now();
 
     for (final operation in operationsToProcess) {
+      // Check if operation is ready for retry (respects exponential backoff)
+      if (operation.nextRetryTime != null &&
+          now.isBefore(operation.nextRetryTime!)) {
+        debugPrint(
+          '[OfflineQueue] Skipping ${operation.type} - backoff until ${operation.nextRetryTime}',
+        );
+        continue;
+      }
+
       try {
         await _executeOperation(operation);
         _queue.remove(operation);
@@ -146,12 +178,22 @@ class OfflineOperationQueue {
       } catch (e) {
         debugPrint('[OfflineQueue] Error executing ${operation.type}: $e');
 
-        // Update retry count
+        // Update retry count and calculate exponential backoff
         final index = _queue.indexOf(operation);
         if (index >= 0) {
+          final newRetryCount = operation.retryCount + 1;
+          
+          // Calculate exponential backoff: 2^retryCount * base seconds
+          final backoffSeconds =
+              _baseBackoffSeconds * (1 << newRetryCount.clamp(0, 5));
+          final nextRetry = DateTime.now().add(
+            Duration(seconds: backoffSeconds),
+          );
+
           final updated = operation.copyWith(
-            retryCount: operation.retryCount + 1,
+            retryCount: newRetryCount,
             error: e.toString(),
+            nextRetryTime: nextRetry,
           );
 
           if (updated.retryCount >= _maxRetries) {
@@ -160,6 +202,9 @@ class OfflineOperationQueue {
             );
             _queue.removeAt(index);
           } else {
+            debugPrint(
+              '[OfflineQueue] Will retry ${operation.type} after ${backoffSeconds}s (attempt ${newRetryCount + 1}/$_maxRetries)',
+            );
             _queue[index] = updated;
           }
         }
