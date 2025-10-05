@@ -96,17 +96,25 @@ class DatabaseService {
       readOnly: readOnly,
       singleInstance: singleInstance,
       onConfigure: (Database db) async {
-        // Enable WAL mode for better concurrent access
-        // WAL allows multiple readers and one writer at the same time
-        await db.execute('PRAGMA journal_mode=WAL;');
+        // Only configure WAL mode and busy timeout for writable databases
+        // Read-only databases cannot execute PRAGMA statements
+        if (!readOnly) {
+          // Enable WAL mode for better concurrent access
+          // WAL allows multiple readers and one writer at the same time
+          await db.execute('PRAGMA journal_mode=WAL;');
 
-        // Set busy timeout to 5 seconds to handle concurrent access
-        // This prevents immediate "database is locked" errors
-        await db.execute('PRAGMA busy_timeout=5000;');
+          // Set busy timeout to 5 seconds to handle concurrent access
+          // This prevents immediate "database is locked" errors
+          await db.execute('PRAGMA busy_timeout=5000;');
 
-        developer.log(
-          '[DatabaseService] Configured database with WAL mode and busy timeout',
-        );
+          developer.log(
+            '[DatabaseService] Configured database with WAL mode and busy timeout',
+          );
+        } else {
+          developer.log(
+            '[DatabaseService] Skipping WAL configuration for read-only database',
+          );
+        }
       },
     );
 
