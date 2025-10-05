@@ -90,10 +90,10 @@ class MapboxMapViewModel extends ChangeNotifier {
   MapboxMap? mapboxMap;
   bool isMapReady = false;
   bool _isCreatingGeofence = false; // Add state tracking
-  
+
   // Completer to ensure proper initialization sequence
   final Completer<void> _mapReadyCompleter = Completer<void>();
-  
+
   /// Future that completes when the map is fully initialized and ready to use
   Future<void> get mapReadyFuture => _mapReadyCompleter.future;
   CircleAnnotationManager? geofenceZoneHelper;
@@ -423,7 +423,7 @@ class MapboxMapViewModel extends ChangeNotifier {
         _initialDisplayPending = true;
 
         debugPrint('[MapViewModel] Background onMapCreated setup finished.');
-        
+
         // Complete the map ready completer now that critical initialization is done
         if (!_mapReadyCompleter.isCompleted) {
           _mapReadyCompleter.complete();
@@ -446,12 +446,12 @@ class MapboxMapViewModel extends ChangeNotifier {
     } catch (e, stackTrace) {
       debugPrint('Error in onMapCreated outer: $e\n$stackTrace');
       mapInitializationError = e.toString();
-      
+
       // Complete the completer with error
       if (!_mapReadyCompleter.isCompleted) {
         _mapReadyCompleter.completeError(e, stackTrace);
       }
-      
+
       notifyListeners();
     }
   }
@@ -1406,7 +1406,13 @@ class MapboxMapViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (_isDisposed) {
+      debugPrint('[MapViewModel] dispose() called multiple times, ignoring');
+      return;
+    }
+
     _isDisposed = true;
+    debugPrint('[MapViewModel] Starting dispose sequence');
 
     // Stop any running timers
     _debugTimer?.cancel();
@@ -1424,27 +1430,55 @@ class MapboxMapViewModel extends ChangeNotifier {
 
     // IMPORTANT: Do NOT dispose the singleton geofencing service here.
     // Instead, unregister this view model so the service knows not to use it.
-    _geofencingService.unregisterMapViewModel();
+    try {
+      _geofencingService.unregisterMapViewModel();
+      debugPrint('[MapViewModel] Unregistered from geofencing service');
+    } catch (e) {
+      debugPrint(
+        '[MapViewModel] Error unregistering from geofencing service: $e',
+      );
+    }
+
+    // Clear annotation lists to free memory
+    geofenceZoneHelperIds.clear();
+    geofenceZoneSymbolIds.clear();
+    _savedGeofences.clear();
+    _spatialGrid.clear();
 
     // Clear any resources held by this specific view model
-    geofenceZoneHelper
-        ?.deleteAll()
-        .then((_) {
-          geofenceZoneHelper = null;
-        })
-        .catchError((e) {
-          debugPrint('[MapViewModel] Error deleting helper annotations: $e');
-        });
-    geofenceZoneSymbol
-        ?.deleteAll()
-        .then((_) {
-          geofenceZoneSymbol = null;
-        })
-        .catchError((e) {
-          debugPrint('[MapViewModel] Error deleting symbol annotations: $e');
-        });
-    mapboxMap = null;
+    // Delete all annotations before disposing managers
+    if (geofenceZoneHelper != null) {
+      geofenceZoneHelper!
+          .deleteAll()
+          .then((_) {
+            debugPrint('[MapViewModel] Helper annotations deleted');
+            geofenceZoneHelper = null;
+          })
+          .catchError((e) {
+            debugPrint('[MapViewModel] Error deleting helper annotations: $e');
+            geofenceZoneHelper = null;
+          });
+    }
 
+    if (geofenceZoneSymbol != null) {
+      geofenceZoneSymbol!
+          .deleteAll()
+          .then((_) {
+            debugPrint('[MapViewModel] Symbol annotations deleted');
+            geofenceZoneSymbol = null;
+          })
+          .catchError((e) {
+            debugPrint('[MapViewModel] Error deleting symbol annotations: $e');
+            geofenceZoneSymbol = null;
+          });
+    }
+
+    // Clear map reference
+    mapboxMap = null;
+    selectedPoint = null;
+    cameraState = null;
+
+    debugPrint('[MapViewModel] Dispose sequence complete');
     super.dispose();
   }
 }

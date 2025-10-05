@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intelliboro/models/geofence_data.dart';
 import 'package:intelliboro/services/geofence_storage.dart';
-import 'package:intelliboro/model/task_model.dart';
-import 'package:intelliboro/services/geofencing_service.dart';
 import 'package:intelliboro/viewmodel/Geofencing/map_viewmodel.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'dart:developer' as developer;
@@ -73,12 +71,14 @@ class _EditTaskViewState extends State<EditTaskView> {
         _taskNameController.text = _originalGeofenceData!.task ?? '';
 
         // Wait for map to be ready before displaying geofence
-        _mapViewModel.mapReadyFuture.then((_) async {
-          if (!mounted) return;
-          await _displayInitialGeofenceOnMap();
-        }).catchError((error) {
-          developer.log('Error waiting for map ready: $error');
-        });
+        _mapViewModel.mapReadyFuture
+            .then((_) async {
+              if (!mounted) return;
+              await _displayInitialGeofenceOnMap();
+            })
+            .catchError((error) {
+              developer.log('Error waiting for map ready: $error');
+            });
       } else {
         _errorMessage = 'Task not found.';
       }
