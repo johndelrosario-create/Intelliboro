@@ -46,6 +46,7 @@ void main() {
     });
 
     test('should check if task is pending', () {
+      // ignore: unused_local_variable
       final task = TaskModel(
         id: 1,
         taskName: 'Test Task',
@@ -185,6 +186,7 @@ void main() {
     });
 
     test('should start timer for task', () async {
+      // ignore: unused_local_variable
       final task = TaskModel(
         id: 1,
         taskName: 'Timer Task',
@@ -245,6 +247,7 @@ void main() {
     });
 
     test('should handle complete task manually', () async {
+      // ignore: unused_local_variable
       final task = TaskModel(
         id: 1,
         taskName: 'Manual Task',
@@ -260,6 +263,7 @@ void main() {
     });
 
     test('should handle reschedule task later', () async {
+      // ignore: unused_local_variable
       final task = TaskModel(
         id: 1,
         taskName: 'Reschedule Task',

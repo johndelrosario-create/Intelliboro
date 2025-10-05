@@ -13,7 +13,7 @@ var appTheme = ThemeData(
   ),
   
   // Enhanced Material 3 components
-  cardTheme: const CardTheme(
+  cardTheme: const CardThemeData(
     elevation: 0,
     margin: EdgeInsets.zero,
   ),
