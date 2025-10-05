@@ -90,6 +90,12 @@ class MapboxMapViewModel extends ChangeNotifier {
   MapboxMap? mapboxMap;
   bool isMapReady = false;
   bool _isCreatingGeofence = false; // Add state tracking
+  
+  // Completer to ensure proper initialization sequence
+  final Completer<void> _mapReadyCompleter = Completer<void>();
+  
+  /// Future that completes when the map is fully initialized and ready to use
+  Future<void> get mapReadyFuture => _mapReadyCompleter.future;
   CircleAnnotationManager? geofenceZoneHelper;
   CircleAnnotationManager? geofenceZoneSymbol;
   Point? selectedPoint;
@@ -417,6 +423,12 @@ class MapboxMapViewModel extends ChangeNotifier {
         _initialDisplayPending = true;
 
         debugPrint('[MapViewModel] Background onMapCreated setup finished.');
+        
+        // Complete the map ready completer now that critical initialization is done
+        if (!_mapReadyCompleter.isCompleted) {
+          _mapReadyCompleter.complete();
+          debugPrint('[MapViewModel] Map ready completer signaled.');
+        }
 
         // Start real-time location tracking for smooth offline location updates
         await _startLocationTracking();
@@ -434,6 +446,12 @@ class MapboxMapViewModel extends ChangeNotifier {
     } catch (e, stackTrace) {
       debugPrint('Error in onMapCreated outer: $e\n$stackTrace');
       mapInitializationError = e.toString();
+      
+      // Complete the completer with error
+      if (!_mapReadyCompleter.isCompleted) {
+        _mapReadyCompleter.completeError(e, stackTrace);
+      }
+      
       notifyListeners();
     }
   }
