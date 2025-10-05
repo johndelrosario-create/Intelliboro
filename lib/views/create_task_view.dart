@@ -203,6 +203,7 @@ class _TaskCreationState extends State<TaskCreation> {
   Future<void> _performSearch(String query) async {
     if (_searchService == null || query.trim().isEmpty) return;
 
+    if (!mounted) return;
     setState(() {
       _isSearching = true;
     });
@@ -343,7 +344,7 @@ class _TaskCreationState extends State<TaskCreation> {
       firstDate: _firstDate,
       lastDate: _lastDate,
     );
-    if (picked != null && picked != selectedDate) {
+    if (picked != null && picked != selectedDate && mounted) {
       setState(() {
         selectedDate = picked;
       });
@@ -363,7 +364,7 @@ class _TaskCreationState extends State<TaskCreation> {
         );
       },
     );
-    if (picked != null && picked != selectedTime) {
+    if (picked != null && picked != selectedTime && mounted) {
       setState(() {
         selectedTime = picked;
       });
