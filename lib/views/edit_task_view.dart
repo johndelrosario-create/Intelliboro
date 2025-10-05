@@ -62,6 +62,7 @@ class _EditTaskViewState extends State<EditTaskView> {
   }
 
   Future<void> _loadGeofenceData() async {
+    if (!mounted) return;
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -203,6 +204,7 @@ class _EditTaskViewState extends State<EditTaskView> {
     );
 
     try {
+      if (!mounted) return;
       setState(() => _isLoading = true);
       // Persist default notification sound preference
       try {

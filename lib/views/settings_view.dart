@@ -251,11 +251,13 @@ class _SettingsViewState extends State<SettingsView> {
     try {
       await PinService().setPin(res.newPin);
       await PinService().setPromptAnswered();
+      if (!mounted) return;
       setState(() {
         _pinEnabled = true;
         _status = 'PIN enabled';
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _status = 'Failed to enable PIN: $e');
     }
   }
@@ -467,10 +469,12 @@ class _SettingsViewState extends State<SettingsView> {
     if (current == null) return;
     final ok = await PinService().verifyPin(current);
     if (!ok) {
+      if (!mounted) return;
       setState(() => _status = 'Incorrect current PIN');
       return;
     }
     await PinService().disablePin();
+    if (!mounted) return;
     setState(() {
       _pinEnabled = false;
       _status = 'PIN disabled';
@@ -486,13 +490,16 @@ class _SettingsViewState extends State<SettingsView> {
     if (res == null) return;
     final ok = await PinService().verifyPin(res.currentPin);
     if (!ok) {
+      if (!mounted) return;
       setState(() => _status = 'Incorrect current PIN');
       return;
     }
     try {
       await PinService().setPin(res.newPin);
+      if (!mounted) return;
       setState(() => _status = 'PIN changed');
     } catch (e) {
+      if (!mounted) return;
       setState(() => _status = 'Failed to change PIN: $e');
     }
   }
@@ -663,6 +670,7 @@ class _SettingsViewState extends State<SettingsView> {
                       _offlineBusy || !_hasOfflineData
                           ? null
                           : () async {
+                            if (!mounted) return;
                             setState(() {
                               _offlineBusy = true;
                               _status = 'Clearing offline data...';
@@ -670,17 +678,21 @@ class _SettingsViewState extends State<SettingsView> {
                             try {
                               await OfflineMapService().clearAll();
                               await _checkDownloadStatus(); // Refresh download status after clearing
+                              if (!mounted) return;
                               setState(
                                 () => _status = 'Requested offline data clear.',
                               );
                             } catch (e) {
+                              if (!mounted) return;
                               setState(
                                 () =>
                                     _status =
                                         'Failed to clear offline data: $e',
                               );
                             } finally {
-                              setState(() => _offlineBusy = false);
+                              if (mounted) {
+                                setState(() => _offlineBusy = false);
+                              }
                             }
                           },
                   icon: const Icon(Icons.delete_outline),
@@ -709,6 +721,7 @@ class _SettingsViewState extends State<SettingsView> {
                       _backupBusy
                           ? null
                           : () async {
+                            if (!mounted) return;
                             setState(() {
                               _backupBusy = true;
                               _status = 'Preparing export...';
@@ -716,6 +729,7 @@ class _SettingsViewState extends State<SettingsView> {
                             try {
                               final path =
                                   await BackupService().exportWithFilePicker();
+                              if (!mounted) return;
                               if (path != null) {
                                 setState(
                                   () =>
@@ -728,9 +742,12 @@ class _SettingsViewState extends State<SettingsView> {
                                 );
                               }
                             } catch (e) {
+                              if (!mounted) return;
                               setState(() => _status = 'Export failed: $e');
                             } finally {
-                              setState(() => _backupBusy = false);
+                              if (mounted) {
+                                setState(() => _backupBusy = false);
+                              }
                             }
                           },
                   icon: const Icon(Icons.save_alt_outlined),
@@ -742,11 +759,13 @@ class _SettingsViewState extends State<SettingsView> {
                       _backupBusy
                           ? null
                           : () async {
+                            if (!mounted) return;
                             setState(() {
                               _backupBusy = true;
                               _status = 'Opening file picker...';
                             });
                             try {
+                              if (!mounted) return;
                               setState(() {
                                 _status = 'Selecting backup file...';
                               });
@@ -754,6 +773,7 @@ class _SettingsViewState extends State<SettingsView> {
                               final success =
                                   await BackupService().importWithFilePicker();
 
+                              if (!mounted) return;
                               if (success) {
                                 setState(() {
                                   _status = 'Processing import...';
@@ -764,6 +784,7 @@ class _SettingsViewState extends State<SettingsView> {
                                   const Duration(milliseconds: 100),
                                 );
 
+                                if (!mounted) return;
                                 setState(
                                   () =>
                                       _status =
@@ -778,9 +799,12 @@ class _SettingsViewState extends State<SettingsView> {
                                 );
                               }
                             } catch (e) {
+                              if (!mounted) return;
                               setState(() => _status = 'Import failed: $e');
                             } finally {
-                              setState(() => _backupBusy = false);
+                              if (mounted) {
+                                setState(() => _backupBusy = false);
+                              }
                             }
                           },
                   icon: const Icon(Icons.upload_file_outlined),

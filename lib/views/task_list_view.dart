@@ -98,6 +98,7 @@ class _TaskListViewState extends State<TaskListView>
 
     try {
       final tasks = await _taskRepository.getTasks();
+      if (!mounted) return;
       setState(() {
         _tasks = tasks;
         _applySorting();
@@ -113,11 +114,13 @@ class _TaskListViewState extends State<TaskListView>
         error: e,
         stackTrace: stackTrace,
       );
+      if (!mounted) return;
       setState(() {
         _errorMessage = "Failed to load tasks: ${e.toString()}";
         _tasks = [];
       });
     } finally {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
@@ -942,6 +945,7 @@ class _TaskListViewState extends State<TaskListView>
   Future<void> _loadSortMode() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
       final idx = prefs.getInt(_prefsSortKey);
       if (idx != null && idx >= 0 && idx < TaskSortMode.values.length) {
         setState(() {
