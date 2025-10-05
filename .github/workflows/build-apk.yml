@@ -26,7 +26,8 @@ jobs:
         with:
           flutter-version: '3.24.0'  # Update to your Flutter version
           channel: 'stable'
-          
+          cache: true
+
       - name: Get dependencies
         run: flutter pub get
         
