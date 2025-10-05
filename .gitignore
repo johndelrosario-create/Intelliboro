@@ -26,6 +26,14 @@ migrate_working_dir/
 # VS Code settings with sensitive data
 .vscode/launch.json
 
+# Environment files with sensitive data
+.env
+.env.local
+.env.*.local
+*.env
+local.properties
+key.properties
+
 # Flutter/Dart/Pub related
 **/doc/api/
 **/ios/Flutter/.last_build_id
