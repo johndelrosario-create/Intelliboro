@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'dart:developer' as developer;
@@ -19,6 +20,12 @@ class DatabaseService {
   // Lock to prevent concurrent initialization from main isolate
   // static bool _isInitializingMainDB = false;
   static Completer<Database>? _dbInitializingCompleter;
+
+  // Error recovery configuration
+  static const int _maxRetries = 3;
+  static const int _baseRetryDelayMs = 100;
+  static const int _maxRetryDelayMs = 2000;
+  static const int _connectionRetryAttempts = 5;
 
   factory DatabaseService() => _instance;
 
@@ -489,8 +496,9 @@ class DatabaseService {
     Database db,
     Map<String, dynamic> notificationData,
   ) async {
-    try {
-      await db.insert(
+    await _executeWithRetry(() async {
+      final healthyDb = await _ensureHealthyConnection(db);
+      await healthyDb.insert(
         _notificationHistoryTableName,
         notificationData,
         conflictAlgorithm: ConflictAlgorithm.replace,
@@ -498,21 +506,15 @@ class DatabaseService {
       developer.log(
         '[DatabaseService] Inserted notification history: $notificationData',
       );
-    } catch (e, stackTrace) {
-      developer.log(
-        '[DatabaseService] Error inserting notification history',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      rethrow;
-    }
+    }, operationName: 'insertNotificationHistory');
   }
 
   Future<List<Map<String, dynamic>>> getAllNotificationHistory(
     Database db,
   ) async {
-    try {
-      final result = await db.query(
+    return await _executeWithRetry(() async {
+      final healthyDb = await _ensureHealthyConnection(db);
+      final result = await healthyDb.query(
         _notificationHistoryTableName,
         orderBy: 'timestamp DESC',
       );
@@ -520,30 +522,17 @@ class DatabaseService {
         '[DatabaseService] Retrieved ${result.length} notification history records',
       );
       return result;
-    } catch (e, stackTrace) {
-      developer.log(
-        '[DatabaseService] Error getting notification history',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      rethrow;
-    }
+    }, operationName: 'getAllNotificationHistory');
   }
 
   Future<void> clearAllNotificationHistory(Database db) async {
-    try {
-      final count = await db.delete(_notificationHistoryTableName);
+    await _executeWithRetry(() async {
+      final healthyDb = await _ensureHealthyConnection(db);
+      final count = await healthyDb.delete(_notificationHistoryTableName);
       developer.log(
         '[DatabaseService] Cleared $count notification history records',
       );
-    } catch (e, stackTrace) {
-      developer.log(
-        '[DatabaseService] Error clearing notification history',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      rethrow;
-    }
+    }, operationName: 'clearAllNotificationHistory');
   }
 
   // Task History Methods
@@ -551,8 +540,9 @@ class DatabaseService {
     Database db,
     Map<String, dynamic> historyData,
   ) async {
-    try {
-      await db.insert(
+    await _executeWithRetry(() async {
+      final healthyDb = await _ensureHealthyConnection(db);
+      await healthyDb.insert(
         _taskHistoryTableName,
         historyData,
         conflictAlgorithm: ConflictAlgorithm.replace,
@@ -560,19 +550,13 @@ class DatabaseService {
       developer.log(
         '[DatabaseService] Inserted task history: ${historyData['task_name']}',
       );
-    } catch (e, stackTrace) {
-      developer.log(
-        '[DatabaseService] Error inserting task history',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      rethrow;
-    }
+    }, operationName: 'insertTaskHistory');
   }
 
   Future<List<Map<String, dynamic>>> getAllTaskHistory(Database db) async {
-    try {
-      final result = await db.query(
+    return await _executeWithRetry(() async {
+      final healthyDb = await _ensureHealthyConnection(db);
+      final result = await healthyDb.query(
         _taskHistoryTableName,
         orderBy: 'completion_date DESC, end_time DESC',
       );
@@ -580,14 +564,7 @@ class DatabaseService {
         '[DatabaseService] Retrieved ${result.length} task history records',
       );
       return result;
-    } catch (e, stackTrace) {
-      developer.log(
-        '[DatabaseService] Error getting task history',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      rethrow;
-    }
+    }, operationName: 'getAllTaskHistory');
   }
 
   Future<List<Map<String, dynamic>>> getTaskHistoryByDateRange(
@@ -595,8 +572,9 @@ class DatabaseService {
     String startDate,
     String endDate,
   ) async {
-    try {
-      final result = await db.query(
+    return await _executeWithRetry(() async {
+      final healthyDb = await _ensureHealthyConnection(db);
+      final result = await healthyDb.query(
         _taskHistoryTableName,
         where: 'completion_date >= ? AND completion_date <= ?',
         whereArgs: [startDate, endDate],
@@ -606,22 +584,16 @@ class DatabaseService {
         '[DatabaseService] Retrieved ${result.length} task history records for date range $startDate to $endDate',
       );
       return result;
-    } catch (e, stackTrace) {
-      developer.log(
-        '[DatabaseService] Error getting task history by date range',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      rethrow;
-    }
+    }, operationName: 'getTaskHistoryByDateRange');
   }
 
   Future<List<Map<String, dynamic>>> getTaskHistoryByTaskId(
     Database db,
     int taskId,
   ) async {
-    try {
-      final result = await db.query(
+    return await _executeWithRetry(() async {
+      final healthyDb = await _ensureHealthyConnection(db);
+      final result = await healthyDb.query(
         _taskHistoryTableName,
         where: 'task_id = ?',
         whereArgs: [taskId],
@@ -631,36 +603,31 @@ class DatabaseService {
         '[DatabaseService] Retrieved ${result.length} task history records for task ID $taskId',
       );
       return result;
-    } catch (e, stackTrace) {
-      developer.log(
-        '[DatabaseService] Error getting task history by task ID',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      rethrow;
-    }
+    }, operationName: 'getTaskHistoryByTaskId');
   }
 
   Future<Map<String, dynamic>?> getTaskStatistics(Database db) async {
-    try {
+    return await _executeWithRetry(() async {
+      final healthyDb = await _ensureHealthyConnection(db);
+
       // Get total completed tasks
-      final totalResult = await db.rawQuery(
+      final totalResult = await healthyDb.rawQuery(
         'SELECT COUNT(*) as total_tasks FROM $_taskHistoryTableName',
       );
 
       // Get total time spent
-      final timeResult = await db.rawQuery(
+      final timeResult = await healthyDb.rawQuery(
         'SELECT SUM(duration_seconds) as total_seconds FROM $_taskHistoryTableName',
       );
 
       // Get average task duration
-      final avgResult = await db.rawQuery(
+      final avgResult = await healthyDb.rawQuery(
         'SELECT AVG(duration_seconds) as avg_seconds FROM $_taskHistoryTableName',
       );
 
       // Get tasks completed today
       final today = DateTime.now().toIso8601String().split('T')[0];
-      final todayResult = await db.rawQuery(
+      final todayResult = await healthyDb.rawQuery(
         'SELECT COUNT(*) as today_tasks FROM $_taskHistoryTableName WHERE completion_date = ?',
         [today],
       );
@@ -671,28 +638,15 @@ class DatabaseService {
         'avg_seconds': avgResult.first['avg_seconds'] ?? 0,
         'today_tasks': todayResult.first['today_tasks'] ?? 0,
       };
-    } catch (e, stackTrace) {
-      developer.log(
-        '[DatabaseService] Error getting task statistics',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      rethrow;
-    }
+    }, operationName: 'getTaskStatistics');
   }
 
   Future<void> clearAllTaskHistory(Database db) async {
-    try {
-      final count = await db.delete(_taskHistoryTableName);
+    await _executeWithRetry(() async {
+      final healthyDb = await _ensureHealthyConnection(db);
+      final count = await healthyDb.delete(_taskHistoryTableName);
       developer.log('[DatabaseService] Cleared $count task history records');
-    } catch (e, stackTrace) {
-      developer.log(
-        '[DatabaseService] Error clearing task history',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      rethrow;
-    }
+    }, operationName: 'clearAllTaskHistory');
   }
 
   // Instance methods for DB operations will now take a Database object
@@ -700,50 +654,68 @@ class DatabaseService {
     Database db,
     Map<String, dynamic> geofenceData,
   ) async {
-    // ... (validation logic as before) ...
-    developer.log(
-      '[DatabaseService] Inserting geofence into $_geofencesTableName: $geofenceData using provided DB object',
-    );
-    return await db.insert(
-      _geofencesTableName,
-      geofenceData,
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    return await _executeWithRetry(() async {
+      final healthyDb = await _ensureHealthyConnection(db);
+      developer.log(
+        '[DatabaseService] Inserting geofence into $_geofencesTableName: $geofenceData using provided DB object',
+      );
+      return await healthyDb.insert(
+        _geofencesTableName,
+        geofenceData,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }, operationName: 'insertGeofence');
   }
 
   Future<List<Map<String, dynamic>>> getAllGeofences(Database db) async {
-    developer.log(
-      '[DatabaseService] Fetching all geofences using provided DB object',
-    );
-    return await db.query(_geofencesTableName);
+    return await _executeWithRetry(() async {
+      final healthyDb = await _ensureHealthyConnection(db);
+      developer.log(
+        '[DatabaseService] Fetching all geofences using provided DB object',
+      );
+      return await healthyDb.query(_geofencesTableName);
+    }, operationName: 'getAllGeofences');
   }
 
   Future<Map<String, dynamic>?> getGeofenceById(Database db, String id) async {
-    developer.log(
-      '[DatabaseService] Fetching geofence by ID: $id using provided DB object',
-    );
-    final List<Map<String, dynamic>> maps = await db.query(
-      _geofencesTableName,
-      where: 'id = ?',
-      whereArgs: [id],
-      limit: 1,
-    );
-    if (maps.isNotEmpty) return maps.first;
-    return null;
+    return await _executeWithRetry(() async {
+      final healthyDb = await _ensureHealthyConnection(db);
+      developer.log(
+        '[DatabaseService] Fetching geofence by ID: $id using provided DB object',
+      );
+      final List<Map<String, dynamic>> maps = await healthyDb.query(
+        _geofencesTableName,
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (maps.isNotEmpty) return maps.first;
+      return null;
+    }, operationName: 'getGeofenceById');
   }
 
   Future<void> deleteGeofence(Database db, String id) async {
-    developer.log(
-      '[DatabaseService] Deleting geofence with ID: $id from $_geofencesTableName',
-    );
-    await db.delete(_geofencesTableName, where: 'id = ?', whereArgs: [id]);
+    await _executeWithRetry(() async {
+      final healthyDb = await _ensureHealthyConnection(db);
+      developer.log(
+        '[DatabaseService] Deleting geofence with ID: $id from $_geofencesTableName',
+      );
+      await healthyDb.delete(
+        _geofencesTableName,
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    }, operationName: 'deleteGeofence');
   }
 
   Future<void> clearAllGeofences(Database db) async {
-    developer.log(
-      '[DatabaseService] Clearing all geofences from $_geofencesTableName',
-    );
-    await db.delete(_geofencesTableName);
+    await _executeWithRetry(() async {
+      final healthyDb = await _ensureHealthyConnection(db);
+      developer.log(
+        '[DatabaseService] Clearing all geofences from $_geofencesTableName',
+      );
+      await healthyDb.delete(_geofencesTableName);
+    }, operationName: 'clearAllGeofences');
   }
 
   Future<void> closeMainDb() async {
@@ -792,4 +764,284 @@ class DatabaseService {
     }
     return 'Database open at ${_mainIsolateDatabase!.path}';
   }
+<<<<<<< HEAD
+=======
+
+  // ============================================================================
+  // ERROR RECOVERY MECHANISMS
+  // ============================================================================
+
+  /// Execute a database operation with automatic retry on transient failures
+  /// Handles database locked, busy, and other recoverable errors
+  Future<T> _executeWithRetry<T>(
+    Future<T> Function() operation, {
+    String operationName = 'Database operation',
+  }) async {
+    int attempts = 0;
+    Duration delay = Duration(milliseconds: _baseRetryDelayMs);
+
+    while (attempts < _maxRetries) {
+      try {
+        attempts++;
+        return await operation();
+      } catch (e) {
+        final shouldRetry = _isRetriableError(e);
+        final isLastAttempt = attempts >= _maxRetries;
+
+        developer.log(
+          '[$operationName] Attempt $attempts/$_maxRetries failed: $e',
+          level: shouldRetry && !isLastAttempt ? 900 : 1000,
+        );
+
+        if (!shouldRetry || isLastAttempt) {
+          developer.log(
+            '[$operationName] Non-retriable error or max retries reached',
+            error: e,
+          );
+          rethrow;
+        }
+
+        // Exponential backoff with jitter
+        final jitter = (delay.inMilliseconds * 0.2).toInt();
+        final delayWithJitter = Duration(
+          milliseconds:
+              delay.inMilliseconds +
+              (DateTime.now().millisecondsSinceEpoch % jitter),
+        );
+
+        developer.log(
+          '[$operationName] Retrying after ${delayWithJitter.inMilliseconds}ms...',
+        );
+        await Future.delayed(delayWithJitter);
+
+        // Exponential backoff: double the delay, up to max
+        delay = Duration(
+          milliseconds: (delay.inMilliseconds * 2).clamp(0, _maxRetryDelayMs),
+        );
+      }
+    }
+
+    throw Exception('$operationName failed after $_maxRetries attempts');
+  }
+
+  /// Determine if an error is retriable
+  bool _isRetriableError(dynamic error) {
+    final errorString = error.toString().toLowerCase();
+
+    // Database locked/busy errors
+    if (errorString.contains('database is locked') ||
+        errorString.contains('database is busy') ||
+        errorString.contains('sqliteerror') ||
+        errorString.contains('unable to open database file')) {
+      return true;
+    }
+
+    // Timeout errors
+    if (errorString.contains('timeout') || errorString.contains('timed out')) {
+      return true;
+    }
+
+    // I/O errors that might be transient
+    if (errorString.contains('i/o error') ||
+        errorString.contains('disk i/o error')) {
+      return true;
+    }
+
+    // File system errors
+    if (error is FileSystemException) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /// Execute operation in a transaction with automatic rollback on error
+  /// This method is available for complex multi-step operations that need atomicity
+  /// Usage: await dbService.executeInTransaction(db, (txn) async { ... });
+  Future<T> executeInTransaction<T>(
+    Database db,
+    Future<T> Function(Transaction txn) operation, {
+    String operationName = 'Transaction',
+  }) async {
+    return await _executeWithRetry<T>(() async {
+      try {
+        return await db.transaction<T>((txn) async {
+          developer.log('[$operationName] Starting transaction');
+          final result = await operation(txn);
+          developer.log('[$operationName] Transaction completed successfully');
+          return result;
+        });
+      } catch (e) {
+        developer.log(
+          '[$operationName] Transaction failed and rolled back',
+          error: e,
+        );
+        rethrow;
+      }
+    }, operationName: operationName);
+  }
+
+  /// Verify database connection health and attempt recovery if needed
+  Future<Database> _ensureHealthyConnection(Database? db) async {
+    if (db == null || !db.isOpen) {
+      developer.log(
+        '[DatabaseService] Database connection invalid, attempting recovery...',
+      );
+      return await _recoverConnection();
+    }
+
+    // Test the connection with a simple query
+    try {
+      await db.rawQuery('SELECT 1');
+      return db;
+    } catch (e) {
+      developer.log(
+        '[DatabaseService] Database connection test failed, attempting recovery',
+        error: e,
+      );
+      return await _recoverConnection();
+    }
+  }
+
+  /// Attempt to recover database connection
+  Future<Database> _recoverConnection() async {
+    developer.log('[DatabaseService] Recovering database connection...');
+
+    // Close existing connection if any
+    try {
+      if (_mainIsolateDatabase != null && _mainIsolateDatabase!.isOpen) {
+        await _mainIsolateDatabase!.close();
+      }
+    } catch (e) {
+      developer.log(
+        '[DatabaseService] Error closing stale connection',
+        error: e,
+      );
+    }
+
+    _mainIsolateDatabase = null;
+
+    // Attempt to reestablish connection
+    for (int attempt = 1; attempt <= _connectionRetryAttempts; attempt++) {
+      try {
+        developer.log(
+          '[DatabaseService] Connection recovery attempt $attempt/$_connectionRetryAttempts',
+        );
+        return await mainDb;
+      } catch (e) {
+        developer.log(
+          '[DatabaseService] Recovery attempt $attempt failed',
+          error: e,
+        );
+
+        if (attempt < _connectionRetryAttempts) {
+          await Future.delayed(
+            Duration(milliseconds: _baseRetryDelayMs * attempt),
+          );
+        } else {
+          rethrow;
+        }
+      }
+    }
+
+    throw Exception('Failed to recover database connection');
+  }
+
+  /// Check database integrity and attempt recovery from corruption
+  Future<bool> checkAndRepairDatabaseIntegrity() async {
+    try {
+      final db = await mainDb;
+
+      developer.log('[DatabaseService] Running integrity check...');
+
+      // Run SQLite integrity check
+      final result = await db.rawQuery('PRAGMA integrity_check');
+
+      if (result.isNotEmpty && result.first.values.first == 'ok') {
+        developer.log('[DatabaseService] Database integrity check passed');
+        return true;
+      }
+
+      developer.log(
+        '[DatabaseService] Database integrity check failed: $result',
+        level: 1000,
+      );
+
+      // Attempt to recover from corruption
+      return await _recoverFromCorruption();
+    } catch (e) {
+      developer.log('[DatabaseService] Integrity check failed', error: e);
+      return false;
+    }
+  }
+
+  /// Attempt to recover from database corruption
+  Future<bool> _recoverFromCorruption() async {
+    try {
+      developer.log(
+        '[DatabaseService] Attempting recovery from database corruption...',
+      );
+
+      final dbPath = await getDatabasesPath();
+      final path = join(dbPath, _dbName);
+      final backupPath = join(dbPath, '${_dbName}.backup');
+
+      // Close current database
+      await closeMainDb();
+
+      // Create backup of corrupted database
+      try {
+        final dbFile = File(path);
+        if (await dbFile.exists()) {
+          await dbFile.copy(backupPath);
+          developer.log(
+            '[DatabaseService] Created backup of corrupted database',
+          );
+        }
+      } catch (e) {
+        developer.log(
+          '[DatabaseService] Failed to backup corrupted database',
+          error: e,
+        );
+      }
+
+      // Delete corrupted database
+      await deleteDatabase(path);
+      developer.log('[DatabaseService] Deleted corrupted database');
+
+      // Recreate database
+      final newDb = await mainDb;
+      developer.log('[DatabaseService] Successfully recreated database');
+
+      // Verify new database
+      final result = await newDb.rawQuery('PRAGMA integrity_check');
+      if (result.isNotEmpty && result.first.values.first == 'ok') {
+        developer.log('[DatabaseService] New database integrity verified');
+        return true;
+      }
+
+      return false;
+    } catch (e) {
+      developer.log(
+        '[DatabaseService] Failed to recover from corruption',
+        error: e,
+      );
+      return false;
+    }
+  }
+
+  /// Execute a batch of operations atomically with error recovery
+  Future<void> executeBatch(
+    Database db,
+    Function(Batch batch) operations, {
+    String operationName = 'Batch operation',
+  }) async {
+    await _executeWithRetry(() async {
+      final batch = db.batch();
+      operations(batch);
+      await batch.commit(noResult: true);
+      developer.log('[$operationName] Batch committed successfully');
+    }, operationName: operationName);
+  }
+>>>>>>> 08d564f00c4dbf0b9f2dd82be413c34d33c3939d
 }

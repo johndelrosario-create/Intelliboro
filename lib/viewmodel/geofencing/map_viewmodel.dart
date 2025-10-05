@@ -282,9 +282,7 @@ class MapboxMapViewModel extends ChangeNotifier {
         try {
           debugPrint('[MapViewModel] Getting current location...');
           userPosition = await _locationService.getCurrentLocation();
-          debugPrint(
-            '[MapViewModel] Current location: ${userPosition.latitude}, ${userPosition.longitude}',
-          );
+          debugPrint('[MapViewModel] Current location acquired successfully');
         } catch (e) {
           debugPrint('[MapViewModel] Error getting current location: $e');
           // Try to get last known location for offline scenarios
@@ -295,7 +293,7 @@ class MapboxMapViewModel extends ChangeNotifier {
             userPosition = await _locationService.getLastKnownLocation();
             if (userPosition != null) {
               debugPrint(
-                '[MapViewModel] Got cached/last known location: ${userPosition.latitude}, ${userPosition.longitude}',
+                '[MapViewModel] Got cached/last known location for offline use',
               );
             } else {
               debugPrint('[MapViewModel] No cached location available');
@@ -390,9 +388,7 @@ class MapboxMapViewModel extends ChangeNotifier {
       // Listen to location updates
       _locationStreamSubscription = _locationService.locationStream.listen(
         (locator.Position position) {
-          debugPrint(
-            '[MapViewModel] Received location update: ${position.latitude}, ${position.longitude}',
-          );
+          debugPrint('[MapViewModel] Received location update');
 
           // Update the map's location component with new position
           _updateMapLocationComponent(position);
@@ -425,9 +421,7 @@ class MapboxMapViewModel extends ChangeNotifier {
       latitude = position.latitude;
       longitude = position.longitude;
 
-      debugPrint(
-        '[MapViewModel] Location component updated with position: ${position.latitude}, ${position.longitude}',
-      );
+      debugPrint('[MapViewModel] Location component updated with new position');
     } catch (e) {
       debugPrint('[MapViewModel] Error updating location component: $e');
     }
@@ -1046,8 +1040,17 @@ class MapboxMapViewModel extends ChangeNotifier {
     BuildContext context, {
     required String taskName,
   }) async {
+    // Lock check: prevent duplicate geofence creation
     if (_isCreatingGeofence) {
-      debugPrint('Already creating a geofence, ignoring duplicate request');
+      debugPrint(
+        '[MapViewModel] Geofence creation already in progress, blocking duplicate request',
+      );
+      if (context.mounted) {
+        _showError(
+          context,
+          'Geofence creation already in progress. Please wait...',
+        );
+      }
       return null;
     }
 
@@ -1062,7 +1065,9 @@ class MapboxMapViewModel extends ChangeNotifier {
       return null;
     }
 
+    // Acquire lock
     _isCreatingGeofence = true;
+    debugPrint('[MapViewModel] Geofence creation lock acquired');
     String? createdGeofenceId;
     try {
       debugPrint('Creating geofence at ${selectedPoint!.coordinates}');
@@ -1166,7 +1171,9 @@ class MapboxMapViewModel extends ChangeNotifier {
       }
       return null;
     } finally {
+      // Release lock
       _isCreatingGeofence = false;
+      debugPrint('[MapViewModel] Geofence creation lock released');
     }
   }
 
