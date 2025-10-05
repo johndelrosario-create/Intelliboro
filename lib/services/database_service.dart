@@ -764,8 +764,6 @@ class DatabaseService {
     }
     return 'Database open at ${_mainIsolateDatabase!.path}';
   }
-<<<<<<< HEAD
-=======
 
   // ============================================================================
   // ERROR RECOVERY MECHANISMS
@@ -1043,5 +1041,4 @@ class DatabaseService {
       developer.log('[$operationName] Batch committed successfully');
     }, operationName: operationName);
   }
->>>>>>> 08d564f00c4dbf0b9f2dd82be413c34d33c3939d
 }
