@@ -1127,7 +1127,7 @@ class _TaskCreationState extends State<TaskCreation> {
                         taskTime:
                             selectedTime, // Only set if explicitly selected
                         taskDate:
-                            selectedDate, // Only set if explicitly selected
+                            selectedDate ?? DateTime.now(), // Default to today if not selected
                         isRecurring:
                             selectedRecurringPattern.type != RecurringType.none,
                         recurringPattern:
