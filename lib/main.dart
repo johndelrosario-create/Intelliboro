@@ -823,11 +823,11 @@ void main() async {
 
   runApp(const MyApp());
 
-  // Initialize TTS service in background (non-blocking)
-  _initializeTtsService();
-
   // Defer other initializations to microtasks so first frame can render.
   Future.microtask(() async {
+    // Initialize TTS service in background (deferred to prevent first-frame lag)
+    _initializeTtsService();
+
     // Initialize offline operation queue
     try {
       await OfflineOperationQueue().init();

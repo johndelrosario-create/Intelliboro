@@ -137,9 +137,8 @@ class FlutterAlarmService {
       final alarmSettings = AlarmSettings(
         id: alarmId,
         dateTime: scheduled,
-        // Use the alarm package's built-in notification sound (no custom asset needed)
-        // This is a pre-bundled alarm sound that works out of the box
-        assetAudioPath: 'assets/notification.mp3',
+        assetAudioPath:
+            'assets/audio/alarm.mp3', // Official example uses assets/marimba.mp3
         loopAudio: true,
         vibrate: true,
         // Use null volume to let system handle alarm volume channel

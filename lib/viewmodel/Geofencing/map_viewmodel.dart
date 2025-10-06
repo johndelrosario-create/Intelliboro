@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:intelliboro/services/geofencing_service.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart' as locator;
@@ -307,10 +308,20 @@ class MapboxMapViewModel extends ChangeNotifier {
     try {
       isMapReady = true;
       debugPrint('[MapViewModel] Map marked ready (early).');
-      notifyListeners();
 
-      // Run remaining initialization without blocking the UI.
-      () async {
+      // Use SchedulerBinding to ensure the first frame is rendered before notifying
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (!_isDisposed) {
+          notifyListeners();
+        }
+      });
+
+      // OPTION A: Defer ALL heavy operations using Future.microtask
+      // This ensures they run AFTER the current event loop tick, preventing ANR
+      Future.microtask(() async {
+        debugPrint('[MapViewModel] Starting deferred initialization...');
+
+        // 1. Initialize OfflineMapService (file I/O operations)
         try {
           await OfflineMapService().init(
             styleUri: 'mapbox://styles/mapbox/streets-v12',
@@ -318,12 +329,13 @@ class MapboxMapViewModel extends ChangeNotifier {
           // Kick off home region caching in background
           // ignore: unawaited_futures
           OfflineMapService().ensureHomeRegion();
+          debugPrint('[MapViewModel] OfflineMapService initialized');
         } catch (e) {
           debugPrint('[MapViewModel] OfflineMapService init error: $e');
         }
 
+        // 2. Create annotation managers (lightweight but async)
         try {
-          // Create annotation managers if they don't exist
           if (geofenceZoneHelper == null) {
             geofenceZoneHelper =
                 await mapboxMap.annotations.createCircleAnnotationManager();
@@ -339,8 +351,8 @@ class MapboxMapViewModel extends ChangeNotifier {
           debugPrint('[MapViewModel] Annotation managers init error: $e\n$st');
         }
 
+        // 3. Enable location component (lightweight UI update)
         try {
-          // Enable location component
           await mapboxMap.location.updateSettings(
             LocationComponentSettings(
               enabled: true,
@@ -354,12 +366,16 @@ class MapboxMapViewModel extends ChangeNotifier {
           debugPrint('[MapViewModel] Location component enable error: $e');
         }
 
-        // Get user's current location
+        // 4. Get user's current location (DEFERRED - may take up to 5 seconds)
         locator.Position? userPosition;
         try {
-          debugPrint('[MapViewModel] Getting current location...');
+          final locationStartTime = DateTime.now();
+          debugPrint('[MapViewModel] Getting current location (deferred)...');
           userPosition = await _locationService.getCurrentLocation();
-          debugPrint('[MapViewModel] Current location acquired successfully');
+          final locationDuration = DateTime.now().difference(locationStartTime);
+          debugPrint(
+            '[MapViewModel] Location acquired in ${locationDuration.inMilliseconds}ms',
+          );
         } catch (e) {
           debugPrint('[MapViewModel] Error getting current location: $e');
           // Try to get last known location for offline scenarios
@@ -376,7 +392,7 @@ class MapboxMapViewModel extends ChangeNotifier {
               debugPrint('[MapViewModel] No cached location available');
               mapInitializationError =
                   'Unable to get location: $e. Please ensure location services are enabled and try again when online.';
-              notifyListeners();
+              // Don't notify during background init - will notify at end
             }
           } catch (cacheError) {
             debugPrint(
@@ -384,7 +400,7 @@ class MapboxMapViewModel extends ChangeNotifier {
             );
             mapInitializationError =
                 'Failed to get current location: $e. Please ensure location services are enabled and permissions granted.';
-            notifyListeners();
+            // Don't notify during background init - will notify at end
           }
         }
 
@@ -442,7 +458,15 @@ class MapboxMapViewModel extends ChangeNotifier {
             await _loadSavedGeofences(forceNativeRecreation: false);
           }
         });
-      }();
+
+        debugPrint('[MapViewModel] ✅ Deferred initialization complete');
+
+        // Batch notify once at the end instead of multiple times during init
+        // This reduces widget rebuilds from ~5 to 1
+        if (!_isDisposed) {
+          notifyListeners();
+        }
+      });
     } catch (e, stackTrace) {
       debugPrint('Error in onMapCreated outer: $e\n$stackTrace');
       mapInitializationError = e.toString();
