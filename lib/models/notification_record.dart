@@ -18,6 +18,14 @@ class NotificationRecord {
   });
 
   factory NotificationRecord.fromMap(Map<String, dynamic> map) {
+    final timestampValue = map['timestamp'] as int;
+
+    // Fix for timestamps stored as seconds instead of milliseconds
+    // If timestamp is less than year 2000 in milliseconds (946684800000),
+    // it's likely stored as seconds, so convert it
+    final timestampMs =
+        timestampValue < 946684800000 ? timestampValue * 1000 : timestampValue;
+
     return NotificationRecord(
       id: map['id'] as int,
       notificationId: map['notification_id'] as int,
@@ -25,7 +33,7 @@ class NotificationRecord {
       taskName: map['task_name'] as String?,
       eventType: map['event_type'] as String,
       body: map['body'] as String,
-      timestamp: DateTime.fromMillisecondsSinceEpoch(map['timestamp'] as int),
+      timestamp: DateTime.fromMillisecondsSinceEpoch(timestampMs),
     );
   }
 

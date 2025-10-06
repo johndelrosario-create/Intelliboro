@@ -14,10 +14,15 @@ class FlutterAlarmService {
 
   /// Initialize the alarm service
   Future<void> initialize() async {
-    if (_isInitialized) return;
+    if (_isInitialized) {
+      developer.log('[FlutterAlarmService] Already initialized, skipping');
+      return;
+    }
 
+    developer.log('[FlutterAlarmService] Starting initialization...');
     try {
       await Alarm.init();
+      developer.log('[FlutterAlarmService] Alarm.init() completed');
 
       // Initialize timezone data
       try {
@@ -82,7 +87,14 @@ class FlutterAlarmService {
 
   /// Schedule an alarm for a task
   Future<void> scheduleForTask(TaskModel task) async {
+    developer.log(
+      '[FlutterAlarmService] scheduleForTask called for task id=${task.id}, name="${task.taskName}"',
+    );
+
     if (!_isInitialized) {
+      developer.log(
+        '[FlutterAlarmService] Not initialized, initializing now...',
+      );
       await initialize();
     }
 
@@ -112,6 +124,9 @@ class FlutterAlarmService {
       }
 
       final alarmId = _alarmIdForTaskId(task.id!);
+      developer.log(
+        '[FlutterAlarmService] Computed alarm time: $scheduled for task id=${task.id}',
+      );
 
       // Format time if set
       final timeStr =
@@ -122,9 +137,9 @@ class FlutterAlarmService {
       final alarmSettings = AlarmSettings(
         id: alarmId,
         dateTime: scheduled,
-        // Use empty string to trigger system default alarm sound
-        // This avoids needing custom audio assets
-        assetAudioPath: '',
+        // Use the alarm package's built-in notification sound (no custom asset needed)
+        // This is a pre-bundled alarm sound that works out of the box
+        assetAudioPath: 'assets/notification.mp3',
         loopAudio: true,
         vibrate: true,
         // Use null volume to let system handle alarm volume channel
@@ -140,10 +155,22 @@ class FlutterAlarmService {
         ),
       );
 
-      await Alarm.set(alarmSettings: alarmSettings);
-
       developer.log(
-        '[FlutterAlarmService] Scheduled alarm for task id=${task.id} at $scheduled (alarmId=$alarmId)',
+        '[FlutterAlarmService] Calling Alarm.set with alarmId=$alarmId, dateTime=$scheduled',
+      );
+      await Alarm.set(alarmSettings: alarmSettings);
+      developer.log(
+        '[FlutterAlarmService] ✅ Successfully scheduled alarm for task id=${task.id} at $scheduled (alarmId=$alarmId)',
+      );
+
+      // Verify the alarm was set
+      final allAlarms = await Alarm.getAlarms();
+      final isSet = allAlarms.any((a) => a.id == alarmId);
+      developer.log(
+        '[FlutterAlarmService] Verification: Alarm $alarmId is ${isSet ? "CONFIRMED" : "NOT FOUND"} in alarm list',
+      );
+      developer.log(
+        '[FlutterAlarmService] Total alarms currently set: ${allAlarms.length}',
       );
     } catch (e, st) {
       developer.log(
@@ -156,15 +183,22 @@ class FlutterAlarmService {
 
   /// Cancel alarm for a task by id
   Future<void> cancelForTaskId(int taskId) async {
+    developer.log(
+      '[FlutterAlarmService] cancelForTaskId called for task id=$taskId',
+    );
+
     if (!_isInitialized) {
       await initialize();
     }
 
     try {
       final alarmId = _alarmIdForTaskId(taskId);
+      developer.log(
+        '[FlutterAlarmService] Calling Alarm.stop for alarmId=$alarmId',
+      );
       await Alarm.stop(alarmId);
       developer.log(
-        '[FlutterAlarmService] Canceled alarm for task id=$taskId (alarmId=$alarmId)',
+        '[FlutterAlarmService] ✅ Canceled alarm for task id=$taskId (alarmId=$alarmId)',
       );
     } catch (e) {
       developer.log(
