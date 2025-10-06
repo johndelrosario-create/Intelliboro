@@ -147,10 +147,22 @@ class LocationService {
         "[LocationService] Permissions granted, attempting to get current position.",
       );
 
+      // Try last known position first (instant, no GPS wait)
+      try {
+        final lastKnown = await Geolocator.getLastKnownPosition();
+        if (lastKnown != null) {
+          debugPrint("[LocationService] Got last known position (instant)");
+          return lastKnown;
+        }
+      } catch (e) {
+        debugPrint("[LocationService] No last known position: $e");
+      }
+
+      // Fall back to fresh GPS location with timeout
       return await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.medium,
-          timeLimit: Duration(seconds: 10),
+          timeLimit: Duration(seconds: 5), // Reduced from 10s to prevent ANR
         ),
       );
     } catch (e) {
