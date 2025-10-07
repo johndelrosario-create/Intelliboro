@@ -137,13 +137,12 @@ class FlutterAlarmService {
       final alarmSettings = AlarmSettings(
         id: alarmId,
         dateTime: scheduled,
-        assetAudioPath:
-            'assets/audio/alarm.mp3', // Official example uses assets/marimba.mp3
+        assetAudioPath: 'assets/audio/alarm.mp3',
         loopAudio: true,
         vibrate: true,
-        // Use null volume to let system handle alarm volume channel
-        // This prevents the media volume slider from appearing
-        volumeSettings: VolumeSettings.fixed(volume: null),
+        volumeSettings: VolumeSettings.fixed(
+          volume: 0.8,
+        ), // Set explicit volume
         warningNotificationOnKill: true,
         androidFullScreenIntent: true,
         notificationSettings: NotificationSettings(
