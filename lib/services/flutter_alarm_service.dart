@@ -140,9 +140,7 @@ class FlutterAlarmService {
         assetAudioPath: 'assets/audio/alarm.mp3',
         loopAudio: true,
         vibrate: true,
-        volumeSettings: VolumeSettings.fixed(
-          volume: 0.8,
-        ), // Set explicit volume
+      volumeSettings: VolumeSettings.fixed(volume:null),
         warningNotificationOnKill: true,
         androidFullScreenIntent: true,
         notificationSettings: NotificationSettings(
