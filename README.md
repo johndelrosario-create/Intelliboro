@@ -1,6 +1,5 @@
 # intelliboro
 
-A context aware task management system.
+A free-open source context aware task management system.
 
-## Getting Started
-
+[demo.webm](https://github.com/user-attachments/assets/37be8080-b23d-4886-85d6-08068d0bf398)
