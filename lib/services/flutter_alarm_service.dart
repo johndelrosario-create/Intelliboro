@@ -105,6 +105,15 @@ class FlutterAlarmService {
       return;
     }
 
+    // Don't schedule alarms for completed tasks
+    if (task.isCompleted) {
+      developer.log(
+        '[FlutterAlarmService] Task id=${task.id} is completed, canceling any existing alarm',
+      );
+      await cancelForTaskId(task.id!);
+      return;
+    }
+
     if (task.taskTime == null || task.taskDate == null) {
       developer.log(
         '[FlutterAlarmService] No time set for task id=${task.id}, canceling any existing alarm',
@@ -140,7 +149,7 @@ class FlutterAlarmService {
         assetAudioPath: 'assets/audio/alarm.mp3',
         loopAudio: true,
         vibrate: true,
-      volumeSettings: VolumeSettings.fixed(volume:null),
+        volumeSettings: VolumeSettings.fixed(volume: null),
         warningNotificationOnKill: true,
         androidFullScreenIntent: true,
         notificationSettings: NotificationSettings(

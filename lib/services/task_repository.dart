@@ -91,16 +91,23 @@ class TaskRepository {
       debugPrint("[TaskRepository] updateTask: Task ${task.id} updated.");
 
       // Reschedule alarm to reflect updated date/time/recurrence
-      try {
+      // Skip rescheduling for completed tasks
+      if (!task.isCompleted) {
+        try {
+          developer.log(
+            '[TaskRepository] updateTask: Rescheduling alarm for task id=${task.id}...',
+          );
+          await FlutterAlarmService().scheduleForTask(task);
+        } catch (e, st) {
+          developer.log(
+            '[TaskRepository] updateTask: Failed to schedule alarm for task id=${task.id}: $e',
+            error: e,
+            stackTrace: st,
+          );
+        }
+      } else {
         developer.log(
-          '[TaskRepository] updateTask: Rescheduling alarm for task id=${task.id}...',
-        );
-        await FlutterAlarmService().scheduleForTask(task);
-      } catch (e, st) {
-        developer.log(
-          '[TaskRepository] updateTask: Failed to schedule alarm for task id=${task.id}: $e',
-          error: e,
-          stackTrace: st,
+          '[TaskRepository] updateTask: Task id=${task.id} is completed, skipping alarm reschedule',
         );
       }
     });
