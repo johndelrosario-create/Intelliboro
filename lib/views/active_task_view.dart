@@ -88,13 +88,16 @@ class _ActiveTaskViewState extends State<ActiveTaskView> {
                               _timerService.isPaused
                                   ? Icons.play_arrow
                                   : Icons.pause,
+                              color: Colors.white,
                             ),
                             label: Text(
                               _timerService.isPaused ? 'Resume' : 'Pause',
+                              style: const TextStyle(color: Colors.white),
                             ),
                             style: ElevatedButton.styleFrom(
                               backgroundColor:
                                   Theme.of(context).colorScheme.primary,
+                              foregroundColor: Colors.white,
                             ),
                             onPressed: () async {
                               try {
