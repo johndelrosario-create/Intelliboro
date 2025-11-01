@@ -189,6 +189,16 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
             // Stop the alarm if it's ringing
             await Alarm.stop(response.id!);
             developer.log('[main] Stopped alarm id=${response.id}');
+            
+            // Cancel the alarm completely from FlutterAlarmService to prevent duplicate rings
+            try {
+              final alarmService = FlutterAlarmService();
+              await alarmService.cancelForTaskId(simpleTaskId);
+              developer.log('[main] Canceled alarm for task id=$simpleTaskId');
+            } catch (e) {
+              developer.log('[main] Failed to cancel alarm for task id=$simpleTaskId: $e');
+            }
+            
             // Release audio focus guard
             AudioFocusGuard.instance.onAlarmStop(response.id);
           }
