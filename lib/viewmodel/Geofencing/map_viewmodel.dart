@@ -1442,12 +1442,18 @@ class MapboxMapViewModel extends ChangeNotifier {
     _debugTimer?.cancel();
     _debugTimer = null;
 
-    // Stop location tracking synchronously by canceling subscription immediately
-    _locationStreamSubscription?.cancel();
-    _locationStreamSubscription = null;
+    // Stop location tracking - cancel subscription immediately
+    // This must be synchronous since dispose() cannot be async
+    if (_locationStreamSubscription != null) {
+      _locationStreamSubscription!.cancel();
+      _locationStreamSubscription = null;
+      debugPrint('[MapViewModel] Location stream subscription cancelled');
+    }
+
     _isLocationTrackingActive = false;
 
-    // Stop the location service without awaiting (let it clean up in background)
+    // Stop the location service in the background
+    // Use unawaited to prevent blocking dispose, but catch errors
     _locationService.stopLocationTracking().catchError((e) {
       debugPrint('[MapViewModel] Error stopping location service: $e');
     });

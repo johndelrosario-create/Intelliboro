@@ -325,10 +325,16 @@ class LocationService {
 
   /// Stop real-time location tracking
   Future<void> stopLocationTracking() async {
-    if (_positionStreamSubscription != null) {
-      await _positionStreamSubscription!.cancel();
+    try {
+      if (_positionStreamSubscription != null) {
+        await _positionStreamSubscription!.cancel();
+        _positionStreamSubscription = null;
+        debugPrint("[LocationService] Location tracking stopped");
+      }
+    } catch (e) {
+      debugPrint("[LocationService] Error stopping location tracking: $e");
+      // Ensure the subscription is nulled even if cancel fails
       _positionStreamSubscription = null;
-      debugPrint("[LocationService] Location tracking stopped");
     }
   }
 
@@ -412,7 +418,23 @@ class LocationService {
 
   /// Dispose resources
   void dispose() {
-    stopLocationTracking();
-    _locationStreamController.close();
+    try {
+      // Cancel subscription immediately without awaiting
+      if (_positionStreamSubscription != null) {
+        _positionStreamSubscription!.cancel();
+        _positionStreamSubscription = null;
+      }
+
+      // Close the stream controller
+      if (!_locationStreamController.isClosed) {
+        _locationStreamController.close();
+      }
+
+      debugPrint("[LocationService] Disposed successfully");
+    } catch (e) {
+      debugPrint("[LocationService] Error during disposal: $e");
+      // Ensure cleanup even if errors occur
+      _positionStreamSubscription = null;
+    }
   }
 }
