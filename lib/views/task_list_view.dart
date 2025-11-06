@@ -294,9 +294,9 @@ class _TaskListViewState extends State<TaskListView>
       case 2:
         return const Color(0xFF827717); // Low - Darker lime 900 (better contrast)
       case 3:
-        return const Color(0xFFFBB917); // Medium - Bright golden yellow (from image)
+        return const Color(0xFFFFCA28); // Medium - Lighter amber 400 (brighter yellow)
       case 4:
-        return const Color(0xFFF57F17); // High - Yellow 900 (moved from medium)
+        return const Color(0xFFFF6F00); // High - Bright orange 900
       case 5:
         return const Color(0xFFB71C1C); // Very High - Red 900 (better contrast)
       default:
