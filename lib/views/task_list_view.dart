@@ -290,11 +290,17 @@ class _TaskListViewState extends State<TaskListView>
 
     switch (priority) {
       case 1:
-        return const Color(0xFF1B5E20); // Very Low - Darker green 900 (better contrast)
+        return const Color(
+          0xFF1B5E20,
+        ); // Very Low - Darker green 900 (better contrast)
       case 2:
-        return const Color(0xFF827717); // Low - Darker lime 900 (better contrast)
+        return const Color(
+          0xFFCDDC39,
+        ); // Low - Lime (brighter visibility)
       case 3:
-        return const Color(0xFFFFCA28); // Medium - Lighter amber 400 (brighter yellow)
+        return const Color(
+          0xFFFFCA28,
+        ); // Medium - Lighter amber 400 (brighter yellow)
       case 4:
         return const Color(0xFFFF6F00); // High - Bright orange 900
       case 5:
