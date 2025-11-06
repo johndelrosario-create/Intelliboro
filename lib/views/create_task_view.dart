@@ -533,9 +533,9 @@ class _TaskCreationState extends State<TaskCreation> {
       case 2:
         return const Color(0xFF827717); // Low - Darker lime 900 (better contrast)
       case 3:
-        return const Color(0xFFF57F17); // Medium - Darker yellow 900 (better contrast)
+        return const Color(0xFFFBB917); // Medium - Bright golden yellow (from image)
       case 4:
-        return const Color(0xFFE65100); // High - Darker orange 900 (better contrast)
+        return const Color(0xFFF57F17); // High - Yellow 900 (moved from medium)
       case 5:
         return const Color(0xFFB71C1C); // Very High - Red 900 (better contrast)
       default:
