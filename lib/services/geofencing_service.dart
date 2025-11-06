@@ -118,6 +118,38 @@ class GeofencingService {
         Future.microtask(() async {
           try {
             if (data is Map) {
+              // Handle TTS requests from background isolate
+              if (data['type'] == 'tts_request') {
+                developer.log(
+                  '[GeofencingService] Received TTS request from background isolate',
+                );
+                final String? text = data['text'] as String?;
+                final String? context = data['context'] as String?;
+                if (text != null) {
+                  try {
+                    final ttsService = TextToSpeechService();
+                    if (!ttsService.isEnabled) {
+                      await ttsService.init();
+                    }
+                    developer.log(
+                      '[GeofencingService] Speaking TTS in UI isolate: $text',
+                    );
+                    await ttsService.speakTaskNotification(
+                      text,
+                      context ?? 'location',
+                    );
+                    developer.log(
+                      '[GeofencingService] TTS completed successfully',
+                    );
+                  } catch (e) {
+                    developer.log(
+                      '[GeofencingService] TTS failed in UI isolate: $e',
+                    );
+                  }
+                }
+                return; // Don't process as regular geofence event
+              }
+
               final dynamic nid = data['notificationId'];
               final int? notificationId =
                   nid is int ? nid : (nid is String ? int.tryParse(nid) : null);

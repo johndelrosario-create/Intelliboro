@@ -15,8 +15,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:intelliboro/services/geofence_storage.dart';
 import 'package:intelliboro/services/database_service.dart';
-import 'package:intelliboro/services/context_detection_service.dart';
-import 'package:intelliboro/services/text_to_speech_service.dart';
 // import 'package:intelliboro/repository/task_repository.dart'; // unused in callback isolate
 
 /// Calculate distance in meters between two lat/lng points using Haversine formula
@@ -24,7 +22,8 @@ double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
   const R = 6371000.0; // Earth radius in meters
   final dLat = (lat2 - lat1) * pi / 180.0;
   final dLon = (lon2 - lon1) * pi / 180.0;
-  final a = sin(dLat / 2) * sin(dLat / 2) +
+  final a =
+      sin(dLat / 2) * sin(dLat / 2) +
       cos(lat1 * pi / 180.0) *
           cos(lat2 * pi / 180.0) *
           sin(dLon / 2) *
@@ -227,7 +226,7 @@ Future<void> geofenceTriggered(
             params.event == native_geofence.GeofenceEvent.enter
                 ? 'entered'
                 : 'exited';
-        
+
         // Calculate distance if location is available
         String distanceInfo = '';
         if (params.location != null) {
@@ -237,12 +236,13 @@ Future<void> geofenceTriggered(
             geofenceData.latitude,
             geofenceData.longitude,
           );
-          distanceInfo = ' (${distance.toStringAsFixed(1)}m from center, radius: ${geofenceData.radiusMeters}m)';
+          distanceInfo =
+              ' (${distance.toStringAsFixed(1)}m from center, radius: ${geofenceData.radiusMeters}m)';
           developer.log(
             '[GeofenceCallback] Geofence ${geofence.id} triggered at distance: ${distance.toStringAsFixed(1)}m, configured radius: ${geofenceData.radiusMeters}m',
           );
         }
-        
+
         notificationBody +=
             'You have $eventType the area for task ${geofenceData.task}$distanceInfo\n';
       }
@@ -594,108 +594,45 @@ Future<void> geofenceTriggered(
             final bool shouldAnnouncePending =
                 wasPersistedPending || matchedAsPending;
 
-            // Try direct TTS service approach first
+            // Request TTS from UI isolate instead of speaking directly in background
+            // Background isolates can't reliably access Android audio on real devices
             try {
               developer.log(
-                '[GeofenceCallback] Initializing TTS service for geofence callback...',
+                '[GeofenceCallback] Sending TTS request to UI isolate...',
               );
-              final ttsService = TextToSpeechService(); // Singleton instance
-
-              // Force re-initialization in background context
-              developer.log('[GeofenceCallback] Calling TTS init...');
-              await ttsService.init();
-              developer.log('[GeofenceCallback] TTS init completed');
-
-              // Check if TTS is available
-              developer.log('[GeofenceCallback] Checking TTS availability...');
-              final isAvailable = await ttsService.isAvailable();
-              developer.log(
-                '[GeofenceCallback] TTS availability: $isAvailable',
+              
+              final SendPort? sendPort = IsolateNameServer.lookupPortByName(
+                'native_geofence_send_port',
               );
-              developer.log(
-                '[GeofenceCallback] TTS enabled: ${ttsService.isEnabled}',
-              );
-
-              if (isAvailable && ttsService.isEnabled) {
+              
+              if (sendPort != null) {
                 final speakText =
                     shouldAnnouncePending
                         ? '${geofenceData.task} added to pending queue.'
                         : geofenceData.task!;
+                
+                // Send TTS request to UI isolate
+                sendPort.send({
+                  'type': 'tts_request',
+                  'text': speakText,
+                  'context': wasPersistedPending ? 'snooze' : 'location',
+                });
+                
                 developer.log(
-                  '[GeofenceCallback] Attempting to speak: "$speakText"',
+                  '[GeofenceCallback] TTS request sent to UI isolate for: ${geofenceData.task}',
                 );
-                await ttsService.speakTaskNotification(
-                  speakText,
-                  wasPersistedPending ? 'snooze' : 'location',
-                );
-                developer.log(
-                  '[GeofenceCallback] Direct TTS triggered successfully for: ${geofenceData.task}',
-                );
-
-                // Wait longer for TTS to complete before showing notification
-                developer.log(
-                  '[GeofenceCallback] Waiting for TTS to complete before showing notification...',
-                );
-                int waitTime = 0;
-                const maxWaitTime = 10000; // 10 seconds max
-                const checkInterval = 500; // Check every 500ms
-
-                while (ttsService.isSpeaking && waitTime < maxWaitTime) {
-                  await Future.delayed(
-                    const Duration(milliseconds: checkInterval),
-                  );
-                  waitTime += checkInterval;
-                  developer.log(
-                    '[GeofenceCallback] TTS still speaking, waited ${waitTime}ms',
-                  );
-                }
-
-                if (waitTime >= maxWaitTime) {
-                  developer.log(
-                    '[GeofenceCallback] TTS timeout reached, proceeding with notification',
-                  );
-                } else {
-                  developer.log(
-                    '[GeofenceCallback] TTS completed after ${waitTime}ms',
-                  );
-                }
-
-                // Add additional delay to ensure audio system is free
-                await Future.delayed(const Duration(milliseconds: 200));
+                
+                // Small delay to allow TTS to start in UI isolate
+                await Future.delayed(const Duration(milliseconds: 500));
               } else {
                 developer.log(
-                  '[GeofenceCallback] TTS not available or disabled. Available: $isAvailable, Enabled: ${ttsService.isEnabled}',
+                  '[GeofenceCallback] UI isolate port not found, skipping TTS',
                 );
-                developer.log('[GeofenceCallback] TTS will not be triggered');
               }
-            } catch (directTtsError) {
+            } catch (ttsPortError) {
               developer.log(
-                '[GeofenceCallback] Direct TTS failed: $directTtsError, trying context service...',
+                '[GeofenceCallback] Failed to send TTS request to UI isolate: $ttsPortError',
               );
-
-              // Fallback to context service approach
-              try {
-                final contextService = ContextDetectionService();
-                await contextService.init();
-
-                await contextService.handleGeofenceContext(
-                  geofenceData.task!,
-                  geofence.id,
-                  metadata: {
-                    'event_type': params.event.name,
-                    // Do not log precise location coordinates for privacy
-                    'has_location': params.location != null,
-                    'timestamp': DateTime.now().millisecondsSinceEpoch,
-                  },
-                );
-                developer.log(
-                  '[GeofenceCallback] Context service TTS triggered for: ${geofenceData.task}',
-                );
-              } catch (contextError) {
-                developer.log(
-                  '[GeofenceCallback] Context service TTS also failed: $contextError',
-                );
-              }
             }
           } else {
             developer.log(
