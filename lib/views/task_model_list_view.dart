@@ -96,15 +96,15 @@ class _TaskModelListViewState extends State<TaskModelListView> {
   Color _getPriorityColor(int priority) {
     switch (priority) {
       case 1:
-        return Colors.green;
+        return Colors.green.shade800; // Very deep green for Very Low
       case 2:
-        return Colors.lightGreen;
+        return Colors.lime.shade600; // Distinct yellowish-green for Low
       case 3:
-        return Colors.orange;
+        return Colors.yellow.shade700; // Bright yellow for Medium
       case 4:
-        return Colors.deepOrange;
+        return Colors.deepOrange; // Deep orange for High
       case 5:
-        return Colors.red;
+        return Colors.red.shade900; // Deep red for Very High (Critical)
       default:
         return Colors.grey;
     }

@@ -285,20 +285,19 @@ class _TaskListViewState extends State<TaskListView>
   }
 
   Color _getPriorityColor(int priority) {
-    final theme = Theme.of(context);
     switch (priority) {
       case 1:
-        return theme.colorScheme.secondary;
+        return Colors.green.shade800; // Very deep green for Very Low
       case 2:
-        return theme.colorScheme.tertiary;
+        return Colors.lime.shade600; // Distinct yellowish-green for Low
       case 3:
-        return theme.colorScheme.primary;
+        return Colors.yellow.shade700; // Bright yellow for Medium
       case 4:
-        return theme.colorScheme.error;
+        return Colors.deepOrange; // Deep orange for High
       case 5:
-        return theme.colorScheme.errorContainer;
+        return Colors.red.shade900; // Deep red for Very High (Critical)
       default:
-        return theme.colorScheme.outline;
+        return Colors.grey;
     }
   }
 
@@ -637,7 +636,8 @@ class _TaskListViewState extends State<TaskListView>
                         child: Text(
                           _getTaskTriggerText(task),
                           style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
+                            color: theme.colorScheme.onSurface,
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
                       ),
