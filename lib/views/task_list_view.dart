@@ -287,18 +287,18 @@ class _TaskListViewState extends State<TaskListView>
   Color _getPriorityColor(int priority) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    
+
     switch (priority) {
       case 1:
-        return const Color(0xFF2E5339); // Very Low - Dark matcha green (accessible)
+        return const Color(0xFF1B5E20); // Very Low - Darker green 900 (better contrast)
       case 2:
-        return const Color(0xFF9E9D24); // Low - Mountain Dew yellow-green (lime 800, accessible)
+        return const Color(0xFF827717); // Low - Darker lime 900 (better contrast)
       case 3:
-        return const Color(0xFFFBC02D); // Medium - Material yellow 700 (accessible)
+        return const Color(0xFFF57F17); // Medium - Darker yellow 900 (better contrast)
       case 4:
-        return const Color(0xFFFF6F00); // High - Material orange 900 (accessible)
+        return const Color(0xFFE65100); // High - Darker orange 900 (better contrast)
       case 5:
-        return colorScheme.error; // Very High - uses error color for accessibility
+        return const Color(0xFFB71C1C); // Very High - Red 900 (better contrast)
       default:
         return colorScheme.outline;
     }
@@ -579,9 +579,10 @@ class _TaskListViewState extends State<TaskListView>
                           const SizedBox(height: 2),
                           Text(
                             '${task.priorityString} Priority',
-                            style: theme.textTheme.labelMedium?.copyWith(
+                            style: theme.textTheme.labelLarge?.copyWith(
                               color: priorityColor,
-                              fontWeight: FontWeight.w500,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
                             ),
                           ),
                         ],
