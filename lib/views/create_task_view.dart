@@ -465,14 +465,17 @@ class _TaskCreationState extends State<TaskCreation> {
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: priorityColor.withOpacity(0.1),
+                color: theme.colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: priorityColor.withOpacity(0.2)),
+                border: Border.all(
+                  color: priorityColor.withOpacity(0.5),
+                  width: 2,
+                ),
               ),
               child: Text(
                 _getPriorityDescription(selectedPriority),
                 style: theme.textTheme.bodyMedium?.copyWith(
-                  color: priorityColor,
+                  color: theme.colorScheme.onSurface,
                   fontWeight: FontWeight.w500,
                 ),
                 textAlign: TextAlign.center,
@@ -519,19 +522,22 @@ class _TaskCreationState extends State<TaskCreation> {
   }
 
   Color _getPriorityColor(int priority) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    
     switch (priority) {
       case 1:
-        return Colors.green.shade800; // Very deep green for Very Low
+        return const Color(0xFF2E5339); // Very Low - Dark matcha green (accessible)
       case 2:
-        return Colors.lime.shade600; // Distinct yellowish-green for Low
+        return const Color(0xFF9E9D24); // Low - Mountain Dew yellow-green (lime 800, accessible)
       case 3:
-        return Colors.yellow.shade700; // Bright yellow for Medium
+        return const Color(0xFFFBC02D); // Medium - Material yellow 700 (accessible)
       case 4:
-        return Colors.deepOrange; // Deep orange for High
+        return const Color(0xFFFF6F00); // High - Material orange 900 (accessible)
       case 5:
-        return Colors.red.shade900; // Deep red for Very High (Critical)
+        return colorScheme.error; // Very High - uses error color for accessibility
       default:
-        return Colors.orange;
+        return colorScheme.primary;
     }
   }
 
