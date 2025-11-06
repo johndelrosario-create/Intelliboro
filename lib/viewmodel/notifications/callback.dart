@@ -19,6 +19,20 @@ import 'package:intelliboro/services/context_detection_service.dart';
 import 'package:intelliboro/services/text_to_speech_service.dart';
 // import 'package:intelliboro/repository/task_repository.dart'; // unused in callback isolate
 
+/// Calculate distance in meters between two lat/lng points using Haversine formula
+double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+  const R = 6371000.0; // Earth radius in meters
+  final dLat = (lat2 - lat1) * pi / 180.0;
+  final dLon = (lon2 - lon1) * pi / 180.0;
+  final a = sin(dLat / 2) * sin(dLat / 2) +
+      cos(lat1 * pi / 180.0) *
+          cos(lat2 * pi / 180.0) *
+          sin(dLon / 2) *
+          sin(dLon / 2);
+  final c = 2 * atan2(sqrt(a), sqrt(1 - a));
+  return R * c;
+}
+
 @pragma('vm:entry-point')
 Future<void> geofenceTriggered(
   native_geofence.GeofenceCallbackParams params,
@@ -213,8 +227,24 @@ Future<void> geofenceTriggered(
             params.event == native_geofence.GeofenceEvent.enter
                 ? 'entered'
                 : 'exited';
+        
+        // Calculate distance if location is available
+        String distanceInfo = '';
+        if (params.location != null) {
+          final distance = _calculateDistance(
+            params.location!.latitude,
+            params.location!.longitude,
+            geofenceData.latitude,
+            geofenceData.longitude,
+          );
+          distanceInfo = ' (${distance.toStringAsFixed(1)}m from center, radius: ${geofenceData.radiusMeters}m)';
+          developer.log(
+            '[GeofenceCallback] Geofence ${geofence.id} triggered at distance: ${distance.toStringAsFixed(1)}m, configured radius: ${geofenceData.radiusMeters}m',
+          );
+        }
+        
         notificationBody +=
-            'You have $eventType the area for task ${geofenceData.task}\n';
+            'You have $eventType the area for task ${geofenceData.task}$distanceInfo\n';
       }
     }
 

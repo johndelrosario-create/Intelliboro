@@ -569,6 +569,9 @@ class GeofencingService {
       );
 
       // Create the native geofence
+      developer.log(
+        '[GeofencingService] Creating native geofence with radius: ${radiusMeters}m at ${geometry.coordinates.lat}, ${geometry.coordinates.lng}',
+      );
       await native_geofence.NativeGeofenceManager.instance.createGeofence(
         native_geofence.Geofence(
           id: geofenceId,
@@ -597,7 +600,9 @@ class GeofencingService {
       );
 
       _createdGeofenceIds.add(geofenceId);
-      developer.log('Geofence created successfully: $geofenceId');
+      developer.log(
+        'Geofence created successfully: $geofenceId with radius ${radiusMeters}m',
+      );
 
       return Future.value();
     } catch (e, stackTrace) {

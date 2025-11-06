@@ -835,6 +835,15 @@ class MapboxMapViewModel extends ChangeNotifier {
       if (_initialDisplayPending && isMapReady && mapboxMap != null) {
         _initialDisplayPending = false;
         await _loadSavedGeofences(forceNativeRecreation: false);
+        // Force an additional visual update after a brief delay to ensure accurate sizing
+        Future.delayed(const Duration(milliseconds: 300), () async {
+          if (!_isDisposed && mapboxMap != null) {
+            debugPrint(
+              "[MapViewModel] Forcing visual radius update after initial display",
+            );
+            await updateAllGeofenceVisualRadii();
+          }
+        });
       }
       await updateAllGeofenceVisualRadii();
       notifyListeners(); // Notify listeners to update UI if needed
@@ -1306,10 +1315,17 @@ class MapboxMapViewModel extends ChangeNotifier {
       return;
     }
 
+    debugPrint(
+      "[displayExistingGeofence] Called with radiusMeters: $radiusMeters at point: ${point.coordinates}",
+    );
+
     // Update selectedPoint for the view model to know the current geofence center
     selectedPoint = point;
     latitude = point.coordinates.lat;
     longitude = point.coordinates.lng;
+
+    // Wait a brief moment for camera animation to settle if it's in progress
+    await Future.delayed(const Duration(milliseconds: 100));
 
     // Calculate radius in pixels for the current zoom level using geofence-specific latitude
     double metersPerPixel = 0.0;
@@ -1319,6 +1335,9 @@ class MapboxMapViewModel extends ChangeNotifier {
         point.coordinates.lat.toDouble(),
         camera.zoom,
       );
+      debugPrint(
+        "[displayExistingGeofence] Calculated metersPerPixel: $metersPerPixel at zoom: ${camera.zoom} for lat: ${point.coordinates.lat}",
+      );
     } catch (e) {
       debugPrint("Error getting meters per pixel at geofence latitude: $e");
     }
@@ -1326,6 +1345,9 @@ class MapboxMapViewModel extends ChangeNotifier {
     // Fallback to camera-center method if geofence-specific calculation fails
     if (metersPerPixel <= 0) {
       metersPerPixel = await metersToPixelsAtCurrentLocationAndZoom();
+      debugPrint(
+        "[displayExistingGeofence] Used fallback metersPerPixel: $metersPerPixel",
+      );
     }
     if (metersPerPixel == 0.0) {
       debugPrint("Cannot display existing geofence: metersPerPixel is 0.");
@@ -1333,6 +1355,10 @@ class MapboxMapViewModel extends ChangeNotifier {
     }
     _currentHelperRadiusInPixels = radiusMeters / metersPerPixel;
     pendingRadiusMeters = radiusMeters;
+    
+    debugPrint(
+      "[displayExistingGeofence] Calculated pixel radius: $_currentHelperRadiusInPixels px for ${radiusMeters}m",
+    );
 
     // Clear any existing helper annotation
     await geofenceZoneHelper!.deleteAll();
