@@ -600,28 +600,28 @@ Future<void> geofenceTriggered(
               developer.log(
                 '[GeofenceCallback] Sending TTS request to UI isolate...',
               );
-              
+
               final SendPort? sendPort = IsolateNameServer.lookupPortByName(
                 'native_geofence_send_port',
               );
-              
+
               if (sendPort != null) {
                 final speakText =
                     shouldAnnouncePending
                         ? '${geofenceData.task} added to pending queue.'
                         : geofenceData.task!;
-                
+
                 // Send TTS request to UI isolate
                 sendPort.send({
                   'type': 'tts_request',
                   'text': speakText,
                   'context': wasPersistedPending ? 'snooze' : 'location',
                 });
-                
+
                 developer.log(
                   '[GeofenceCallback] TTS request sent to UI isolate for: ${geofenceData.task}',
                 );
-                
+
                 // Small delay to allow TTS to start in UI isolate
                 await Future.delayed(const Duration(milliseconds: 500));
               } else {

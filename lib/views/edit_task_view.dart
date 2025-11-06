@@ -146,10 +146,10 @@ class _EditTaskViewState extends State<EditTaskView> {
       CameraOptions(center: initialPoint, zoom: 16),
       MapAnimationOptions(duration: 1000),
     );
-    
+
     // Add a small delay to ensure camera is fully settled
     await Future.delayed(const Duration(milliseconds: 200));
-    
+
     // Now display the existing geofence with proper pixel calculation
     await _mapViewModel.displayExistingGeofence(
       initialPoint,

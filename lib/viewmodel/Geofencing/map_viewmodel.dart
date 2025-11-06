@@ -1355,7 +1355,7 @@ class MapboxMapViewModel extends ChangeNotifier {
     }
     _currentHelperRadiusInPixels = radiusMeters / metersPerPixel;
     pendingRadiusMeters = radiusMeters;
-    
+
     debugPrint(
       "[displayExistingGeofence] Calculated pixel radius: $_currentHelperRadiusInPixels px for ${radiusMeters}m",
     );

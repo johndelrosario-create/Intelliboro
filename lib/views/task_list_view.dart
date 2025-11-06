@@ -294,9 +294,7 @@ class _TaskListViewState extends State<TaskListView>
           0xFF1B5E20,
         ); // Very Low - Darker green 900 (better contrast)
       case 2:
-        return const Color(
-          0xFFAFB42B,
-        ); // Low - Lime (adjusted to AFB42B)
+        return const Color(0xFFAFB42B); // Low - Lime (adjusted to AFB42B)
       case 3:
         return const Color(
           0xFFFFCA28,
