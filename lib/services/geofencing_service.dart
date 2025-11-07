@@ -367,15 +367,33 @@ class GeofencingService {
                 // No active task OR incomingHigher > activePriority: show the immediate geofence alert notification now
                 try {
                   final plugin = notificationPlugin;
-                  final List<int> ids =
-                      candidates.map((c) => c.id).whereType<int>().toList();
-                  final names = candidates.map((c) => c.taskName).join(', ');
-                  final title =
-                      ids.length == 1 ? 'Task reminder' : 'Nearby tasks';
+
+                  // Pick the single highest-priority candidate to show/speak
+                  TaskModel? best;
+                  double bestPrio = -double.infinity;
+                  for (final c in candidates) {
+                    final p = c.getEffectivePriority();
+                    if (best == null ||
+                        p > bestPrio ||
+                        (p == bestPrio && (c.id ?? 0) < (best.id ?? 0))) {
+                      best = c;
+                      bestPrio = p;
+                    }
+                  }
+
+                  if (best == null) {
+                    developer.log(
+                      '[GeofencingService] No best candidate found',
+                    );
+                    return;
+                  }
+
+                  final remainingCount = candidates.length - 1;
+                  final title = 'Task reminder';
                   final body =
-                      ids.length == 1
-                          ? 'You entered the area for "$names".'
-                          : 'You entered areas for: ${names}';
+                      remainingCount > 0
+                          ? 'You have task: ${best.taskName} (and $remainingCount more)'
+                          : 'You have task: ${best.taskName}';
 
                   // Ensure we cancel the early background notification (to avoid duplicates)
                   if (notificationId != null) {
@@ -432,32 +450,18 @@ class GeofencingService {
                   final payload = jsonEncode({
                     'notificationId': uiNotifId,
                     'geofenceIds': geofenceIds,
-                    'taskIds': ids,
+                    'taskIds': [best.id],
                   });
 
                   // Prefer using TaskTimerService.requestSwitch when there's an active task
                   try {
                     final timerService = TaskTimerService();
                     if (hasActive) {
-                      // If incoming is higher priority, request switch which will
-                      // interrupt current task and post the switch notification.
-                      // Pick only the single highest-priority candidate to avoid
-                      // multiple overlapping switch requests.
-                      TaskModel? best;
-                      double bestPrio = -double.infinity;
-                      for (final c in candidates) {
-                        final p = c.getEffectivePriority();
-                        if (best == null || p > bestPrio) {
-                          best = c;
-                          bestPrio = p;
-                        }
-                      }
-                      if (best != null) {
-                        developer.log(
-                          '[GeofencingService] Requesting switch to highest-priority task id=${best.id}, name=${best.taskName}, prio=$bestPrio',
-                        );
-                        await timerService.requestSwitch(best);
-                      }
+                      // If incoming is higher priority, request switch
+                      developer.log(
+                        '[GeofencingService] Requesting switch to highest-priority task id=${best.id}, name=${best.taskName}, prio=$bestPrio',
+                      );
+                      await timerService.requestSwitch(best);
                     } else {
                       await plugin.show(
                         uiNotifId,
@@ -467,18 +471,16 @@ class GeofencingService {
                         payload: payload,
                       );
                       developer.log(
-                        '[GeofencingService] Posted geofence alert notification $uiNotifId for tasks: $ids',
+                        '[GeofencingService] Posted geofence alert notification $uiNotifId for task: ${best.id}',
                       );
 
-                      // Optional: brief TTS in UI isolate
+                      // TTS in UI isolate using task name so generator creates "You have task: <name>"
                       try {
                         final tts = TextToSpeechService();
                         await tts.init();
                         if (await tts.isAvailable() && tts.isEnabled) {
                           await tts.speakTaskNotification(
-                            ids.length == 1
-                                ? 'Reminder: $names'
-                                : 'You have ${ids.length} nearby tasks.',
+                            best.taskName,
                             'location',
                           );
                         }
