@@ -10,6 +10,7 @@ import 'package:intelliboro/services/geofence_storage.dart';
 import 'package:intelliboro/services/offline_map_service.dart';
 import 'package:intelliboro/repository/task_repository.dart';
 import 'package:intelliboro/models/geofence_data.dart';
+import 'dart:developer' as developer;
 
 // Simple grid cell for spatial index
 class GridCell {
@@ -88,9 +89,38 @@ class MapboxMapViewModel extends ChangeNotifier {
   // Get the singleton instance of the GeofencingService
   final GeofencingService _geofencingService = GeofencingService();
 
+  // Public method to get user's current location and fly camera to it
+  Future<bool> flyToUserLocation() async {
+    try {
+      final userPosition = await _locationService.getCurrentLocation();
+      if (mapboxMap != null) {
+        await mapboxMap!.flyTo(
+          CameraOptions(
+            center: Point(
+              coordinates: Position(
+                userPosition.longitude,
+                userPosition.latitude,
+              ),
+            ),
+            zoom: 16,
+            bearing: 0,
+            pitch: 0,
+          ),
+          MapAnimationOptions(duration: 1500),
+        );
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('[MapViewModel] Error flying to user location: $e');
+      return false;
+    }
+  }
+
   MapboxMap? mapboxMap;
   bool isMapReady = false;
   bool _isCreatingGeofence = false; // Add state tracking
+  bool _isDisposed = false;
 
   // Completer to ensure proper initialization sequence
   final Completer<void> _mapReadyCompleter = Completer<void>();
@@ -612,8 +642,9 @@ class MapboxMapViewModel extends ChangeNotifier {
       orElse: () => throw StateError('Geofence not found: $geofenceId'),
     );
     _editingGeofenceId = geofenceId;
-    final point = Point(coordinates: Position(gf.longitude, gf.latitude));
-    await displayExistingGeofence(point, gf.radiusMeters);
+    selectedPoint = Point(coordinates: Position(gf.longitude, gf.latitude));
+    pendingRadiusMeters = gf.radiusMeters;
+    await displayExistingGeofence(gf.radiusMeters);
   }
 
   // Save the edited geofence (radius and/or center) back to DB and native
@@ -1305,201 +1336,55 @@ class MapboxMapViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> displayExistingGeofence(Point point, double radiusMeters) async {
-    if (mapboxMap == null ||
-        geofenceZoneHelper == null ||
-        geofenceZoneSymbol == null) {
-      debugPrint(
-        "Map, helper, or symbol manager not ready in displayExistingGeofence",
+  Future<void> displayExistingGeofence(double radiusMeters) async {
+    if (mapboxMap == null) {
+      developer.log(
+        '[displayExistingGeofence] Map not ready, setting pending flag',
       );
+      _initialDisplayPending = true;
+      pendingRadiusMeters = radiusMeters;
       return;
     }
 
-    debugPrint(
-      "[displayExistingGeofence] Called with radiusMeters: $radiusMeters at point: ${point.coordinates}",
+    developer.log(
+      '[displayExistingGeofence] Displaying geofence with radius: $radiusMeters meters',
     );
 
-    // Update selectedPoint for the view model to know the current geofence center
-    selectedPoint = point;
-    latitude = point.coordinates.lat;
-    longitude = point.coordinates.lng;
-
-    // Wait a brief moment for camera animation to settle if it's in progress
-    await Future.delayed(const Duration(milliseconds: 100));
-
-    // Calculate radius in pixels for the current zoom level using geofence-specific latitude
-    double metersPerPixel = 0.0;
-    try {
-      final camera = await mapboxMap!.getCameraState();
-      metersPerPixel = await mapboxMap!.projection.getMetersPerPixelAtLatitude(
-        point.coordinates.lat.toDouble(),
-        camera.zoom,
-      );
-      debugPrint(
-        "[displayExistingGeofence] Calculated metersPerPixel: $metersPerPixel at zoom: ${camera.zoom} for lat: ${point.coordinates.lat}",
-      );
-    } catch (e) {
-      debugPrint("Error getting meters per pixel at geofence latitude: $e");
-    }
-
-    // Fallback to camera-center method if geofence-specific calculation fails
-    if (metersPerPixel <= 0) {
-      metersPerPixel = await metersToPixelsAtCurrentLocationAndZoom();
-      debugPrint(
-        "[displayExistingGeofence] Used fallback metersPerPixel: $metersPerPixel",
-      );
-    }
-    if (metersPerPixel == 0.0) {
-      debugPrint("Cannot display existing geofence: metersPerPixel is 0.");
-      return;
-    }
-    _currentHelperRadiusInPixels = radiusMeters / metersPerPixel;
     pendingRadiusMeters = radiusMeters;
 
-    debugPrint(
-      "[displayExistingGeofence] Calculated pixel radius: $_currentHelperRadiusInPixels px for ${radiusMeters}m",
-    );
+    // Wait for camera to fully settle and get accurate camera state
+    await Future.delayed(const Duration(milliseconds: 500));
 
-    // Clear any existing helper annotation
-    await geofenceZoneHelper!.deleteAll();
-    geofenceZoneHelperIds.clear();
+    // Force camera state update by getting fresh camera state
+    final cameraState = await mapboxMap!.getCameraState();
+    final zoom = cameraState.zoom;
 
-    // Create the helper annotation at the geofence location
-    final helperAnnotation = await geofenceZoneHelper!.create(
-      CircleAnnotationOptions(
-        geometry: point,
-        circleRadius: _currentHelperRadiusInPixels,
-        circleColor: Colors.lightBlue.toARGB32(),
-        circleOpacity: 0.2,
-        circleStrokeColor: Colors.black.toARGB32(),
-        circleStrokeWidth: 1.0,
+    developer.log('[displayExistingGeofence] Camera zoom level: $zoom');
+
+    final metersPerPixelConversionFactor = await mapboxMap!.pixelForCoordinate(
+      Point(
+        coordinates: Position(
+          selectedPoint!.coordinates.lng,
+          selectedPoint!.coordinates.lat,
+        ),
       ),
     );
-    geofenceZoneHelperIds.add(helperAnnotation);
-    isGeofenceHelperPlaced = true;
 
-    // Also, ensure the persistent symbol for this geofence would be displayed correctly.
-    // _displaySavedGeofences will handle drawing all persistent symbols,
-    // but we need to ensure the helper reflects the one being edited.
-    // No, _displaySavedGeofences shows ALL. For an edit view, we might want to show only the one being edited,
-    // or highlight it. For now, the helper represents the editable area.
-    // The persistent ones are handled by _loadSavedGeofences -> _displaySavedGeofences
-    // which is fine, as the edit view will have its own map and won't call _displaySavedGeofences for *all* geofences.
+    final pixelRadius = radiusMeters / metersPerPixelConversionFactor.x.abs();
 
-    debugPrint(
-      "Helper for existing geofence placed at ${point.coordinates} with radius ${_currentHelperRadiusInPixels}px for ${radiusMeters}m",
+    developer.log(
+      '[displayExistingGeofence] Meters per pixel: ${metersPerPixelConversionFactor.x}, Pixel radius: $pixelRadius',
     );
-    notifyListeners();
+
+    // Redraw with accurate radius
+    updateAllGeofenceVisualRadii();
+    _initialDisplayPending = false;
   }
-
-  /// Manually fly to user's current or last known location
-  /// This can be called when user taps a "locate me" button
-  Future<bool> flyToUserLocation() async {
-    if (mapboxMap == null) {
-      debugPrint('[MapViewModel] Cannot fly to user location: map not ready');
-      return false;
-    }
-
-    locator.Position? userPosition;
-    try {
-      debugPrint('[MapViewModel] Manually getting user location for flyTo...');
-      userPosition = await _locationService.getCurrentLocation();
-    } catch (e) {
-      debugPrint(
-        '[MapViewModel] Error getting current location for manual flyTo: $e',
-      );
-      // Try cached location
-      try {
-        userPosition = await _locationService.getLastKnownLocation();
-        if (userPosition != null) {
-          debugPrint('[MapViewModel] Using cached location for manual flyTo');
-        }
-      } catch (cacheError) {
-        debugPrint(
-          '[MapViewModel] Error getting cached location for manual flyTo: $cacheError',
-        );
-      }
-    }
-
-    if (userPosition != null) {
-      try {
-        await mapboxMap!.flyTo(
-          CameraOptions(
-            center: Point(
-              coordinates: Position(
-                userPosition.longitude,
-                userPosition.latitude,
-              ),
-            ),
-            zoom: 16,
-            bearing: 0,
-            pitch: 0,
-          ),
-          MapAnimationOptions(duration: 1500),
-        );
-        debugPrint('[MapViewModel] Manual flyTo user location completed');
-        return true;
-      } catch (e) {
-        debugPrint('[MapViewModel] Error during manual flyTo: $e');
-      }
-    } else {
-      debugPrint('[MapViewModel] No location available for manual flyTo');
-    }
-
-    return false;
-  }
-
-  CircleAnnotationManager? getGeofenceZonePicker() => geofenceZoneHelper;
-  CircleAnnotationManager? getGeofenceZoneSymbol() => geofenceZoneSymbol;
-
-  bool _isDisposed = false;
 
   @override
   void dispose() {
-    if (_isDisposed) {
-      debugPrint('[MapViewModel] dispose() called multiple times, ignoring');
-      return;
-    }
-
     _isDisposed = true;
-    debugPrint('[MapViewModel] Starting dispose sequence');
-
-    // Stop any running timers
-    _debugTimer?.cancel();
-    _debugTimer = null;
-
-    // Stop location tracking - cancel subscription immediately
-    // This must be synchronous since dispose() cannot be async
-    if (_locationStreamSubscription != null) {
-      _locationStreamSubscription!.cancel();
-      _locationStreamSubscription = null;
-      debugPrint('[MapViewModel] Location stream subscription cancelled');
-    }
-
-    _isLocationTrackingActive = false;
-
-    // Stop the location service in the background
-    // Use unawaited to prevent blocking dispose, but catch errors
-    _locationService.stopLocationTracking().catchError((e) {
-      debugPrint('[MapViewModel] Error stopping location service: $e');
-    });
-
-    // IMPORTANT: Do NOT dispose the singleton geofencing service here.
-    // Instead, unregister this view model so the service knows not to use it.
-    try {
-      _geofencingService.unregisterMapViewModel();
-      debugPrint('[MapViewModel] Unregistered from geofencing service');
-    } catch (e) {
-      debugPrint(
-        '[MapViewModel] Error unregistering from geofencing service: $e',
-      );
-    }
-
-    // Clear annotation lists to free memory
-    geofenceZoneHelperIds.clear();
-    geofenceZoneSymbolIds.clear();
-    _savedGeofences.clear();
-    _spatialGrid.clear();
+    debugPrint('[MapViewModel] Dispose called');
 
     // Clear any resources held by this specific view model
     // Delete all annotations before disposing managers
