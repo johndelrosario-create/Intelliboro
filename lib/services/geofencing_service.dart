@@ -61,9 +61,9 @@ class GeofencingService {
   }
 
   CircleAnnotationManager? get geofenceZoneSymbol =>
-      _mapViewModel?.getGeofenceZoneSymbol();
+      _mapViewModel?.geofenceZoneSymbol;
   CircleAnnotationManager? get geofenceZoneHelper =>
-      _mapViewModel?.getGeofenceZonePicker();
+      _mapViewModel?.geofenceZoneHelper;
 
   Future<void> init() async {
     // init() now guards against multiple executions
@@ -123,30 +123,28 @@ class GeofencingService {
                 developer.log(
                   '[GeofencingService] Received TTS request from background isolate',
                 );
-                final String? text = data['text'] as String?;
-                final String? context = data['context'] as String?;
-                if (text != null) {
+                final String text = data['text'] as String? ?? '';
+                final String context = data['context'] as String? ?? 'location';
+
+                // Schedule TTS on next frame to ensure UI is ready
+                WidgetsBinding.instance.addPostFrameCallback((_) async {
                   try {
-                    final ttsService = TextToSpeechService();
-                    if (!ttsService.isEnabled) {
-                      await ttsService.init();
-                    }
                     developer.log(
-                      '[GeofencingService] Speaking TTS in UI isolate: $text',
+                      '[GeofencingService] Initializing TTS service...',
                     );
-                    await ttsService.speakTaskNotification(
-                      text,
-                      context ?? 'location',
+                    final ttsService = TextToSpeechService();
+                    await ttsService.init();
+                    developer.log(
+                      '[GeofencingService] Speaking: "$text" (context: $context)',
                     );
+                    await ttsService.speakTaskNotification(text, context);
                     developer.log(
                       '[GeofencingService] TTS completed successfully',
                     );
                   } catch (e) {
-                    developer.log(
-                      '[GeofencingService] TTS failed in UI isolate: $e',
-                    );
+                    developer.log('[GeofencingService] TTS failed: $e');
                   }
-                }
+                });
                 return; // Don't process as regular geofence event
               }
 
