@@ -456,17 +456,16 @@ class _MapboxMapViewState extends State<MapboxMapView> {
     try {
       final point = result.toMapboxPoint();
 
-      // Use the map view model's method to display the helper at this location
-      await mapViewModel.displayExistingGeofence(
-        point,
-        mapViewModel.pendingRadiusMeters,
-      );
-
-      // Update the selected point in the view model
+      // Update the selected point in the view model first
       mapViewModel.selectedPoint = point;
       mapViewModel.latitude = result.latitude;
       mapViewModel.longitude = result.longitude;
       mapViewModel.isGeofenceHelperPlaced = true;
+
+      // Use the map view model's method to display the helper at this location
+      await mapViewModel.displayExistingGeofence(
+        mapViewModel.pendingRadiusMeters,
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

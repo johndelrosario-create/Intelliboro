@@ -59,35 +59,70 @@ class _EditTaskViewState extends State<EditTaskView> {
   }
 
   Future<void> _loadGeofenceData() async {
-    if (!mounted) return;
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
     try {
-      final data = await _geofenceStorage.getGeofenceById(widget.geofenceId);
-      if (data != null) {
-        _originalGeofenceData = data;
-        _taskNameController.text = _originalGeofenceData!.task ?? '';
+      final geofences = await _geofenceStorage.loadGeofences();
+      _originalGeofenceData = geofences.firstWhere(
+        (g) => g.id == widget.geofenceId,
+        orElse: () => throw Exception('Geofence not found'),
+      );
 
-        // Wait for map to be ready before displaying geofence
-        _mapViewModel.mapReadyFuture
-            .then((_) async {
-              if (!mounted) return;
-              await _displayInitialGeofenceOnMap();
-            })
-            .catchError((error) {
-              developer.log('Error waiting for map ready: $error');
-            });
-      } else {
-        _errorMessage = 'Task not found.';
+      _taskNameController.text = _originalGeofenceData!.task ?? '';
+
+      _mapViewModel.init();
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      // Load and display the geofence on the map
+      if (_originalGeofenceData != null) {
+        developer.log(
+          '[EditTaskView] Loading geofence: lat=${_originalGeofenceData!.latitude}, '
+          'lng=${_originalGeofenceData!.longitude}, '
+          'radius=${_originalGeofenceData!.radiusMeters}',
+        );
+
+        // Set the selected point and radius
+        _mapViewModel.selectedPoint = Point(
+          coordinates: Position(
+            _originalGeofenceData!.longitude,
+            _originalGeofenceData!.latitude,
+          ),
+        );
+        _mapViewModel.pendingRadiusMeters = _originalGeofenceData!.radiusMeters;
+
+        // Wait for map to be ready
+        await _mapViewModel.mapReadyFuture;
+
+        // Fly to location and wait for animation to complete
+        await _mapViewModel.mapboxMap?.flyTo(
+          CameraOptions(
+            center: Point(
+              coordinates: Position(
+                _originalGeofenceData!.longitude,
+                _originalGeofenceData!.latitude,
+              ),
+            ),
+            zoom: 16,
+            bearing: 0,
+            pitch: 0,
+          ),
+          MapAnimationOptions(duration: 1500),
+        );
+
+        // Wait longer for camera to fully settle and internal state to update
+        await Future.delayed(const Duration(milliseconds: 800));
+
+        // Now display the geofence with accurate camera state
+        await _mapViewModel.displayExistingGeofence(
+          _originalGeofenceData!.radiusMeters,
+        );
+
+        developer.log('[EditTaskView] Geofence displayed');
       }
     } catch (e) {
-      developer.log('Error loading geofence data: $e');
-      _errorMessage = 'Failed to load task details: ${e.toString()}';
-    } finally {
-      if (!mounted) return;
       setState(() {
+        _errorMessage = e.toString();
         _isLoading = false;
       });
     }
@@ -127,37 +162,6 @@ class _EditTaskViewState extends State<EditTaskView> {
         return '${hours}h ${remainingMinutes}m';
       }
     }
-  }
-
-  Future<void> _displayInitialGeofenceOnMap() async {
-    if (_originalGeofenceData == null || _mapViewModel.mapboxMap == null) {
-      return;
-    }
-
-    final initialPoint = Point(
-      coordinates: Position(
-        _originalGeofenceData!.longitude,
-        _originalGeofenceData!.latitude,
-      ),
-    );
-
-    // Fly to the geofence location and wait for animation to complete
-    await _mapViewModel.mapboxMap!.flyTo(
-      CameraOptions(center: initialPoint, zoom: 16),
-      MapAnimationOptions(duration: 1000),
-    );
-
-    // Add a small delay to ensure camera is fully settled
-    await Future.delayed(const Duration(milliseconds: 200));
-
-    // Now display the existing geofence with proper pixel calculation
-    await _mapViewModel.displayExistingGeofence(
-      initialPoint,
-      _originalGeofenceData!.radiusMeters,
-    );
-
-    _mapViewModel.selectedPoint = initialPoint;
-    setState(() {});
   }
 
   void _onMapCreatedEditView(MapboxMap mapboxMap) async {

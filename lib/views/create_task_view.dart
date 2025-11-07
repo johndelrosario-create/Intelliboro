@@ -293,15 +293,14 @@ class _TaskCreationState extends State<TaskCreation> {
       debugPrint('[Search] No adjustment needed - no overlaps detected');
     }
 
-    // Set the adjusted point for geofence creation by calling displayExistingGeofence
-    // This will show the geofence preview at the adjusted location
+    // Set the adjusted point for geofence creation
+    _mapViewModel.selectedPoint = adjustedPoint;
+    _mapViewModel.pendingRadiusMeters = _mapViewModel.pendingRadiusMeters;
+
+    // Display the geofence preview at the adjusted location
     await _mapViewModel.displayExistingGeofence(
-      adjustedPoint,
       _mapViewModel.pendingRadiusMeters,
     );
-
-    // Update the selected point in the view model for later geofence creation
-    _mapViewModel.selectedPoint = adjustedPoint;
 
     debugPrint('[Search] Geofence helper placed at adjusted position');
   }
