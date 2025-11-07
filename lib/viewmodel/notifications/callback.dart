@@ -37,6 +37,8 @@ Future<void> geofenceTriggered(
   native_geofence.GeofenceCallbackParams params,
 ) async {
   Database? database;
+  bool criticalFailure = false;
+  String? failureReason;
 
   try {
     developer.log(
@@ -48,7 +50,9 @@ Future<void> geofenceTriggered(
     try {
       WidgetsFlutterBinding.ensureInitialized();
     } catch (e) {
-      developer.log('[GeofenceCallback] Widgets binding ensure failed: $e');
+      developer.log('[GeofenceCallback] CRITICAL: Widgets binding ensure failed: $e');
+      criticalFailure = true;
+      failureReason = 'Flutter bindings initialization failed';
     }
 
     // Create and initialize a local FlutterLocalNotificationsPlugin instance
@@ -56,6 +60,7 @@ Future<void> geofenceTriggered(
     // from the UI isolate is not usable here.
     final FlutterLocalNotificationsPlugin plugin =
         FlutterLocalNotificationsPlugin();
+    bool pluginInitialized = false;
     try {
       final AndroidInitializationSettings initializationSettingsAndroid =
           AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -67,20 +72,70 @@ Future<void> geofenceTriggered(
             iOS: initializationSettingsIOS,
           );
       await plugin.initialize(initializationSettings);
+      pluginInitialized = true;
       developer.log(
         '[GeofenceCallback] Local notifications plugin initialized',
       );
     } catch (e) {
       developer.log(
-        '[GeofenceCallback] Failed to init local notifications: $e',
+        '[GeofenceCallback] CRITICAL: Failed to init local notifications: $e',
       );
+      criticalFailure = true;
+      failureReason = 'Notification plugin initialization failed';
+    }
+
+    // Show fallback notification if critical components failed
+    if (criticalFailure && pluginInitialized) {
+      try {
+        await plugin.show(
+          999999,
+          '⚠️ Geofence System Error',
+          'Failed to process geofence: $failureReason. Please restart the app.',
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              'geofence_errors',
+              'Geofence Errors',
+              channelDescription: 'Critical geofence system errors',
+              importance: Importance.high,
+              priority: Priority.high,
+              playSound: true,
+            ),
+          ),
+        );
+        developer.log('[GeofenceCallback] Fallback error notification shown');
+      } catch (fallbackError) {
+        developer.log('[GeofenceCallback] Failed to show fallback notification: $fallbackError');
+      }
+      return;
+    } else if (criticalFailure) {
+      developer.log('[GeofenceCallback] CRITICAL: Cannot proceed or notify user of failure');
+      return;
     }
 
     // Validate input parameters
     if (params.geofences.isEmpty) {
       developer.log(
-        '[GeofenceCallback] WARNING: No geofences provided in params',
+        '[GeofenceCallback] CRITICAL: No geofences provided in params',
       );
+      // Show diagnostic notification
+      try {
+        await plugin.show(
+          999998,
+          '⚠️ Geofence Processing Error',
+          'Geofence triggered but no geofence data was provided. This may indicate a system issue.',
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              'geofence_errors',
+              'Geofence Errors',
+              channelDescription: 'Critical geofence system errors',
+              importance: Importance.high,
+              priority: Priority.high,
+            ),
+          ),
+        );
+      } catch (e) {
+        developer.log('[GeofenceCallback] Failed to show empty geofences error notification: $e');
+      }
       return;
     }
 
@@ -114,8 +169,28 @@ Future<void> geofenceTriggered(
 
       if (!database.isOpen) {
         developer.log(
-          '[GeofenceCallback] ERROR: Database connection is not open',
+          '[GeofenceCallback] CRITICAL: Database connection is not open',
         );
+        // Show fallback notification
+        try {
+          await plugin.show(
+            999997,
+            '⚠️ Database Connection Failed',
+            'Unable to process geofence notification - database not accessible. Geofences: ${params.geofences.map((g) => g.id).join(", ")}',
+            const NotificationDetails(
+              android: AndroidNotificationDetails(
+                'geofence_errors',
+                'Geofence Errors',
+                channelDescription: 'Critical geofence system errors',
+                importance: Importance.max,
+                priority: Priority.max,
+                playSound: true,
+              ),
+            ),
+          );
+        } catch (notifError) {
+          developer.log('[GeofenceCallback] Failed to show database error notification: $notifError');
+        }
         return;
       }
       developer.log(
@@ -127,7 +202,26 @@ Future<void> geofenceTriggered(
         error: e,
         stackTrace: stackTrace,
       );
-      // Try to rethrow to see the full error in the native logs
+      // Show fallback notification before failing
+      try {
+        await plugin.show(
+          999996,
+          '⚠️ Critical Database Error',
+          'Geofence system failed: ${e.toString()}. Geofences: ${params.geofences.map((g) => g.id).join(", ")}',
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              'geofence_errors',
+              'Geofence Errors',
+              channelDescription: 'Critical geofence system errors',
+              importance: Importance.max,
+              priority: Priority.max,
+              playSound: true,
+            ),
+          ),
+        );
+      } catch (notifError) {
+        developer.log('[GeofenceCallback] Failed to show critical error notification: $notifError');
+      }
       rethrow;
     }
     developer.log(
@@ -160,20 +254,33 @@ Future<void> geofenceTriggered(
     }
 
     if (sendPort != null && params.location != null) {
-      sendPort.send({
-        'event': params.event.name,
-        'geofenceIds': params.geofences.map((g) => g.id).toList(),
-        'location': {
-          'latitude': params.location!.latitude,
-          'longitude': params.location!.longitude,
-        },
-        'timestamp': DateTime.now().millisecondsSinceEpoch,
-        'notificationId': earlyNotificationId,
-        // Tell the UI which ack port to call if it suppresses the notification
-        'ackPortName': ackPortName,
-      });
+      try {
+        sendPort.send({
+          'event': params.event.name,
+          'geofenceIds': params.geofences.map((g) => g.id).toList(),
+          'location': {
+            'latitude': params.location!.latitude,
+            'longitude': params.location!.longitude,
+          },
+          'timestamp': DateTime.now().millisecondsSinceEpoch,
+          'notificationId': earlyNotificationId,
+          // Tell the UI which ack port to call if it suppresses the notification
+          'ackPortName': ackPortName,
+        });
+        developer.log(
+          '[GeofenceCallback] Successfully sent event through port with notificationId=$earlyNotificationId and ackPortName=$ackPortName',
+        );
+      } catch (portError) {
+        developer.log(
+          '[GeofenceCallback] CRITICAL: Failed to send event through port: $portError',
+        );
+        // Continue processing even if port send fails - fallback to direct notification
+      }
+    } else {
       developer.log(
-        '[GeofenceCallback] Successfully sent event through port with notificationId=$earlyNotificationId and ackPortName=$ackPortName',
+        '[GeofenceCallback] WARNING: SendPort is ${sendPort == null ? "null" : "available"}, '
+        'location is ${params.location == null ? "null" : "available"}. '
+        'UI isolate may not receive geofence event.',
       );
     }
 
@@ -206,6 +313,17 @@ Future<void> geofenceTriggered(
       enableVibration: true,
     );
     await androidPlugin?.createNotificationChannel(alertsChannel);
+
+    // Create error notification channel
+    const AndroidNotificationChannel errorsChannel = AndroidNotificationChannel(
+      'geofence_errors',
+      'Geofence Errors',
+      description: 'Critical geofence system errors and diagnostics',
+      importance: Importance.high,
+      playSound: true,
+      enableVibration: true,
+    );
+    await androidPlugin?.createNotificationChannel(errorsChannel);
 
     // Removed progress and debug channels
 
@@ -384,6 +502,9 @@ Future<void> geofenceTriggered(
         }
 
         if (matchedTaskIds.isEmpty) {
+          developer.log(
+            '[GeofenceCallback] WARNING: No matching tasks found for geofences: ${geofenceIdList}',
+          );
           try {
             final allRows = await database.query(
               'tasks',
@@ -391,6 +512,20 @@ Future<void> geofenceTriggered(
             );
             developer.log(
               '[GeofenceCallback] No matches - full tasks table snapshot: $allRows',
+            );
+            // Show diagnostic notification for empty matches
+            await plugin.show(
+              999995,
+              'ℹ️ No Tasks Found',
+              'Entered geofence area but no active tasks are linked to: ${geofenceIdList.join(", ")}',
+              const NotificationDetails(
+                android: AndroidNotificationDetails(
+                  'geofence_alerts',
+                  'Geofence Alerts',
+                  importance: Importance.defaultImportance,
+                  priority: Priority.defaultPriority,
+                ),
+              ),
             );
           } catch (dumpError, dumpSt) {
             developer.log(
@@ -587,12 +722,9 @@ Future<void> geofenceTriggered(
             final bool wasPersistedPending =
                 geofenceTaskId != null &&
                 persistedPendingIds.contains(geofenceTaskId);
-            // Also treat as pending if this task is among matchedTaskIds
-            final bool matchedAsPending =
-                geofenceTaskId != null &&
-                matchedTaskIds.contains(geofenceTaskId);
-            final bool shouldAnnouncePending =
-                wasPersistedPending || matchedAsPending;
+            // shouldAnnouncePending should ONLY be true if task was explicitly
+            // added to pending queue (snoozed), not just because it matched a geofence
+            final bool shouldAnnouncePending = wasPersistedPending;
 
             // Request TTS from UI isolate instead of speaking directly in background
             // Background isolates can't reliably access Android audio on real devices

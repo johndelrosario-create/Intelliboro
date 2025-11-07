@@ -82,7 +82,12 @@ class GeofencingService {
 
     try {
       // First, ensure any existing port mapping is removed
-      IsolateNameServer.removePortNameMapping('native_geofence_send_port');
+      try {
+        IsolateNameServer.removePortNameMapping('native_geofence_send_port');
+        developer.log('[GeofencingService] Removed existing port mapping');
+      } catch (e) {
+        developer.log('[GeofencingService] No existing port mapping to remove: $e');
+      }
 
       // Register the port for geofence events
       final bool registered = IsolateNameServer.registerPortWithName(
@@ -92,17 +97,31 @@ class GeofencingService {
 
       if (!registered) {
         developer.log(
-          '[GeofencingService] WARNING: Failed to register port with name "native_geofence_send_port"',
+          '[GeofencingService] CRITICAL: Failed to register port with name "native_geofence_send_port"',
         );
         // Try to remove and register again
-        IsolateNameServer.removePortNameMapping('native_geofence_send_port');
-        final bool retryRegistered = IsolateNameServer.registerPortWithName(
-          _port.sendPort,
-          'native_geofence_send_port',
-        );
-        if (!retryRegistered) {
-          throw Exception('Failed to register port after retry');
+        try {
+          IsolateNameServer.removePortNameMapping('native_geofence_send_port');
+          await Future.delayed(const Duration(milliseconds: 100));
+          final bool retryRegistered = IsolateNameServer.registerPortWithName(
+            _port.sendPort,
+            'native_geofence_send_port',
+          );
+          if (!retryRegistered) {
+            throw Exception(
+              'CRITICAL: Failed to register native_geofence_send_port after retry. '
+              'Geofence notifications will NOT work. User should restart the app.',
+            );
+          }
+          developer.log('[GeofencingService] Port registered successfully on retry');
+        } catch (retryError) {
+          developer.log(
+            '[GeofencingService] CRITICAL: Port registration failed completely: $retryError',
+          );
+          rethrow;
         }
+      } else {
+        developer.log('[GeofencingService] Port registered successfully on first attempt');
       }
 
       // Listen for geofence events on the port. Messages originate from the
@@ -515,17 +534,46 @@ class GeofencingService {
       // Register and listen to our app-specific notification port
       final String newNotificationPortName =
           'intelliboro_new_notification_port';
-      IsolateNameServer.removePortNameMapping(
-        newNotificationPortName,
-      ); // Ensure clean slate
-      if (!IsolateNameServer.registerPortWithName(
+      try {
+        IsolateNameServer.removePortNameMapping(
+          newNotificationPortName,
+        );
+        developer.log('[GeofencingService] Removed existing $newNotificationPortName mapping');
+      } catch (e) {
+        developer.log('[GeofencingService] No existing $newNotificationPortName mapping: $e');
+      }
+
+      final bool notifPortRegistered = IsolateNameServer.registerPortWithName(
         _newNotificationReceivePort.sendPort,
         newNotificationPortName,
-      )) {
+      );
+
+      if (!notifPortRegistered) {
         developer.log(
           '[GeofencingService] CRITICAL: Failed to register $newNotificationPortName',
         );
-        // Potentially throw an error or handle more gracefully
+        // Retry once with delay
+        try {
+          await Future.delayed(const Duration(milliseconds: 100));
+          IsolateNameServer.removePortNameMapping(newNotificationPortName);
+          await Future.delayed(const Duration(milliseconds: 50));
+          final bool retryRegistered = IsolateNameServer.registerPortWithName(
+            _newNotificationReceivePort.sendPort,
+            newNotificationPortName,
+          );
+          if (!retryRegistered) {
+            throw Exception(
+              'CRITICAL: Failed to register $newNotificationPortName after retry. '
+              'Notification history updates will not work in real-time.',
+            );
+          }
+          developer.log('[GeofencingService] $newNotificationPortName registered on retry');
+        } catch (retryError) {
+          developer.log(
+            '[GeofencingService] CRITICAL: $newNotificationPortName registration failed: $retryError',
+          );
+          // Don't rethrow - allow service to continue even if this port fails
+        }
       } else {
         developer.log(
           '[GeofencingService] Successfully registered $newNotificationPortName',
@@ -620,10 +668,8 @@ class GeofencingService {
             initialTrigger: false,
           ),
           androidSettings: native_geofence.AndroidGeofenceSettings(
-            initialTriggers: {
-              native_geofence.GeofenceEvent.enter,
-              native_geofence.GeofenceEvent.exit,
-            },
+            initialTriggers:
+                {}, // Don't fire on creation - only on actual boundary crossing
             notificationResponsiveness: const Duration(seconds: 0),
             loiteringDelay: const Duration(seconds: 0),
           ),
@@ -635,6 +681,20 @@ class GeofencingService {
       developer.log(
         'Geofence created successfully: $geofenceId with radius ${radiusMeters}m',
       );
+
+      // Verify the geofence was registered with the native plugin
+      try {
+        final registeredGeofences =
+            await native_geofence.NativeGeofenceManager.instance
+                .getRegisteredGeofences();
+        developer.log(
+          '[GeofencingService] Currently registered geofences: $registeredGeofences',
+        );
+      } catch (e) {
+        developer.log(
+          '[GeofencingService] Failed to verify registered geofences: $e',
+        );
+      }
 
       return Future.value();
     } catch (e, stackTrace) {

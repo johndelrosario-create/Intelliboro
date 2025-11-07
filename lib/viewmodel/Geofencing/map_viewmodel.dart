@@ -531,13 +531,16 @@ class MapboxMapViewModel extends ChangeNotifier {
       // Listen to location updates
       _locationStreamSubscription = _locationService.locationStream.listen(
         (locator.Position position) {
+          if (_isDisposed) return;
           debugPrint('[MapViewModel] Received location update');
 
           // Update the map's location component with new position
           _updateMapLocationComponent(position);
 
           // Optionally notify listeners for UI updates
-          notifyListeners();
+          if (!_isDisposed) {
+            notifyListeners();
+          }
         },
         onError: (error) {
           debugPrint('[MapViewModel] Location stream error: $error');
@@ -837,6 +840,7 @@ class MapboxMapViewModel extends ChangeNotifier {
   }
 
   onCameraIdle(MapIdleEventData eventData) async {
+    if (_isDisposed) return;
     try {
       debugPrint("[MapViewModel] Camera idle event triggered.");
       if (this.mapboxMap != null) {
@@ -877,7 +881,9 @@ class MapboxMapViewModel extends ChangeNotifier {
         });
       }
       await updateAllGeofenceVisualRadii();
-      notifyListeners(); // Notify listeners to update UI if needed
+      if (!_isDisposed) {
+        notifyListeners(); // Notify listeners to update UI if needed
+      }
     } catch (e) {
       debugPrint("[MapViewModel] Error in onCameraIdle: $e");
     }
@@ -1045,6 +1051,7 @@ class MapboxMapViewModel extends ChangeNotifier {
   }
 
   onZoom(MapContentGestureContext context) async {
+    if (_isDisposed) return;
     try {
       startDebugLogging();
       latitude = context.point.coordinates.lat;
@@ -1084,7 +1091,9 @@ class MapboxMapViewModel extends ChangeNotifier {
 
       if (geofenceZoneHelper != null || geofenceZoneSymbol != null) {
         updateAllGeofenceVisualRadii();
-        notifyListeners();
+        if (!_isDisposed) {
+          notifyListeners();
+        }
       } else {
         debugPrint("Geofence zone helper is not yet initialized.");
       }

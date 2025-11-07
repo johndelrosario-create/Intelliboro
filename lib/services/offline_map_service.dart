@@ -289,9 +289,9 @@ class OfflineMapService {
 
         _progressController.add(progress);
 
-        developer.log(
-          '[OfflineMapService] Progress: ${progress.progressPercentage} (${progress.downloadedTiles}/${progress.totalTiles})',
-        );
+        // developer.log(
+        //   '[OfflineMapService] Progress: ${progress.progressPercentage} (${progress.downloadedTiles}/${progress.totalTiles})',
+        // );
       }
 
       if (_isCancelled) {
