@@ -139,6 +139,7 @@ Future<void> geofenceTriggered(
       return;
     }
 
+//TODO: Might be redundant
     // Filter for 'enter' events before proceeding
     if (params.event != native_geofence.GeofenceEvent.enter) {
       developer.log(
@@ -597,9 +598,10 @@ Future<void> geofenceTriggered(
                     r['taskPriority'] is int
                         ? r['taskPriority'] as int
                         : int.tryParse(r['taskPriority'].toString());
-                if (ip != null)
+                if (ip != null) {
                   incomingHighest =
                       incomingHighest > ip ? incomingHighest : ip.toDouble();
+                }
               }
             }
 
