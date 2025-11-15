@@ -119,17 +119,35 @@ class TaskRepository {
 
             // Remove from native geofencing service
             await GeofencingService().removeGeofence(task.geofenceId!);
+            developer.log(
+              '[TaskRepository] updateTask: Native geofence removal completed for ${task.geofenceId}',
+            );
 
             // Remove from geofences table in database
-            await db.delete(
+            final deletedRows = await db.delete(
               'geofences',
               where: 'id = ?',
               whereArgs: [task.geofenceId!],
             );
-
             developer.log(
-              '[TaskRepository] updateTask: Successfully removed geofence ${task.geofenceId} for completed task',
+              '[TaskRepository] updateTask: Deleted $deletedRows row(s) from geofences table for ${task.geofenceId}',
             );
+
+            // Verify removal
+            final verifyRows = await db.query(
+              'geofences',
+              where: 'id = ?',
+              whereArgs: [task.geofenceId!],
+            );
+            if (verifyRows.isEmpty) {
+              developer.log(
+                '[TaskRepository] updateTask: VERIFIED - Geofence ${task.geofenceId} successfully removed from DB',
+              );
+            } else {
+              developer.log(
+                '[TaskRepository] updateTask: WARNING - Geofence ${task.geofenceId} still exists in DB after deletion attempt!',
+              );
+            }
           } catch (e, st) {
             developer.log(
               '[TaskRepository] updateTask: Failed to remove geofence for completed task: $e',
@@ -138,6 +156,10 @@ class TaskRepository {
             );
             // Don't rethrow - geofence cleanup failure shouldn't prevent task completion
           }
+        } else if (task.isCompleted) {
+          developer.log(
+            '[TaskRepository] updateTask: Task ${task.id} completed but has no geofenceId to clean up',
+          );
         }
       }
     });

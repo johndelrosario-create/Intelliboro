@@ -11,6 +11,7 @@ import 'package:intelliboro/views/task_statistics_view.dart';
 import 'package:intelliboro/views/notification_history_view.dart';
 import 'package:intelliboro/services/location_service.dart';
 import 'package:intelliboro/services/geofencing_service.dart';
+import 'package:intelliboro/services/geofence_cleanup_service.dart';
 import 'package:intelliboro/services/task_timer_service.dart';
 import 'package:intelliboro/repository/task_repository.dart';
 import 'dart:convert';
@@ -859,6 +860,18 @@ void main() async {
     } catch (e, st) {
       developer.log(
         '[main] Error initializing GeofencingService early: $e',
+        error: e,
+        stackTrace: st,
+      );
+    }
+
+    // Clean up orphaned geofences on startup
+    try {
+      await GeofenceCleanupService.cleanupOrphanedGeofences();
+      developer.log('[main] Orphaned geofence cleanup completed');
+    } catch (e, st) {
+      developer.log(
+        '[main] Error during orphaned geofence cleanup: $e',
         error: e,
         stackTrace: st,
       );

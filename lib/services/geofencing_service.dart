@@ -280,7 +280,7 @@ class GeofencingService {
                           ackPortName,
                         );
                         if (sp != null) {
-                          sp.send('suppressed');
+                          sp.send({'status': 'suppressed'});
                           developer.log(
                             '[GeofencingService] Sent suppression ack to $ackPortName',
                           );
@@ -434,7 +434,7 @@ class GeofencingService {
                       final sp = IsolateNameServer.lookupPortByName(
                         ackPortName,
                       );
-                      sp?.send('suppressed');
+                      sp?.send({'status': 'suppressed'});
                       IsolateNameServer.removePortNameMapping(ackPortName);
                     }
                   } catch (_) {}
@@ -455,13 +455,13 @@ class GeofencingService {
                         actions: <AndroidNotificationAction>[
                           AndroidNotificationAction(
                             'com.intelliboro.DO_NOW',
-                            'Do Now',
+                            'Do Now 🏃‍♂️',
                             showsUserInterface: true,
                             cancelNotification: true,
                           ),
                           AndroidNotificationAction(
                             'com.intelliboro.DO_LATER',
-                            'Do Later',
+                            'Do Later ⏰',
                             showsUserInterface: false,
                             cancelNotification: false,
                           ),

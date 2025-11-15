@@ -145,7 +145,6 @@ Future<void> geofenceTriggered(
       return;
     }
 
-    //TODO: Might be redundant
     // Filter for 'enter' events before proceeding
     if (params.event != native_geofence.GeofenceEvent.enter) {
       developer.log(
@@ -382,10 +381,6 @@ Future<void> geofenceTriggered(
           'Event: ${params.event.name} for geofences: ${params.geofences.map((g) => g.id).join(", ")}';
     }
 
-    // Removed progress notifications while building
-
-    // Removed final progress notification before showing task alert
-
     // Create the notification details with immediate display settings
     // Add action buttons for persistent notifications
     final AndroidNotificationDetails
@@ -453,32 +448,80 @@ Future<void> geofenceTriggered(
     };
     final immediatePayloadJson = jsonEncode(immediatePayloadData);
 
-    // Show notification immediately without complex suppression logic first
+    // Wait for UI isolate acknowledgment before showing background notification
+    // The ack port was already registered earlier (receiveForAck with ackPortName)
+    bool shouldShowBackgroundNotification = true;
+
     try {
       developer.log(
-        '[GeofenceCallback] Showing IMMEDIATE notification (id=$notificationId) - bypassing complex logic for reliability',
+        '[GeofenceCallback] Waiting for UI acknowledgment on port: $ackPortName',
       );
 
-      // Force immediate processing by showing notification right away
-      await plugin.show(
-        notificationId,
-        notificationTitle,
-        notificationBody,
-        platformChannelSpecifics,
-        payload: immediatePayloadJson,
+      // Wait up to 800ms for UI acknowledgment on the already-registered port
+      final ackFuture = receiveForAck.first.timeout(
+        const Duration(milliseconds: 800),
+        onTimeout: () {
+          developer.log(
+            '[GeofenceCallback] Ack timeout - UI isolate may be unavailable, showing background notification',
+          );
+          return {'status': 'timeout'};
+        },
       );
 
-      // Add a small delay to ensure notification is processed
-      await Future.delayed(const Duration(milliseconds: 100));
+      final ackResponse = await ackFuture;
+      developer.log('[GeofenceCallback] Received ack response: $ackResponse');
 
-      developer.log(
-        '[GeofenceCallback] IMMEDIATE notification shown successfully',
-      );
+      // Check if UI isolate suppressed the notification
+      if (ackResponse is Map && ackResponse['status'] == 'suppressed') {
+        shouldShowBackgroundNotification = false;
+        developer.log(
+          '[GeofenceCallback] UI isolate will handle notification, suppressing background notification',
+        );
+      }
     } catch (e, st) {
       developer.log(
-        '[GeofenceCallback] Error showing IMMEDIATE notification: $e',
+        '[GeofenceCallback] Error in ack-wait logic: $e, will show background notification',
         error: e,
         stackTrace: st,
+      );
+    } finally {
+      // Clean up ack port
+      try {
+        IsolateNameServer.removePortNameMapping(ackPortName);
+        receiveForAck.close();
+      } catch (e) {
+        developer.log('[GeofenceCallback] Error cleaning up ack port: $e');
+      }
+    }
+
+    // Show notification only if UI didn't suppress it
+    if (shouldShowBackgroundNotification) {
+      try {
+        developer.log(
+          '[GeofenceCallback] Showing background notification (id=$notificationId)',
+        );
+
+        await plugin.show(
+          notificationId,
+          notificationTitle,
+          notificationBody,
+          platformChannelSpecifics,
+          payload: immediatePayloadJson,
+        );
+
+        developer.log(
+          '[GeofenceCallback] Background notification shown successfully',
+        );
+      } catch (e, st) {
+        developer.log(
+          '[GeofenceCallback] Error showing background notification: $e',
+          error: e,
+          stackTrace: st,
+        );
+      }
+    } else {
+      developer.log(
+        '[GeofenceCallback] Skipping background notification (UI handling)',
       );
     }
 
@@ -516,6 +559,37 @@ Future<void> geofenceTriggered(
           developer.log(
             '[GeofenceCallback] WARNING: No matching tasks found for geofences: ${geofenceIdList}',
           );
+          // Check if tasks exist but are all completed (orphaned geofence)
+          final allTasksRows = await database.query(
+            'tasks',
+            columns: ['id', 'geofence_id', 'isCompleted'],
+            where: 'geofence_id IN ($placeholders)',
+            whereArgs: geofenceIdList,
+          );
+          if (allTasksRows.isNotEmpty &&
+              allTasksRows.every((r) => r['isCompleted'] == 1)) {
+            developer.log(
+              '[GeofenceCallback] GUARD: All tasks for these geofences are completed. Skipping notification and cleaning up orphaned geofences.',
+            );
+            // Clean up orphaned geofences
+            try {
+              for (final gid in geofenceIdList) {
+                await database.delete(
+                  'geofences',
+                  where: 'id = ?',
+                  whereArgs: [gid],
+                );
+                developer.log(
+                  '[GeofenceCallback] Cleaned up orphaned geofence: $gid',
+                );
+              }
+            } catch (cleanupError) {
+              developer.log(
+                '[GeofenceCallback] Error cleaning up orphaned geofences: $cleanupError',
+              );
+            }
+            return; // Exit early - no need to show notification
+          }
           try {
             final allRows = await database.query(
               'tasks',
