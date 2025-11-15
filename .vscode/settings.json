@@ -8,5 +8,6 @@
     // Force case-sensitive file watching on Windows
     "files.watcherUseFsEvents": false,
     "search.followSymlinks": false,
-    "cmake.sourceDirectory": "C:/Users/john/Desktop/Project/intelliboro/windows"
+    "cmake.sourceDirectory": "C:/Users/john/Desktop/Project/intelliboro/windows",
+    "dart.sdkPath": "C:\\Users\\john\\.puro\\envs\\stable\\flutter\\bin\\cache\\dart-sdk"
 }

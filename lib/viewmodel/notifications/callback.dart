@@ -15,9 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:intelliboro/services/geofence_storage.dart';
 import 'package:intelliboro/services/database_service.dart';
-// import 'package:intelliboro/repository/task_repository.dart'; // unused in callback isolate
 
-/// Calculate distance in meters between two lat/lng points using Haversine formula
 double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
   const R = 6371000.0; // Earth radius in meters
   final dLat = (lat2 - lat1) * pi / 180.0;
@@ -50,7 +48,9 @@ Future<void> geofenceTriggered(
     try {
       WidgetsFlutterBinding.ensureInitialized();
     } catch (e) {
-      developer.log('[GeofenceCallback] CRITICAL: Widgets binding ensure failed: $e');
+      developer.log(
+        '[GeofenceCallback] CRITICAL: Widgets binding ensure failed: $e',
+      );
       criticalFailure = true;
       failureReason = 'Flutter bindings initialization failed';
     }
@@ -104,11 +104,15 @@ Future<void> geofenceTriggered(
         );
         developer.log('[GeofenceCallback] Fallback error notification shown');
       } catch (fallbackError) {
-        developer.log('[GeofenceCallback] Failed to show fallback notification: $fallbackError');
+        developer.log(
+          '[GeofenceCallback] Failed to show fallback notification: $fallbackError',
+        );
       }
       return;
     } else if (criticalFailure) {
-      developer.log('[GeofenceCallback] CRITICAL: Cannot proceed or notify user of failure');
+      developer.log(
+        '[GeofenceCallback] CRITICAL: Cannot proceed or notify user of failure',
+      );
       return;
     }
 
@@ -134,12 +138,14 @@ Future<void> geofenceTriggered(
           ),
         );
       } catch (e) {
-        developer.log('[GeofenceCallback] Failed to show empty geofences error notification: $e');
+        developer.log(
+          '[GeofenceCallback] Failed to show empty geofences error notification: $e',
+        );
       }
       return;
     }
 
-//TODO: Might be redundant
+    //TODO: Might be redundant
     // Filter for 'enter' events before proceeding
     if (params.event != native_geofence.GeofenceEvent.enter) {
       developer.log(
@@ -190,7 +196,9 @@ Future<void> geofenceTriggered(
             ),
           );
         } catch (notifError) {
-          developer.log('[GeofenceCallback] Failed to show database error notification: $notifError');
+          developer.log(
+            '[GeofenceCallback] Failed to show database error notification: $notifError',
+          );
         }
         return;
       }
@@ -221,7 +229,9 @@ Future<void> geofenceTriggered(
           ),
         );
       } catch (notifError) {
-        developer.log('[GeofenceCallback] Failed to show critical error notification: $notifError');
+        developer.log(
+          '[GeofenceCallback] Failed to show critical error notification: $notifError',
+        );
       }
       rethrow;
     }
