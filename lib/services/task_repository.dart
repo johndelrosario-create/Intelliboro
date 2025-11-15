@@ -109,6 +109,36 @@ class TaskRepository {
         developer.log(
           '[TaskRepository] updateTask: Task id=${task.id} is completed, skipping alarm reschedule',
         );
+
+        // Remove geofence when task is completed
+        if (task.geofenceId != null && task.geofenceId!.isNotEmpty) {
+          try {
+            developer.log(
+              '[TaskRepository] updateTask: Task completed, removing geofence ${task.geofenceId}',
+            );
+
+            // Remove from native geofencing service
+            await GeofencingService().removeGeofence(task.geofenceId!);
+
+            // Remove from geofences table in database
+            await db.delete(
+              'geofences',
+              where: 'id = ?',
+              whereArgs: [task.geofenceId!],
+            );
+
+            developer.log(
+              '[TaskRepository] updateTask: Successfully removed geofence ${task.geofenceId} for completed task',
+            );
+          } catch (e, st) {
+            developer.log(
+              '[TaskRepository] updateTask: Failed to remove geofence for completed task: $e',
+              error: e,
+              stackTrace: st,
+            );
+            // Don't rethrow - geofence cleanup failure shouldn't prevent task completion
+          }
+        }
       }
     });
   }
