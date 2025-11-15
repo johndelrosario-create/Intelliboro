@@ -486,6 +486,15 @@ class MapboxMapViewModel extends ChangeNotifier {
             debugPrint('[MapViewModel] Fallback initial display after delay.');
             _initialDisplayPending = false;
             await _loadSavedGeofences(forceNativeRecreation: false);
+            // Force visual update after fallback display
+            Future.delayed(const Duration(milliseconds: 200), () async {
+              if (!_isDisposed) {
+                debugPrint(
+                  '[MapViewModel] Forcing visual update after fallback display',
+                );
+                await updateAllGeofenceVisualRadii();
+              }
+            });
           }
         });
 
@@ -869,17 +878,11 @@ class MapboxMapViewModel extends ChangeNotifier {
       // If first time after map creation, render saved geofences now using final zoom
       if (_initialDisplayPending && isMapReady && mapboxMap != null) {
         _initialDisplayPending = false;
+        debugPrint("[MapViewModel] Initial display triggered from camera idle");
         await _loadSavedGeofences(forceNativeRecreation: false);
-        // Force an additional visual update after a brief delay to ensure accurate sizing
-        Future.delayed(const Duration(milliseconds: 300), () async {
-          if (!_isDisposed && mapboxMap != null) {
-            debugPrint(
-              "[MapViewModel] Forcing visual radius update after initial display",
-            );
-            await updateAllGeofenceVisualRadii();
-          }
-        });
       }
+
+      // Always update visual radii on camera idle to ensure correct sizing
       await updateAllGeofenceVisualRadii();
       if (!_isDisposed) {
         notifyListeners(); // Notify listeners to update UI if needed
@@ -910,6 +913,9 @@ class MapboxMapViewModel extends ChangeNotifier {
         return;
       }
 
+      // Wait a brief moment for camera to settle after map initialization
+      await Future.delayed(const Duration(milliseconds: 100));
+
       // Clear existing geofences before re-adding
       debugPrint('Clearing existing geofence annotations...');
       await geofenceZoneSymbol!.deleteAll();
@@ -919,6 +925,7 @@ class MapboxMapViewModel extends ChangeNotifier {
       // Compute per-feature meters-per-pixel at current zoom for accurate sizing
       final camera = await mapboxMap!.getCameraState();
       final currentZoom = camera.zoom;
+      debugPrint('[MapViewModel] Current zoom level for display: $currentZoom');
       for (final geofence in _savedGeofences) {
         try {
           debugPrint(
@@ -940,14 +947,28 @@ class MapboxMapViewModel extends ChangeNotifier {
             geofence.latitude,
             currentZoom,
           );
+          debugPrint(
+            '[MapViewModel] Geofence ${geofence.id}: initial mpp=$mpp at zoom=$currentZoom',
+          );
           if (mpp <= 0) {
             // Fallback to camera-center MPP
             mpp = await metersToPixelsAtCurrentLocationAndZoom();
+            debugPrint(
+              '[MapViewModel] Geofence ${geofence.id}: fallback mpp=$mpp',
+            );
           }
           final safeMpp = mpp > 0 ? mpp : 1.0;
           double pixelRadius = geofence.radiusMeters / safeMpp;
+          debugPrint(
+            '[MapViewModel] Geofence ${geofence.id}: radius=${geofence.radiusMeters}m -> ${pixelRadius.toStringAsFixed(2)}px',
+          );
           // Maintain a visibility floor without distorting too much
-          if (pixelRadius < 2.5) pixelRadius = 2.5;
+          if (pixelRadius < 2.5) {
+            debugPrint(
+              '[MapViewModel] Geofence ${geofence.id}: applied minimum radius floor (was $pixelRadius px)',
+            );
+            pixelRadius = 2.5;
+          }
 
           final double visibleOpacity =
               geofence.fillOpacity.clamp(0.2, 1.0).toDouble();
@@ -1355,11 +1376,35 @@ class MapboxMapViewModel extends ChangeNotifier {
       return;
     }
 
+    if (selectedPoint == null) {
+      developer.log(
+        '[displayExistingGeofence] No selected point, cannot display',
+      );
+      return;
+    }
+
     developer.log(
       '[displayExistingGeofence] Displaying geofence with radius: $radiusMeters meters',
     );
 
     pendingRadiusMeters = radiusMeters;
+
+    // Wait for annotation managers to be initialized
+    int attempts = 0;
+    while (geofenceZoneHelper == null && attempts < 20) {
+      developer.log(
+        '[displayExistingGeofence] Waiting for annotation managers... (attempt ${attempts + 1})',
+      );
+      await Future.delayed(const Duration(milliseconds: 100));
+      attempts++;
+    }
+
+    if (geofenceZoneHelper == null) {
+      developer.log(
+        '[displayExistingGeofence] Annotation managers not initialized, cannot display',
+      );
+      return;
+    }
 
     // Wait for camera to fully settle and get accurate camera state
     await Future.delayed(const Duration(milliseconds: 500));
@@ -1370,24 +1415,53 @@ class MapboxMapViewModel extends ChangeNotifier {
 
     developer.log('[displayExistingGeofence] Camera zoom level: $zoom');
 
-    final metersPerPixelConversionFactor = await mapboxMap!.pixelForCoordinate(
-      Point(
-        coordinates: Position(
-          selectedPoint!.coordinates.lng,
-          selectedPoint!.coordinates.lat,
-        ),
-      ),
+    // Calculate pixel radius using the geofence's latitude
+    final lat = selectedPoint!.coordinates.lat.toDouble();
+    final mpp = await mapboxMap!.projection.getMetersPerPixelAtLatitude(
+      lat,
+      zoom,
     );
 
-    final pixelRadius = radiusMeters / metersPerPixelConversionFactor.x.abs();
+    if (mpp > 0) {
+      _currentHelperRadiusInPixels = radiusMeters / mpp;
+      developer.log(
+        '[displayExistingGeofence] Calculated pixel radius: $_currentHelperRadiusInPixels (mpp: $mpp)',
+      );
 
-    developer.log(
-      '[displayExistingGeofence] Meters per pixel: ${metersPerPixelConversionFactor.x}, Pixel radius: $pixelRadius',
-    );
+      // Create or update the helper circle with the calculated radius
+      if (geofenceZoneHelper != null) {
+        // Clear existing helper
+        await geofenceZoneHelper!.deleteAll();
+        geofenceZoneHelperIds.clear();
 
-    // Redraw with accurate radius
-    updateAllGeofenceVisualRadii();
+        // Create new helper circle with correct radius
+        final annotation = await geofenceZoneHelper!.create(
+          CircleAnnotationOptions(
+            geometry: selectedPoint!,
+            circleRadius: _currentHelperRadiusInPixels,
+            circleColor: Colors.lightBlue.toARGB32(),
+            circleOpacity: 0.2,
+            circleStrokeColor: Colors.black.toARGB32(),
+            circleStrokeWidth: 1.0,
+          ),
+        );
+
+        geofenceZoneHelperIds.add(annotation);
+        isGeofenceHelperPlaced = true;
+        developer.log(
+          '[displayExistingGeofence] Helper circle created with radius: $_currentHelperRadiusInPixels px',
+        );
+      }
+    } else {
+      developer.log(
+        '[displayExistingGeofence] Warning: Invalid meters per pixel value: $mpp',
+      );
+    }
+
+    // Also update all saved geofences to ensure consistent rendering
+    await updateAllGeofenceVisualRadii();
     _initialDisplayPending = false;
+    notifyListeners();
   }
 
   @override
