@@ -119,9 +119,29 @@ class _TaskCreationState extends State<TaskCreation> {
     try {
       final geofenceStorage = GeofenceStorage();
       final geofences = await geofenceStorage.loadGeofences();
+
+      // Remove duplicates by ID at the data loading level
+      // This handles cases where database or state management issues cause duplicates
+      final seenIds = <String>{};
+      final uniqueGeofences =
+          geofences.where((geofence) {
+            if (seenIds.contains(geofence.id)) {
+              return false;
+            }
+            seenIds.add(geofence.id);
+            return true;
+          }).toList();
+
       setState(() {
-        _availableGeofences = geofences;
+        _availableGeofences = uniqueGeofences;
         _isLoadingGeofences = false;
+
+        // Validate that selected geofence still exists in the unique list
+        // If not, clear the selection to prevent dropdown errors
+        if (_selectedGeofenceId != null &&
+            !uniqueGeofences.any((g) => g.id == _selectedGeofenceId)) {
+          _selectedGeofenceId = null;
+        }
       });
     } catch (e) {
       setState(() {
@@ -879,12 +899,18 @@ class _TaskCreationState extends State<TaskCreation> {
                   labelText: 'Select Geofence (Optional)',
                   border: OutlineInputBorder(),
                 ),
-                value: _selectedGeofenceId,
+                value:
+                    _availableGeofences.any(
+                          (geofence) => geofence.id == _selectedGeofenceId,
+                        )
+                        ? _selectedGeofenceId
+                        : null,
                 items: [
                   const DropdownMenuItem<String>(
                     value: null,
                     child: Text('No location reminder'),
                   ),
+                  // Duplicates are already filtered in _loadGeofences()
                   ..._availableGeofences.map((geofence) {
                     String displayName =
                         geofence.task != null && geofence.task!.isNotEmpty
@@ -1212,6 +1238,8 @@ class _TaskCreationState extends State<TaskCreation> {
                           debugPrint(
                             '[CreateTaskView] Setting _selectedGeofenceId to: $createdGeofenceId',
                           );
+                          await _loadGeofences();
+                          if (!mounted) return;
                           setState(() {
                             _selectedGeofenceId = createdGeofenceId;
                           });
