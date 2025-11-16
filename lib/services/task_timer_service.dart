@@ -948,15 +948,22 @@ class TaskTimerService extends ChangeNotifier {
         try {
           final next = task.getNextOccurrence(DateTime.now());
           if (next != null) {
-            // Update the existing task record to the next occurrence and keep it active (not completed)
-            final updatedTask = task.copyWith(
-              id: task.id,
+            // Mark the current instance as completed so it shows in completed section
+            final completedTask = task.copyWith(isCompleted: true);
+            await TaskRepository().updateTask(completedTask);
+            developer.log(
+              '[TaskTimerService] Manually marked recurring task instance as completed: ${task.taskName}',
+            );
+
+            // Create a new task for the next occurrence
+            final nextTask = task.copyWith(
+              id: null, // Force new ID
               taskDate: DateTime(next.year, next.month, next.day),
               isCompleted: false,
             );
-            await TaskRepository().updateTask(updatedTask);
+            await TaskRepository().insertTask(nextTask);
             developer.log(
-              '[TaskTimerService] Recurring task updated to next occurrence: ${updatedTask.taskName} -> ${_formatDateTime(next)}',
+              '[TaskTimerService] Created new recurring task instance for next occurrence: ${nextTask.taskName} -> ${_formatDateTime(next)}',
             );
           } else {
             // No next occurrence: mark as completed as a fallback
@@ -1038,20 +1045,27 @@ class TaskTimerService extends ChangeNotifier {
       // Save to task history first (so we have a history entry even if update fails)
       await _saveTaskHistory(task, completionTime);
 
-      // If task is recurring, compute next occurrence and update the task to the next date/time.
+      // If task is recurring, mark current instance as completed and create new task for next occurrence
       if (task.isRecurring) {
         try {
           final next = task.getNextOccurrence(DateTime.now());
           if (next != null) {
-            // Update the existing task record to the next occurrence and keep it active (not completed)
-            final updatedTask = task.copyWith(
-              id: task.id,
+            // Mark the current instance as completed so it shows in completed section
+            final completedTask = task.copyWith(isCompleted: true);
+            await TaskRepository().updateTask(completedTask);
+            developer.log(
+              '[TaskTimerService] Marked recurring task instance as completed: ${task.taskName}',
+            );
+
+            // Create a new task for the next occurrence
+            final nextTask = task.copyWith(
+              id: null, // Force new ID
               taskDate: DateTime(next.year, next.month, next.day),
               isCompleted: false,
             );
-            await TaskRepository().updateTask(updatedTask);
+            await TaskRepository().insertTask(nextTask);
             developer.log(
-              '[TaskTimerService] Recurring task updated to next occurrence: ${updatedTask.taskName} -> ${_formatDateTime(next)}',
+              '[TaskTimerService] Created new recurring task instance for next occurrence: ${nextTask.taskName} -> ${_formatDateTime(next)}',
             );
           } else {
             // No next occurrence: mark as completed as a fallback
