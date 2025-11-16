@@ -13,6 +13,7 @@ import 'package:native_geofence/native_geofence.dart' as native_geofence;
 import 'package:sqflite/sqflite.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:intelliboro/models/geofence_data.dart';
 import 'package:intelliboro/services/geofence_storage.dart';
 import 'package:intelliboro/services/database_service.dart';
 
@@ -28,6 +29,138 @@ double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
           sin(dLon / 2);
   final c = 2 * atan2(sqrt(a), sqrt(1 - a));
   return R * c;
+}
+
+class _GeofenceTaskBucket {
+  final List<int> taskIds = [];
+  double highestPriority = 0;
+}
+
+class _GeofenceEventDetail {
+  final native_geofence.ActiveGeofence geofence;
+  final GeofenceData? data;
+  final double radiusMeters;
+  final double? distanceFromCenter;
+  final List<int> taskIds;
+  final double highestPriority;
+
+  const _GeofenceEventDetail({
+    required this.geofence,
+    required this.data,
+    required this.radiusMeters,
+    required this.distanceFromCenter,
+    required this.taskIds,
+    required this.highestPriority,
+  });
+
+  String get id => geofence.id;
+
+  double get penetration =>
+      distanceFromCenter != null
+          ? radiusMeters - distanceFromCenter!
+          : double.negativeInfinity;
+}
+
+class _RecentGeofenceTrigger {
+  final String geofenceId;
+  final DateTime timestamp;
+  final double? triggerLatitude;
+  final double? triggerLongitude;
+  final double radiusMeters;
+  final double distanceFromCenter;
+  final double highestPriority;
+
+  const _RecentGeofenceTrigger({
+    required this.geofenceId,
+    required this.timestamp,
+    required this.triggerLatitude,
+    required this.triggerLongitude,
+    required this.radiusMeters,
+    required this.distanceFromCenter,
+    required this.highestPriority,
+  });
+}
+
+const Duration _geofenceDedupWindow = Duration(seconds: 25);
+const double _geofenceClusterRadiusMeters = 80.0;
+const double _penetrationLeewayMeters = 5.0;
+_RecentGeofenceTrigger? _lastGeofenceTrigger;
+
+_GeofenceEventDetail _selectPrimaryDetail(List<_GeofenceEventDetail> details) {
+  _GeofenceEventDetail selected = details.first;
+  for (final detail in details.skip(1)) {
+    if (detail.highestPriority > selected.highestPriority) {
+      selected = detail;
+      continue;
+    }
+
+    if (detail.highestPriority == selected.highestPriority) {
+      final double detailPenetration = detail.penetration;
+      final double selectedPenetration = selected.penetration;
+
+      if (detailPenetration > selectedPenetration + 0.1) {
+        selected = detail;
+        continue;
+      }
+
+      final double detailDistance =
+          detail.distanceFromCenter ?? double.infinity;
+      final double selectedDistance =
+          selected.distanceFromCenter ?? double.infinity;
+
+      if (detailDistance < selectedDistance) {
+        selected = detail;
+      }
+    }
+  }
+
+  return selected;
+}
+
+bool _shouldSuppressDueToRecent(
+  _GeofenceEventDetail detail,
+  native_geofence.Location? triggerLocation,
+) {
+  final last = _lastGeofenceTrigger;
+  if (last == null) return false;
+
+  if (DateTime.now().difference(last.timestamp) > _geofenceDedupWindow) {
+    return false;
+  }
+
+  if (triggerLocation != null &&
+      last.triggerLatitude != null &&
+      last.triggerLongitude != null) {
+    final separation = _calculateDistance(
+      triggerLocation.latitude,
+      triggerLocation.longitude,
+      last.triggerLatitude!,
+      last.triggerLongitude!,
+    );
+    if (separation > _geofenceClusterRadiusMeters) {
+      return false;
+    }
+  }
+
+  if (last.geofenceId == detail.id) {
+    return true;
+  }
+
+  if (detail.highestPriority < last.highestPriority) {
+    return true;
+  }
+  if (detail.highestPriority > last.highestPriority) {
+    return false;
+  }
+
+  final double detailPenetration = detail.penetration;
+  final double lastPenetration = last.radiusMeters - last.distanceFromCenter;
+
+  if (detailPenetration <= lastPenetration + _penetrationLeewayMeters) {
+    return true;
+  }
+
+  return false;
 }
 
 @pragma('vm:entry-point')
@@ -241,17 +374,136 @@ Future<void> geofenceTriggered(
       '[GeofenceCallback] Event: ${params.event}, Geofence IDs: ${params.geofences.map((g) => g.id).toList()}, Location available: ${params.location != null}',
     );
 
-    // First, try to send the event through the port. Generate a notificationId
-    // early so the UI isolate can cancel the notification if desired.
+    developer.log(
+      '[GeofenceCallback] Using background DB connection. Path: ${database.path}',
+    );
+
+    // Get geofence details from storage, using the existing database connection
+    final storage = GeofenceStorage(db: database);
+
+    final List<String> incomingGeofenceIds =
+        params.geofences.map((g) => g.id).toList();
+    final Map<String, _GeofenceTaskBucket> geofenceTaskBuckets = {};
+    List<int> matchedTaskIds = [];
+
+    if (incomingGeofenceIds.isNotEmpty) {
+      final placeholders = List.filled(
+        incomingGeofenceIds.length,
+        '?',
+      ).join(',');
+      final rows = await database.query(
+        'tasks',
+        columns: ['id', 'geofence_id', 'taskPriority'],
+        where: 'geofence_id IN ($placeholders) AND isCompleted = 0',
+        whereArgs: incomingGeofenceIds,
+      );
+      developer.log(
+        '[GeofenceCallback] Background DB returned ${rows.length} matching task rows: $rows',
+      );
+      for (final row in rows) {
+        final dynamic gidRaw = row['geofence_id'];
+        if (gidRaw == null) continue;
+        final String? gid = gidRaw as String?;
+        if (gid == null) continue;
+
+        final bucket = geofenceTaskBuckets.putIfAbsent(
+          gid,
+          () => _GeofenceTaskBucket(),
+        );
+
+        final dynamic idVal = row['id'];
+        final int? parsedId =
+            idVal is int ? idVal : int.tryParse(idVal?.toString() ?? '');
+        if (parsedId != null) {
+          bucket.taskIds.add(parsedId);
+        }
+
+        final dynamic priorityVal = row['taskPriority'];
+        final double? parsedPriority =
+            priorityVal is int
+                ? priorityVal.toDouble()
+                : double.tryParse(priorityVal?.toString() ?? '');
+        if (parsedPriority != null && parsedPriority > bucket.highestPriority) {
+          bucket.highestPriority = parsedPriority;
+        }
+      }
+    }
+
+    final List<_GeofenceEventDetail> geofenceDetails = [];
+    for (final geofence in params.geofences) {
+      final GeofenceData? geofenceData = await storage.getGeofenceById(
+        geofence.id,
+      );
+      double? distance;
+      if (geofenceData != null && params.location != null) {
+        distance = _calculateDistance(
+          params.location!.latitude,
+          params.location!.longitude,
+          geofenceData.latitude,
+          geofenceData.longitude,
+        );
+        developer.log(
+          '[GeofenceCallback] Geofence ${geofence.id} triggered at distance: ${distance.toStringAsFixed(1)}m, configured radius: ${geofenceData.radiusMeters}m',
+        );
+      }
+
+      geofenceDetails.add(
+        _GeofenceEventDetail(
+          geofence: geofence,
+          data: geofenceData,
+          radiusMeters: geofenceData?.radiusMeters ?? geofence.radiusMeters,
+          distanceFromCenter: distance,
+          taskIds: List<int>.from(
+            geofenceTaskBuckets[geofence.id]?.taskIds ?? const [],
+          ),
+          highestPriority:
+              geofenceTaskBuckets[geofence.id]?.highestPriority ?? 0,
+        ),
+      );
+    }
+
+    if (geofenceDetails.isEmpty) {
+      developer.log(
+        '[GeofenceCallback] No geofence details resolved; aborting processing.',
+      );
+      return;
+    }
+
+    final _GeofenceEventDetail primaryDetail = _selectPrimaryDetail(
+      geofenceDetails,
+    );
+    final List<_GeofenceEventDetail> processedDetails = [primaryDetail];
+
+    if (primaryDetail.taskIds.isNotEmpty &&
+        _shouldSuppressDueToRecent(primaryDetail, params.location)) {
+      developer.log(
+        '[GeofenceCallback] Suppressing geofence ${primaryDetail.id} because a higher or equal trigger was handled recently.',
+      );
+      return;
+    }
+
+    final List<String> selectedGeofenceIds =
+        processedDetails.map((detail) => detail.id).toList();
+    matchedTaskIds = List<int>.from(primaryDetail.taskIds);
+
+    if (primaryDetail.taskIds.isNotEmpty) {
+      _lastGeofenceTrigger = _RecentGeofenceTrigger(
+        geofenceId: primaryDetail.id,
+        timestamp: DateTime.now(),
+        triggerLatitude: params.location?.latitude,
+        triggerLongitude: params.location?.longitude,
+        radiusMeters: primaryDetail.radiusMeters,
+        distanceFromCenter:
+            primaryDetail.distanceFromCenter ?? primaryDetail.radiusMeters,
+        highestPriority: primaryDetail.highestPriority,
+      );
+    }
+
+    // First, try to send the filtered event through the port.
     final SendPort? sendPort = IsolateNameServer.lookupPortByName(
       'native_geofence_send_port',
     );
     final int earlyNotificationId = Random().nextInt(2147483647);
-
-    // Create a short-lived acknowledgment ReceivePort and register it under
-    // a name the UI isolate can look up. The background isolate will wait
-    // briefly for an ack; if received, it will suppress the audible
-    // notification/TTS to avoid race conditions.
     final String ackPortName = 'native_geofence_ack_port_$earlyNotificationId';
     final receiveForAck = ReceivePort();
     try {
@@ -267,15 +519,15 @@ Future<void> geofenceTriggered(
       try {
         sendPort.send({
           'event': params.event.name,
-          'geofenceIds': params.geofences.map((g) => g.id).toList(),
+          'geofenceIds': selectedGeofenceIds,
           'location': {
             'latitude': params.location!.latitude,
             'longitude': params.location!.longitude,
           },
           'timestamp': DateTime.now().millisecondsSinceEpoch,
           'notificationId': earlyNotificationId,
-          // Tell the UI which ack port to call if it suppresses the notification
           'ackPortName': ackPortName,
+          'taskIds': matchedTaskIds,
         });
         developer.log(
           '[GeofenceCallback] Successfully sent event through port with notificationId=$earlyNotificationId and ackPortName=$ackPortName',
@@ -284,7 +536,6 @@ Future<void> geofenceTriggered(
         developer.log(
           '[GeofenceCallback] CRITICAL: Failed to send event through port: $portError',
         );
-        // Continue processing even if port send fails - fallback to direct notification
       }
     } else {
       developer.log(
@@ -293,16 +544,6 @@ Future<void> geofenceTriggered(
         'UI isolate may not receive geofence event.',
       );
     }
-
-    // --- Database Access for Background Isolate ---
-    // We already have a database connection in the 'database' variable
-    developer.log(
-      '[GeofenceCallback] Using background DB connection. Path: ${database.path}',
-    );
-
-    // Get geofence details from storage, using the existing database connection
-    final storage = GeofenceStorage(db: database);
-    // --- End Database Access ---
 
     // Remove debug/progress notifications
 
@@ -346,39 +587,18 @@ Future<void> geofenceTriggered(
     String notificationTitle = 'Task reminder';
     String notificationBody = '';
 
-    for (final geofence in params.geofences) {
-      final geofenceData = await storage.getGeofenceById(geofence.id);
+    for (final detail in processedDetails) {
+      final geofenceData =
+          detail.data ?? await storage.getGeofenceById(detail.id);
       if (geofenceData != null) {
-        // Add event type info to notification body
-        final eventType =
-            params.event == native_geofence.GeofenceEvent.enter
-                ? 'entered'
-                : 'exited';
-
-        // Calculate distance if location is available
-        String distanceInfo = '';
-        if (params.location != null) {
-          final distance = _calculateDistance(
-            params.location!.latitude,
-            params.location!.longitude,
-            geofenceData.latitude,
-            geofenceData.longitude,
-          );
-          distanceInfo =
-              ' (${distance.toStringAsFixed(1)}m from center, radius: ${geofenceData.radiusMeters}m)';
-          developer.log(
-            '[GeofenceCallback] Geofence ${geofence.id} triggered at distance: ${distance.toStringAsFixed(1)}m, configured radius: ${geofenceData.radiusMeters}m',
-          );
-        }
-
         notificationBody +=
-            'You have $eventType the area for task ${geofenceData.task}$distanceInfo\n';
+            'You have a task for this geofence: ${geofenceData.task}\n';
       }
     }
 
     if (notificationBody.isEmpty) {
       notificationBody =
-          'Event: ${params.event.name} for geofences: ${params.geofences.map((g) => g.id).join(", ")}';
+          'Event: ${params.event.name} for geofences: ${selectedGeofenceIds.join(", ")}';
     }
 
     // Create the notification details with immediate display settings
@@ -443,8 +663,8 @@ Future<void> geofenceTriggered(
       'notificationId': notificationId,
       'title': notificationTitle,
       'body': notificationBody,
-      'geofenceIds': params.geofences.map((g) => g.id).toList(),
-      'taskIds': <int>[], // Empty for now, will be populated later
+      'geofenceIds': selectedGeofenceIds,
+      'taskIds': matchedTaskIds,
     };
     final immediatePayloadJson = jsonEncode(immediatePayloadData);
 
@@ -525,105 +745,80 @@ Future<void> geofenceTriggered(
       );
     }
 
-    // Gather task IDs matching these geofence ids using the background DB
-    List<int> matchedTaskIds = [];
+    // Provide diagnostics if we failed to resolve tasks for the selected geofence
     try {
-      final geofenceIdList = params.geofences.map((g) => g.id).toList();
       developer.log(
-        '[GeofenceCallback] Background query geofenceIdList: $geofenceIdList',
+        '[GeofenceCallback] Background query geofenceIdList: $selectedGeofenceIds',
       );
-      if (geofenceIdList.isNotEmpty) {
-        final placeholders = List.filled(geofenceIdList.length, '?').join(',');
-        final whereClause =
-            'geofence_id IN ($placeholders) AND isCompleted = 0';
-        final rows = await database.query(
-          'tasks',
-          columns: ['id', 'geofence_id'],
-          where: whereClause,
-          whereArgs: geofenceIdList,
-        );
+      if (matchedTaskIds.isEmpty && selectedGeofenceIds.isNotEmpty) {
         developer.log(
-          '[GeofenceCallback] Background DB returned ${rows.length} matching task rows: $rows',
+          '[GeofenceCallback] WARNING: No matching tasks found for geofences: $selectedGeofenceIds',
         );
-        for (final r in rows) {
-          final idVal = r['id'];
-          if (idVal is int)
-            matchedTaskIds.add(idVal);
-          else if (idVal is String) {
-            final parsed = int.tryParse(idVal);
-            if (parsed != null) matchedTaskIds.add(parsed);
-          }
-        }
-
-        if (matchedTaskIds.isEmpty) {
+        final placeholders = List.filled(
+          selectedGeofenceIds.length,
+          '?',
+        ).join(',');
+        final allTasksRows = await database.query(
+          'tasks',
+          columns: ['id', 'geofence_id', 'isCompleted'],
+          where: 'geofence_id IN ($placeholders)',
+          whereArgs: selectedGeofenceIds,
+        );
+        if (allTasksRows.isNotEmpty &&
+            allTasksRows.every((r) => r['isCompleted'] == 1)) {
           developer.log(
-            '[GeofenceCallback] WARNING: No matching tasks found for geofences: ${geofenceIdList}',
+            '[GeofenceCallback] GUARD: All tasks for these geofences are completed. Skipping notification and cleaning up orphaned geofences.',
           );
-          // Check if tasks exist but are all completed (orphaned geofence)
-          final allTasksRows = await database.query(
-            'tasks',
-            columns: ['id', 'geofence_id', 'isCompleted'],
-            where: 'geofence_id IN ($placeholders)',
-            whereArgs: geofenceIdList,
-          );
-          if (allTasksRows.isNotEmpty &&
-              allTasksRows.every((r) => r['isCompleted'] == 1)) {
-            developer.log(
-              '[GeofenceCallback] GUARD: All tasks for these geofences are completed. Skipping notification and cleaning up orphaned geofences.',
-            );
-            // Clean up orphaned geofences
-            try {
-              for (final gid in geofenceIdList) {
-                await database.delete(
-                  'geofences',
-                  where: 'id = ?',
-                  whereArgs: [gid],
-                );
-                developer.log(
-                  '[GeofenceCallback] Cleaned up orphaned geofence: $gid',
-                );
-              }
-            } catch (cleanupError) {
+          try {
+            for (final gid in selectedGeofenceIds) {
+              await database.delete(
+                'geofences',
+                where: 'id = ?',
+                whereArgs: [gid],
+              );
               developer.log(
-                '[GeofenceCallback] Error cleaning up orphaned geofences: $cleanupError',
+                '[GeofenceCallback] Cleaned up orphaned geofence: $gid',
               );
             }
-            return; // Exit early - no need to show notification
-          }
-          try {
-            final allRows = await database.query(
-              'tasks',
-              columns: ['id', 'geofence_id', 'taskName', 'isCompleted'],
-            );
+          } catch (cleanupError) {
             developer.log(
-              '[GeofenceCallback] No matches - full tasks table snapshot: $allRows',
+              '[GeofenceCallback] Error cleaning up orphaned geofences: $cleanupError',
             );
-            // Show diagnostic notification for empty matches
-            await plugin.show(
-              999995,
-              'ℹ️ No Tasks Found',
-              'Entered geofence area but no active tasks are linked to: ${geofenceIdList.join(", ")}',
-              const NotificationDetails(
-                android: AndroidNotificationDetails(
-                  'geofence_alerts',
-                  'Geofence Alerts',
-                  importance: Importance.defaultImportance,
-                  priority: Priority.defaultPriority,
-                ),
+          }
+          return;
+        }
+        try {
+          final allRows = await database.query(
+            'tasks',
+            columns: ['id', 'geofence_id', 'taskName', 'isCompleted'],
+          );
+          developer.log(
+            '[GeofenceCallback] No matches - full tasks table snapshot: $allRows',
+          );
+          await plugin.show(
+            999995,
+            'ℹ️ No Tasks Found',
+            'Entered geofence area but no active tasks are linked to: ${selectedGeofenceIds.join(", ")}',
+            const NotificationDetails(
+              android: AndroidNotificationDetails(
+                'geofence_alerts',
+                'Geofence Alerts',
+                importance: Importance.defaultImportance,
+                priority: Priority.defaultPriority,
               ),
-            );
-          } catch (dumpError, dumpSt) {
-            developer.log(
-              '[GeofenceCallback] Failed to dump all tasks for debugging: $dumpError',
-              error: dumpError,
-              stackTrace: dumpSt,
-            );
-          }
+            ),
+          );
+        } catch (dumpError, dumpSt) {
+          developer.log(
+            '[GeofenceCallback] Failed to dump all tasks for debugging: $dumpError',
+            error: dumpError,
+            stackTrace: dumpSt,
+          );
         }
       }
     } catch (e, st) {
       developer.log(
-        '[GeofenceCallback] Error while collecting task IDs from background DB: $e',
+        '[GeofenceCallback] Error while evaluating geofence task matches: $e',
         error: e,
         stackTrace: st,
       );
@@ -730,7 +925,7 @@ Future<void> geofenceTriggered(
       'notificationId': notificationId,
       'title': notificationTitle,
       'body': notificationBody,
-      'geofenceIds': params.geofences.map((g) => g.id).toList(),
+      'geofenceIds': selectedGeofenceIds,
       'taskIds': matchedTaskIds,
     };
     final payloadJson = jsonEncode(payloadData);
@@ -771,13 +966,14 @@ Future<void> geofenceTriggered(
       }
 
       // Process each geofence for TTS
-      for (final geofence in params.geofences) {
+      for (final detail in processedDetails) {
         try {
           developer.log(
-            '[GeofenceCallback] Processing geofence ${geofence.id} for TTS',
+            '[GeofenceCallback] Processing geofence ${detail.id} for TTS',
           );
 
-          final geofenceData = await storage.getGeofenceById(geofence.id);
+          final geofenceData =
+              detail.data ?? await storage.getGeofenceById(detail.id);
           developer.log(
             '[GeofenceCallback] Geofence data retrieved: ${geofenceData?.toJson()}',
           );
@@ -795,7 +991,7 @@ Future<void> geofenceTriggered(
                 'tasks',
                 columns: ['id'],
                 where: 'geofence_id = ?',
-                whereArgs: [geofence.id],
+                whereArgs: [detail.id],
                 limit: 1,
               );
               if (rows.isNotEmpty) {
@@ -854,12 +1050,12 @@ Future<void> geofenceTriggered(
             }
           } else {
             developer.log(
-              '[GeofenceCallback] No task found for geofence ${geofence.id} or task is empty',
+              '[GeofenceCallback] No task found for geofence ${detail.id} or task is empty',
             );
           }
         } catch (geofenceError) {
           developer.log(
-            '[GeofenceCallback] Error processing geofence ${geofence.id} for TTS: $geofenceError',
+            '[GeofenceCallback] Error processing geofence ${detail.id} for TTS: $geofenceError',
           );
         }
       }
@@ -924,20 +1120,21 @@ Future<void> geofenceTriggered(
       developer.log('[GeofenceCallback] Database path: ${currentDb.path}');
 
       // Process each geofence
-      for (final geofence in params.geofences) {
+      for (final detail in processedDetails) {
         try {
           // Ensure we're still connected
           if (!currentDb.isOpen) {
             throw Exception('Database connection lost');
           }
 
-          final geofenceData = await storage.getGeofenceById(geofence.id);
+          final geofenceData =
+              detail.data ?? await storage.getGeofenceById(detail.id);
 
           // Create the notification record with explicit timestamp
           final now = DateTime.now();
           final recordMap = {
             'notification_id': notificationId,
-            'geofence_id': geofence.id,
+            'geofence_id': detail.id,
             'task_name': geofenceData?.task,
             'event_type': params.event.name,
             'body': notificationBody,
@@ -949,7 +1146,7 @@ Future<void> geofenceTriggered(
           await dbService.insertNotificationHistory(currentDb, recordMap);
 
           developer.log(
-            '[GeofenceCallback] Successfully saved record for geofence ID: ${geofence.id}',
+            '[GeofenceCallback] Successfully saved record for geofence ID: ${detail.id}',
           );
 
           // Notify the main UI isolate that a new notification was saved
@@ -968,7 +1165,7 @@ Future<void> geofenceTriggered(
           }
         } catch (e, stackTrace) {
           developer.log(
-            '[GeofenceCallback] Error saving record for geofence ${geofence.id}: $e',
+            '[GeofenceCallback] Error saving record for geofence ${detail.id}: $e',
             error: e,
             stackTrace: stackTrace,
           );
@@ -998,11 +1195,12 @@ Future<void> geofenceTriggered(
               readOnly: false,
             );
             if (retryDb.isOpen) {
-              final geofenceData = await storage.getGeofenceById(geofence.id);
+              final geofenceData =
+                  detail.data ?? await storage.getGeofenceById(detail.id);
               final now = DateTime.now();
               final recordMap = {
                 'notification_id': notificationId,
-                'geofence_id': geofence.id,
+                'geofence_id': detail.id,
                 'task_name': geofenceData?.task,
                 'event_type': params.event.name,
                 'body': notificationBody,
@@ -1017,7 +1215,7 @@ Future<void> geofenceTriggered(
               database = retryDb;
 
               developer.log(
-                '[GeofenceCallback] Successfully saved record on retry for geofence ID: ${geofence.id}', // Added geofence.id for clarity
+                '[GeofenceCallback] Successfully saved record on retry for geofence ID: ${detail.id}',
               );
 
               // Notify the main UI isolate that a new notification was saved (after retry)
@@ -1038,7 +1236,7 @@ Future<void> geofenceTriggered(
             }
           } catch (retryError, retryStack) {
             developer.log(
-              '[GeofenceCallback] Failed to save record on retry: $retryError',
+              '[GeofenceCallback] Failed to save record on retry for geofence ID: ${detail.id}: $retryError',
               error: retryError,
               stackTrace: retryStack,
             );
@@ -1073,7 +1271,7 @@ Future<void> geofenceTriggered(
       }
 
       developer.log(
-        '[GeofenceCallback] Finished processing ${params.geofences.length} geofence(s) for notification history.',
+        '[GeofenceCallback] Finished processing ${processedDetails.length} geofence(s) for notification history.',
       );
     } catch (e, stackTrace) {
       developer.log(
