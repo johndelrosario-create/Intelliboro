@@ -672,7 +672,6 @@ class GeofencingService {
           radiusMeters: radiusMeters,
           triggers: {
             native_geofence.GeofenceEvent.enter,
-            native_geofence.GeofenceEvent.exit,
           },
           iosSettings: native_geofence.IosGeofenceSettings(
             initialTrigger: false,
@@ -680,7 +679,6 @@ class GeofencingService {
           androidSettings: native_geofence.AndroidGeofenceSettings(
             initialTriggers: {
               native_geofence.GeofenceEvent.enter,
-              native_geofence.GeofenceEvent.exit,
             }, // Don't fire on creation - only on actual boundary crossing
             notificationResponsiveness: const Duration(seconds: 0),
             loiteringDelay: const Duration(seconds: 0),
