@@ -17,6 +17,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:intelliboro/services/notification_service.dart'
     show notificationPlugin;
 import 'package:intelliboro/services/text_to_speech_service.dart';
+import 'package:intelliboro/services/priority_service.dart';
 import 'package:sqflite/sqflite.dart';
 
 /// Request emitted when a higher-priority task arrives and a user decision is needed.
@@ -119,6 +120,10 @@ class TaskTimerService extends ChangeNotifier {
   Duration get elapsedTime => _elapsedTime;
   bool get isPaused => _isPaused;
   bool get hasActiveTask => _activeTask != null;
+  bool get isActiveTaskInterrupted =>
+      _interruptedTaskId != null &&
+      _activeTask != null &&
+      _activeTask!.id == _interruptedTaskId;
   // Paused-by-interrupt tasks storage
   final Map<int, _PausedInfo> _pausedTasks = {};
 
@@ -318,13 +323,13 @@ class TaskTimerService extends ChangeNotifier {
               actions: <AndroidNotificationAction>[
                 AndroidNotificationAction(
                   'com.intelliboro.DO_NOW',
-                  'Start Now',
+                  '▶️ Do task now',
                   showsUserInterface: true,
                   cancelNotification: true,
                 ),
                 AndroidNotificationAction(
                   'com.intelliboro.DO_LATER',
-                  'Snooze',
+                  '⏰ Do Later',
                   showsUserInterface: false,
                   cancelNotification: true,
                 ),
@@ -335,14 +340,17 @@ class TaskTimerService extends ChangeNotifier {
           'switchRequestId': switchId,
           'taskId': task.id,
         });
+        final priorityNotif = PriorityService().generatePriorityNotification(
+          task,
+        );
         final speakLine =
-            '${task.taskName} has a higher priority, would you like to do it now?';
+            'Would you like to switch to the higher priority task: ${task.taskName}?';
         final notifId = Random().nextInt(2147483647);
         req.notificationId = notifId;
         await plugin.show(
           notifId,
-          'Higher priority task',
-          speakLine,
+          priorityNotif['title']!,
+          '${priorityNotif['body']!} - Would you like to switch to this task?',
           details,
           payload: payload,
         );
@@ -462,13 +470,13 @@ class TaskTimerService extends ChangeNotifier {
                     actions: <AndroidNotificationAction>[
                       AndroidNotificationAction(
                         'com.intelliboro.DO_NOW',
-                        'Start Now',
+                        '▶️ Do task now',
                         showsUserInterface: true,
                         cancelNotification: true,
                       ),
                       AndroidNotificationAction(
                         'com.intelliboro.DO_LATER',
-                        'Snooze',
+                        '⏰ Do Later',
                         showsUserInterface: false,
                         cancelNotification: true,
                       ),
@@ -479,14 +487,16 @@ class TaskTimerService extends ChangeNotifier {
                 'switchRequestId': switchId,
                 'taskId': task.id,
               });
+              final priorityNotif = PriorityService()
+                  .generatePriorityNotification(task);
               final speakLine =
-                  '${task.taskName} has a higher priority, would you like to do it now?';
+                  'Would you like to switch to the higher priority task: ${task.taskName}?';
               final notifId = Random().nextInt(2147483647);
               req.notificationId = notifId;
               await plugin.show(
                 notifId,
-                'Higher priority task',
-                speakLine,
+                priorityNotif['title']!,
+                '${priorityNotif['body']!} - Would you like to switch to this task?',
                 details,
                 payload: payload,
               );
@@ -998,6 +1008,37 @@ class TaskTimerService extends ChangeNotifier {
         );
       }
 
+      // Check if all tasks for this geofence are now completed
+      // If so, remove the native geofence
+      if (task.geofenceId != null && task.geofenceId!.isNotEmpty) {
+        try {
+          final db = await DatabaseService().mainDb;
+          final remainingTasks = await db.query(
+            'tasks',
+            columns: ['id'],
+            where: 'geofence_id = ? AND isCompleted = 0',
+            whereArgs: [task.geofenceId],
+          );
+
+          if (remainingTasks.isEmpty) {
+            developer.log(
+              '[TaskTimerService] All tasks for geofence ${task.geofenceId} are completed, removing native geofence',
+            );
+            try {
+              await GeofencingService().removeGeofence(task.geofenceId!);
+            } catch (e) {
+              developer.log(
+                '[TaskTimerService] Failed to remove native geofence ${task.geofenceId}: $e',
+              );
+            }
+          }
+        } catch (e) {
+          developer.log(
+            '[TaskTimerService] Error checking remaining tasks for geofence: $e',
+          );
+        }
+      }
+
       // Signal listeners that persisted task records changed (so UI can refresh lists)
       try {
         tasksChanged.value = true;
@@ -1099,6 +1140,38 @@ class TaskTimerService extends ChangeNotifier {
           '[TaskTimerService] Marked task as completed: ${task.taskName}, Time taken: ${_formatDuration(completionTime)}',
         );
       }
+
+      // Check if all tasks for this geofence are now completed
+      // If so, remove the native geofence
+      if (task.geofenceId != null && task.geofenceId!.isNotEmpty) {
+        try {
+          final db = await DatabaseService().mainDb;
+          final remainingTasks = await db.query(
+            'tasks',
+            columns: ['id'],
+            where: 'geofence_id = ? AND isCompleted = 0',
+            whereArgs: [task.geofenceId],
+          );
+
+          if (remainingTasks.isEmpty) {
+            developer.log(
+              '[TaskTimerService] All tasks for geofence ${task.geofenceId} are completed, removing native geofence',
+            );
+            try {
+              await GeofencingService().removeGeofence(task.geofenceId!);
+            } catch (e) {
+              developer.log(
+                '[TaskTimerService] Failed to remove native geofence ${task.geofenceId}: $e',
+              );
+            }
+          }
+        } catch (e) {
+          developer.log(
+            '[TaskTimerService] Error checking remaining tasks for geofence: $e',
+          );
+        }
+      }
+
       // Signal listeners that persisted task records changed (so UI can refresh lists)
       try {
         tasksChanged.value = true;

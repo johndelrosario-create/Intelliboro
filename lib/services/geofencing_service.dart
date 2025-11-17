@@ -343,13 +343,13 @@ class GeofencingService {
                         actions: <AndroidNotificationAction>[
                           AndroidNotificationAction(
                             'com.intelliboro.SNOOZE_5',
-                            'Snooze 5m',
+                            '⏱️ Snooze 5m',
                             showsUserInterface: false,
                             cancelNotification: true,
                           ),
                           AndroidNotificationAction(
                             'com.intelliboro.SNOOZE_LATER',
-                            'Snooze later',
+                            '🔔 Snooze later',
                             showsUserInterface: true,
                             cancelNotification: true,
                           ),
@@ -455,13 +455,13 @@ class GeofencingService {
                         actions: <AndroidNotificationAction>[
                           AndroidNotificationAction(
                             'com.intelliboro.DO_NOW',
-                            'Do Now 🏃‍♂️',
+                            '▶️ Do task now',
                             showsUserInterface: true,
                             cancelNotification: true,
                           ),
                           AndroidNotificationAction(
                             'com.intelliboro.DO_LATER',
-                            'Do Later ⏰',
+                            '⏰ Do Later',
                             showsUserInterface: false,
                             cancelNotification: false,
                           ),

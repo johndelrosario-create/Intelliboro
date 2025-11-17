@@ -34,10 +34,11 @@ class _ActiveTaskViewState extends State<ActiveTaskView> {
   Widget build(BuildContext context) {
     final TaskModel? task = _timerService.activeTask;
     final bool hasActive = task != null;
+    final bool isInterrupted = _timerService.isActiveTaskInterrupted;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Active Task'),
+        title: Text(isInterrupted ? 'Task Paused' : 'Active Task'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).maybePop(),
@@ -47,7 +48,59 @@ class _ActiveTaskViewState extends State<ActiveTaskView> {
         child: Padding(
           padding: const EdgeInsets.all(20.0),
           child:
-              hasActive
+              hasActive && isInterrupted
+                  ? Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      const Icon(
+                        Icons.pause_circle_outline,
+                        size: 80,
+                        color: Colors.orange,
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        'Task is paused',
+                        style: Theme.of(
+                          context,
+                        ).textTheme.headlineMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        task.taskName,
+                        style: Theme.of(context).textTheme.titleLarge,
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'A higher priority task has been triggered',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        'Time elapsed before pause: ${_timerService.getFormattedElapsedTime()}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 24),
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.list),
+                        label: const Text('View Tasks'),
+                        onPressed:
+                            () => Navigator.of(context).pushReplacement(
+                              MaterialPageRoute(
+                                builder: (_) => const TaskListView(),
+                              ),
+                            ),
+                      ),
+                    ],
+                  )
+                  : hasActive
                   ? Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.center,

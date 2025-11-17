@@ -25,7 +25,9 @@ class GeofenceStorage {
     return await _databaseService.mainDb;
   }
 
-  Future<List<GeofenceData>> loadGeofences() async {
+  Future<List<GeofenceData>> loadGeofences({
+    bool includeCompleted = false,
+  }) async {
     try {
       final db = await _db; // Use the getter
       developer.log('[GeofenceStorage] Loading geofences from database...');
@@ -50,6 +52,48 @@ class GeofenceStorage {
       developer.log(
         '[GeofenceStorage] Successfully loaded ${result.length} geofences',
       );
+
+      // Filter out geofences with only completed tasks unless explicitly requested
+      if (!includeCompleted) {
+        final filteredResult = <GeofenceData>[];
+        for (final geofence in result) {
+          try {
+            // Check if this geofence has any non-completed tasks
+            final tasks = await db.query(
+              'tasks',
+              columns: ['id', 'isCompleted'],
+              where: 'geofence_id = ?',
+              whereArgs: [geofence.id],
+            );
+
+            if (tasks.isEmpty) {
+              // No tasks linked - keep the geofence (might be orphaned, user can manage it)
+              filteredResult.add(geofence);
+            } else {
+              // Check if at least one task is not completed
+              final hasActiveTask = tasks.any((t) => t['isCompleted'] != 1);
+              if (hasActiveTask) {
+                filteredResult.add(geofence);
+              } else {
+                developer.log(
+                  '[GeofenceStorage] Filtering out geofence ${geofence.id} - all tasks completed',
+                );
+              }
+            }
+          } catch (e) {
+            developer.log(
+              '[GeofenceStorage] Error checking tasks for geofence ${geofence.id}: $e',
+            );
+            // On error, include the geofence to be safe
+            filteredResult.add(geofence);
+          }
+        }
+        developer.log(
+          '[GeofenceStorage] Filtered to ${filteredResult.length} active geofences',
+        );
+        return filteredResult;
+      }
+
       return result;
     } catch (e, stackTrace) {
       developer.log(
