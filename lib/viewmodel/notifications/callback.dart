@@ -81,9 +81,9 @@ class _RecentGeofenceTrigger {
   });
 }
 
-const Duration _geofenceDedupWindow = Duration(seconds: 25);
-const double _geofenceClusterRadiusMeters = 80.0;
-const double _penetrationLeewayMeters = 5.0;
+const Duration _geofenceDedupWindow = Duration(seconds: 5);
+const double _geofenceClusterRadiusMeters = 10.0;
+const double _penetrationLeewayMeters = 2.0;
 _RecentGeofenceTrigger? _lastGeofenceTrigger;
 
 _GeofenceEventDetail _selectPrimaryDetail(List<_GeofenceEventDetail> details) {

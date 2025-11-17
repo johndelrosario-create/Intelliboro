@@ -3,6 +3,7 @@ import 'package:intelliboro/viewmodel/Geofencing/map_viewmodel.dart'
     as MapViewModelImport;
 import 'package:intelliboro/services/mapbox_search_service.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
+import 'package:intelliboro/services/task_timer_service.dart';
 
 class MapboxMapView extends StatefulWidget {
   const MapboxMapView({Key? key}) : super(key: key);
@@ -14,6 +15,7 @@ class MapboxMapView extends StatefulWidget {
 class _MapboxMapViewState extends State<MapboxMapView> {
   late final MapViewModelImport.MapboxMapViewModel mapViewModel;
   late final MapboxSearchService _searchService;
+  late final TaskTimerService _taskTimerService;
   String? _selectedGeofenceId;
 
   // Search functionality
@@ -28,12 +30,24 @@ class _MapboxMapViewState extends State<MapboxMapView> {
     super.initState();
     mapViewModel = MapViewModelImport.MapboxMapViewModel();
     _searchService = MapboxSearchService();
+    _taskTimerService = TaskTimerService();
 
     // Listen to search input changes
     _searchController.addListener(_onSearchChanged);
 
     // Listen to focus changes to control search results visibility
     _searchFocusNode.addListener(_onSearchFocusChanged);
+
+    // Listen to task changes to refresh geofences when tasks are completed
+    _taskTimerService.tasksChanged.addListener(_onTasksChanged);
+  }
+
+  void _onTasksChanged() {
+    // When tasks change (e.g., completion), refresh geofences to remove completed task geofences
+    if (_taskTimerService.tasksChanged.value) {
+      mapViewModel.refreshSavedGeofences();
+      _taskTimerService.tasksChanged.value = false;
+    }
   }
 
   @override
@@ -495,6 +509,7 @@ class _MapboxMapViewState extends State<MapboxMapView> {
     _searchController.dispose();
     _searchFocusNode.dispose();
     _searchService.dispose();
+    _taskTimerService.tasksChanged.removeListener(_onTasksChanged);
     super.dispose();
   }
 

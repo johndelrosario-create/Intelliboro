@@ -115,6 +115,15 @@ class TaskModel {
     // Base priority from user (1-5 scale)
     double effectivePriority = taskPriority.toDouble();
 
+    // Time-based alarm tasks (without geofences) use base priority only
+    // since the alarm itself indicates when to do them - no urgency bonus needed
+    if (geofenceId == null || geofenceId!.isEmpty) {
+      return effectivePriority;
+    }
+
+    // For geofenced tasks: add urgency based on time proximity
+    // This helps prioritize location-based tasks that are also time-sensitive
+
     // If no time is set, return base priority only
     if (taskTime == null || taskDate == null) {
       return effectivePriority;
@@ -132,7 +141,7 @@ class TaskModel {
     // Calculate hours until task
     final hoursUntilTask = taskDateTime.difference(now).inHours;
 
-    // Add urgency multiplier based on time proximity
+    // Add urgency multiplier based on time proximity (geofenced tasks only)
     if (hoursUntilTask <= 0) {
       // Task is overdue or happening now - maximum urgency
       effectivePriority += 2.0;

@@ -613,6 +613,9 @@ class TaskTimerService extends ChangeNotifier {
       tasksChanged.value = true;
     } catch (_) {}
 
+    // Notify listeners for immediate UI update
+    notifyListeners();
+
     // Schedule timer to clear pending state after snooze duration and attempt geofence recreation
     Timer(snoozeDuration, () async {
       try {
@@ -878,6 +881,9 @@ class TaskTimerService extends ChangeNotifier {
 
       // Update in database
       await TaskRepository().updateTask(rescheduledTask);
+
+      // Notify UI that tasks have changed
+      tasksChanged.value = true;
 
       // Reschedule the alarm for the new time
       try {

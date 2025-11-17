@@ -163,6 +163,15 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
   try {
     final String? payload = response.payload;
 
+    developer.log('');
+    developer.log('╔════════════════════════════════════════╗');
+    developer.log('║  NOTIFICATION RESPONSE RECEIVED        ║');
+    developer.log('╚════════════════════════════════════════╝');
+    developer.log('[main] Action ID: ${response.actionId}');
+    developer.log('[main] Response ID: ${response.id}');
+    developer.log('[main] Payload: $payload');
+    developer.log('');
+
     developer.log(
       '[main] Processing notification response: ${response.actionId} ${response.id}',
     );
@@ -264,8 +273,126 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
       }
     }
 
+    // 2) If action is DO_LATER and payload is a simple task id, snooze that task
+    if (response.actionId == 'com.intelliboro.DO_LATER') {
+      developer.log('');
+      developer.log('============================================');
+      developer.log('[main] ⚠️ DO_LATER ACTION TRIGGERED ⚠️');
+      developer.log('[main] Response ID: ${response.id}');
+      developer.log('[main] Payload: $payload');
+      developer.log('============================================');
+      developer.log('');
+
+      final int? simpleTaskId = payload == null ? null : int.tryParse(payload);
+      developer.log('[main] Parsed task ID: $simpleTaskId');
+
+      if (simpleTaskId != null) {
+        developer.log('[main] Fetching task from repository...');
+        final task = await TaskRepository().getTaskById(simpleTaskId);
+        if (task != null) {
+          developer.log(
+            '[main] ✅ Found task for snooze: ${task.taskName} (id=$simpleTaskId)',
+          );
+
+          // Stop the alarm FIRST before doing anything else
+          final int? notificationId = response.id;
+          if (notificationId != null) {
+            // Stop the alarm if it's ringing
+            try {
+              await Alarm.stop(notificationId);
+              developer.log(
+                '[main] Stopped alarm id=$notificationId for snooze',
+              );
+            } catch (e) {
+              developer.log('[main] Error stopping alarm: $e');
+            }
+
+            // Release audio focus guard
+            try {
+              AudioFocusGuard.instance.onAlarmStop(notificationId);
+            } catch (e) {
+              developer.log('[main] Error releasing audio focus: $e');
+            }
+
+            // Cancel the notification
+            try {
+              await flutterLocalNotificationsPlugin.cancel(notificationId);
+              developer.log(
+                '[main] Cancelled notification id=$notificationId for snooze',
+              );
+            } catch (e) {
+              developer.log('[main] Error cancelling notification: $e');
+            }
+          }
+
+          // Ensure the underlying alarm is cancelled even if notification id was null
+          if (task.id != null) {
+            try {
+              await FlutterAlarmService().cancelForTaskId(task.id!);
+              developer.log(
+                '[main] Cancelled alarm via service for task id=${task.id} before reschedule',
+              );
+            } catch (e) {
+              developer.log('[main] Error cancelling alarm via service: $e');
+            }
+          }
+
+          // Reschedule the task for later using the task's snooze duration
+          await taskTimerService.rescheduleTaskLater(task);
+          developer.log(
+            '[main] Rescheduled task ${task.taskName} for ${taskTimerService.defaultSnoozeDuration.inMinutes} minutes later',
+          );
+
+          // Show confirmation
+          await flutterLocalNotificationsPlugin.show(
+            99998,
+            'Task Snoozed ⏰',
+            '${task.taskName} will remind you in ${taskTimerService.defaultSnoozeDuration.inMinutes} minutes',
+            const NotificationDetails(
+              android: AndroidNotificationDetails(
+                'timer_feedback',
+                'Timer Feedback',
+                channelDescription: 'Confirms snooze actions',
+                importance: Importance.defaultImportance,
+                priority: Priority.defaultPriority,
+              ),
+            ),
+          );
+          developer.log('[main] ✅ Posted snooze confirmation notification');
+          developer.log('[main] ✅ DO_LATER handler completed successfully');
+          developer.log('============================================');
+
+          return;
+        } else {
+          developer.log('[main] ❌ Task not found for ID: $simpleTaskId');
+        }
+      } else {
+        developer.log(
+          '[main] ❌ Could not parse task ID from payload: $payload',
+        );
+      }
+
+      developer.log(
+        '[main] ❌ DO_LATER handler failed - returning without action',
+      );
+      developer.log('============================================');
+      return;
+    }
+
     if (response.payload == null || response.payload!.isEmpty) {
       developer.log('[main] Notification response has no payload.');
+      return;
+    }
+
+    // Check if payload is a simple task ID (for alarm notifications tapped without action)
+    // If user taps the notification body (not the action buttons), we get here with a simple task ID
+    final int? simplePayloadTaskId = int.tryParse(response.payload!);
+    if (simplePayloadTaskId != null) {
+      developer.log(
+        '[main] Notification body tapped (no action) for task ID: $simplePayloadTaskId',
+      );
+      // For alarm notifications, tapping the body should just dismiss (alarm already stopped by user)
+      // Could navigate to task detail here if desired
       return;
     }
 
@@ -682,12 +809,14 @@ void _initializeTtsService() {
   });
 }
 
-/// Handle when an alarm rings - show notification with action buttons
-Future<void> _handleAlarmRing(AlarmSettings alarmSettings) async {
+/// Handle when an alarm rings - checks priority first and decides whether to ring alarm or suspend
+Future<void> _handleAlarmRingWithPriorityCheck(
+  AlarmSettings alarmSettings,
+) async {
   try {
-    developer.log('[main] Handling alarm ring for id=${alarmSettings.id}');
+    developer.log('[main] Alarm triggered for id=${alarmSettings.id}');
 
-    // Extract task ID from alarm ID (reverse of _alarmIdForTaskId)
+    // Extract task ID from alarm ID
     final taskId = alarmSettings.id - 100000;
 
     // Get task details
@@ -696,10 +825,102 @@ Future<void> _handleAlarmRing(AlarmSettings alarmSettings) async {
       developer.log(
         '[main] Task not found for alarm id=${alarmSettings.id}, taskId=$taskId',
       );
+      await Alarm.stop(alarmSettings.id);
+      AudioFocusGuard.instance.onAlarmStop(alarmSettings.id);
       return;
     }
 
-    // Show notification with action buttons (no sound - alarm package handles audio)
+    // CHECK PRIORITY: Is there an active task with higher priority?
+    final activeTask = taskTimerService.activeTask;
+    if (activeTask != null) {
+      final activePriority = activeTask.getEffectivePriority();
+      final newPriority = task.getEffectivePriority();
+
+      developer.log(
+        '[main] Priority comparison:\n'
+        '  Active: "${activeTask.taskName}" - Base: ${activeTask.taskPriority} (${activeTask.priorityString}), Effective: $activePriority\n'
+        '  New: "${task.taskName}" - Base: ${task.taskPriority} (${task.priorityString}), Effective: $newPriority',
+      );
+
+      // Suspend the new task if active task has HIGHER priority
+      // Higher priority value = more important, so active > new means suspend new task
+      if (activePriority > newPriority) {
+        // Active task has higher priority - SUSPEND the new task without full alarm
+        developer.log(
+          '[main] ⏸️ Task "${task.taskName}" (priority $newPriority) suspended due to active task "${activeTask.taskName}" (priority $activePriority)',
+        );
+
+        // Stop the alarm sound immediately
+        await Alarm.stop(alarmSettings.id);
+        AudioFocusGuard.instance.onAlarmStop(alarmSettings.id);
+
+        // Cancel the alarm from service so it doesn't re-ring
+        if (task.id != null) {
+          await FlutterAlarmService().cancelForTaskId(task.id!);
+        }
+
+        // Add to pending state (will retry in 5 minutes)
+        await taskTimerService.addToPending(task, const Duration(minutes: 5));
+
+        // Show suspension notification (with sound so user knows)
+        await flutterLocalNotificationsPlugin.show(
+          99997,
+          'Task Suspended ⏸️',
+          '${task.taskName} has lower priority than "${activeTask.taskName}". It will remind you again in 5 minutes.',
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              'timer_feedback',
+              'Timer Feedback',
+              channelDescription: 'Task suspension notifications',
+              importance: Importance.high,
+              priority: Priority.high,
+              playSound: true,
+              enableVibration: true,
+            ),
+          ),
+        );
+
+        developer.log('[main] ✅ Task suspended and notification shown');
+        return;
+      }
+    }
+
+    // No active task or this task has higher priority - show alarm notification
+    developer.log(
+      '[main] ✅ Task has sufficient priority, showing alarm notification',
+    );
+    await _handleAlarmRing(alarmSettings, task);
+  } catch (e, stack) {
+    developer.log(
+      '[main] Error in priority check: $e',
+      error: e,
+      stackTrace: stack,
+    );
+    // Stop alarm on error to prevent continuous ringing
+    await Alarm.stop(alarmSettings.id);
+    AudioFocusGuard.instance.onAlarmStop(alarmSettings.id);
+  }
+}
+
+/// Handle when an alarm rings - show notification with action buttons
+Future<void> _handleAlarmRing(
+  AlarmSettings alarmSettings,
+  TaskModel? task,
+) async {
+  try {
+    developer.log('[main] Handling alarm ring for id=${alarmSettings.id}');
+
+    // Get task if not already provided
+    if (task == null) {
+      final taskId = alarmSettings.id - 100000;
+      task = await TaskRepository().getTaskById(taskId);
+      if (task == null) {
+        developer.log('[main] Task not found for alarm id=${alarmSettings.id}');
+        return;
+      }
+    }
+
+    // Show notification with action buttons (alarm package already playing audio)
     await flutterLocalNotificationsPlugin.show(
       alarmSettings.id,
       'Task Reminder ⏰',
@@ -713,8 +934,7 @@ Future<void> _handleAlarmRing(AlarmSettings alarmSettings) async {
           priority: Priority.high,
           category: AndroidNotificationCategory.alarm,
           fullScreenIntent: true,
-          playSound:
-              false, // Disable notification sound - alarm package plays audio
+          playSound: false, // Alarm package handles the sound
           actions: <AndroidNotificationAction>[
             const AndroidNotificationAction(
               'com.intelliboro.DO_NOW',
@@ -725,13 +945,14 @@ Future<void> _handleAlarmRing(AlarmSettings alarmSettings) async {
             const AndroidNotificationAction(
               'com.intelliboro.DO_LATER',
               'Do Later ⏰',
-              showsUserInterface: false,
-              cancelNotification: false,
+              showsUserInterface:
+                  true, // Must be true for action to trigger callback reliably
+              cancelNotification: true,
             ),
           ],
         ),
       ),
-      payload: taskId.toString(),
+      payload: task.id.toString(),
     );
 
     developer.log(
@@ -781,7 +1002,9 @@ void main() async {
       for (final alarm in alarmSet.alarms) {
         developer.log('[main] Alarm ringing: id=${alarm.id}');
         AudioFocusGuard.instance.onAlarmStart(alarm.id);
-        _handleAlarmRing(alarm);
+
+        // Quick priority check to stop alarm immediately for lower priority tasks
+        _handleAlarmRingWithPriorityCheck(alarm);
       }
     });
     developer.log('[main] Alarm ring listener set up');

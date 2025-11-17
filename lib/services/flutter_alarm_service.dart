@@ -155,7 +155,8 @@ class FlutterAlarmService {
         notificationSettings: NotificationSettings(
           title: 'Task Reminder',
           body: '${task.taskName}$timeStr',
-          stopButton: 'Stop',
+          stopButton:
+              null, // Disable alarm package button so Flutter notif actions handle Do Later/Do Now
           icon: 'notification_icon',
         ),
       );
