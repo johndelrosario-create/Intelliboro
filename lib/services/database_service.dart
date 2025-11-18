@@ -9,7 +9,7 @@ class DatabaseService {
   static final DatabaseService _instance = DatabaseService._constructor();
   static Database? _mainIsolateDatabase; // Renamed for clarity
   static const String _dbName = 'intelliboro.db';
-  static const int _dbVersion = 10;
+  static const int _dbVersion = 11;
   static const String _geofencesTableName = 'geofences';
   static const String _tasksTableName = 'tasks';
   static const String _notificationHistoryTableName = 'notification_history';
@@ -176,6 +176,7 @@ class DatabaseService {
         recurring_pattern TEXT,
         geofence_id TEXT,
         notification_sound TEXT,
+        enable_tts INTEGER DEFAULT 1,
         created_at INTEGER DEFAULT (strftime('%s', 'now')),
         FOREIGN KEY (geofence_id) REFERENCES $_geofencesTableName(id) ON DELETE SET NULL
       )
@@ -421,6 +422,7 @@ class DatabaseService {
             recurring_pattern TEXT,
             geofence_id TEXT,
             notification_sound TEXT,
+            enable_tts INTEGER DEFAULT 1,
             created_at INTEGER DEFAULT (strftime('%s', 'now')),
             FOREIGN KEY (geofence_id) REFERENCES $_geofencesTableName(id) ON DELETE SET NULL
           )
@@ -447,6 +449,22 @@ class DatabaseService {
       } catch (e) {
         developer.log('[DatabaseService] Error migrating tasks table: $e');
         // If migration fails, continue - the new schema in _createAllTables will be used for new installs
+      }
+    }
+
+    if (oldVersion < 11) {
+      // Add enable_tts column to tasks table
+      try {
+        await db.execute(
+          'ALTER TABLE $_tasksTableName ADD COLUMN enable_tts INTEGER DEFAULT 1',
+        );
+        developer.log(
+          '[DatabaseService] Added enable_tts column to tasks table (default enabled)',
+        );
+      } catch (e) {
+        developer.log(
+          '[DatabaseService] Note: enable_tts column may already exist: $e',
+        );
       }
     }
 

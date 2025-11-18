@@ -66,6 +66,9 @@ class _TaskCreationState extends State<TaskCreation> {
   int _currentSnoozeDuration = 5; // Default 5 minutes
   bool _isLoadingSnoozeSettings = false;
 
+  // Text-to-speech toggle state
+  bool _enableTts = true; // Default to enabled
+
   // Search functionality state
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
@@ -92,6 +95,7 @@ class _TaskCreationState extends State<TaskCreation> {
       selectedRecurringPattern = t.recurringPattern ?? RecurringPattern.none();
       _selectedGeofenceId = t.geofenceId;
       _taskNotificationSound = t.notificationSound;
+      _enableTts = t.enableTts ?? true; // Default to true if not set
     }
     _loadGeofences();
     _loadSnoozeSettings();
@@ -646,6 +650,27 @@ class _TaskCreationState extends State<TaskCreation> {
               'Choose a specific notification sound for this task, or leave as "Use app default" to use the global app setting.',
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
+            const SizedBox(height: 16),
+            // Text-to-Speech toggle
+            SwitchListTile(
+              title: Text(
+                'Enable Text-to-Speech',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              subtitle: const Text(
+                'Read task notifications aloud when they trigger',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              value: _enableTts,
+              onChanged: (value) {
+                setState(() {
+                  _enableTts = value;
+                });
+              },
+              contentPadding: EdgeInsets.zero,
+            ),
           ],
         ),
       ),
@@ -1175,6 +1200,7 @@ class _TaskCreationState extends State<TaskCreation> {
                         isCompleted: false,
                         geofenceId: geofenceIdForTask,
                         notificationSound: _taskNotificationSound,
+                        enableTts: _enableTts,
                       ),
                     );
 
@@ -1200,6 +1226,7 @@ class _TaskCreationState extends State<TaskCreation> {
                       isCompleted: existing.isCompleted,
                       geofenceId: geofenceIdForTask ?? existing.geofenceId,
                       notificationSound: _taskNotificationSound,
+                      enableTts: _enableTts,
                     );
                     await TaskRepository().updateTask(updated);
                     // Notify listeners that tasks changed

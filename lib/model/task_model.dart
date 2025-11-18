@@ -20,6 +20,9 @@ class TaskModel {
   // Notification sound for this specific task (overrides app default)
   final String? notificationSound;
 
+  // Enable text-to-speech for this task (defaults to true if null for backward compatibility)
+  final bool? enableTts;
+
   // Task notification type?
 
   //Geofence location of task?
@@ -39,6 +42,7 @@ class TaskModel {
     this.geofenceId,
     this.createdAt,
     this.notificationSound,
+    this.enableTts,
   }) : assert(
          taskPriority >= 1 && taskPriority <= 5,
          'Priority must be between 1 and 5',
@@ -59,6 +63,7 @@ class TaskModel {
       'isCompleted': isCompleted ? 1 : 0,
       'geofence_id': geofenceId,
       'notification_sound': notificationSound,
+      'enable_tts': enableTts == null ? null : (enableTts! ? 1 : 0),
       // 'created_at' is intentionally omitted; DB sets it by default.
     };
   }
@@ -87,6 +92,8 @@ class TaskModel {
       isCompleted: (map['isCompleted'] as int) == 1,
       geofenceId: map['geofence_id'] as String?,
       notificationSound: map['notification_sound'] as String?,
+      enableTts:
+          map['enable_tts'] == null ? null : ((map['enable_tts'] as int) == 1),
       createdAt: map['created_at'] as int?,
     );
   }
@@ -236,6 +243,7 @@ class TaskModel {
       geofenceId: geofenceId,
       createdAt: createdAt,
       notificationSound: notificationSound,
+      enableTts: enableTts,
     );
   }
 
@@ -252,6 +260,7 @@ class TaskModel {
     String? geofenceId,
     int? createdAt,
     String? notificationSound,
+    bool? enableTts,
   }) {
     return TaskModel(
       id: id ?? this.id,
@@ -265,6 +274,7 @@ class TaskModel {
       geofenceId: geofenceId ?? this.geofenceId,
       createdAt: createdAt ?? this.createdAt,
       notificationSound: notificationSound ?? this.notificationSound,
+      enableTts: enableTts ?? this.enableTts,
     );
   }
 

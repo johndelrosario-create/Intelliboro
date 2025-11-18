@@ -9,6 +9,7 @@ import 'dart:async';
 import 'package:intelliboro/views/task_list_view.dart';
 import 'package:intelliboro/views/task_statistics_view.dart';
 import 'package:intelliboro/views/notification_history_view.dart';
+import 'package:intelliboro/views/create_task_view.dart';
 import 'package:intelliboro/services/location_service.dart';
 import 'package:intelliboro/services/geofencing_service.dart';
 import 'package:intelliboro/services/geofence_cleanup_service.dart';
@@ -376,6 +377,67 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
         '[main] ❌ DO_LATER handler failed - returning without action',
       );
       developer.log('============================================');
+      return;
+    }
+
+    // 3) If action is RESCHEDULE_LATER and payload is a simple task id, open task edit screen
+    if (response.actionId == 'com.intelliboro.RESCHEDULE_LATER') {
+      developer.log(
+        '[main] Processing RESCHEDULE_LATER action with payload: $payload',
+      );
+      final int? simpleTaskId = payload == null ? null : int.tryParse(payload);
+      if (simpleTaskId != null) {
+        final task = await TaskRepository().getTaskById(simpleTaskId);
+        if (task != null) {
+          developer.log(
+            '[main] Found task for reschedule: ${task.taskName} (id=$simpleTaskId)',
+          );
+
+          // Stop the alarm if it's ringing
+          if (response.id != null) {
+            try {
+              await Alarm.stop(response.id!);
+              developer.log('[main] Stopped alarm id=${response.id}');
+            } catch (e) {
+              developer.log('[main] Error stopping alarm: $e');
+            }
+
+            AudioFocusGuard.instance.onAlarmStop(response.id);
+            await flutterLocalNotificationsPlugin.cancel(response.id!);
+          }
+
+          // Cancel the alarm completely
+          if (task.id != null) {
+            try {
+              await FlutterAlarmService().cancelForTaskId(task.id!);
+              developer.log('[main] Canceled alarm for task id=${task.id}');
+            } catch (e) {
+              developer.log('[main] Failed to cancel alarm: $e');
+            }
+          }
+
+          // Navigate to task edit screen
+          try {
+            await _navigateToActiveView(maxRetries: 5);
+            navigatorKey.currentState?.push(
+              MaterialPageRoute(
+                builder: (_) => TaskCreation(initialTask: task, showMap: true),
+              ),
+            );
+            developer.log(
+              '[main] Navigated to task edit screen for rescheduling',
+            );
+          } catch (e) {
+            developer.log('[main] Navigation to task edit failed: $e');
+          }
+
+          return;
+        } else {
+          developer.log('[main] Task not found for ID: $simpleTaskId');
+        }
+      } else {
+        developer.log('[main] Could not parse task ID from payload: $payload');
+      }
       return;
     }
 
@@ -842,12 +904,12 @@ Future<void> _handleAlarmRingWithPriorityCheck(
         '  New: "${task.taskName}" - Base: ${task.taskPriority} (${task.priorityString}), Effective: $newPriority',
       );
 
-      // Suspend the new task if active task has HIGHER priority
-      // Higher priority value = more important, so active > new means suspend new task
+      // Show notification with actions if active task has HIGHER priority
+      // Higher priority value = more important, so active > new means show choices
       if (activePriority > newPriority) {
-        // Active task has higher priority - SUSPEND the new task without full alarm
+        // Active task has higher priority - show notification with choices
         developer.log(
-          '[main] ⏸️ Task "${task.taskName}" (priority $newPriority) suspended due to active task "${activeTask.taskName}" (priority $activePriority)',
+          '[main] ⏸️ Task "${task.taskName}" (priority $newPriority) triggered while higher priority task "${activeTask.taskName}" (priority $activePriority) is active',
         );
 
         // Stop the alarm sound immediately
@@ -859,28 +921,47 @@ Future<void> _handleAlarmRingWithPriorityCheck(
           await FlutterAlarmService().cancelForTaskId(task.id!);
         }
 
-        // Add to pending state (will retry in 5 minutes)
-        await taskTimerService.addToPending(task, const Duration(minutes: 5));
-
-        // Show suspension notification (with sound so user knows)
+        // Show notification with action buttons for user to decide
         await flutterLocalNotificationsPlugin.show(
-          99997,
-          'Task Suspended ⏸️',
-          '${task.taskName} has lower priority than "${activeTask.taskName}". It will remind you again in 5 minutes.',
-          const NotificationDetails(
+          alarmSettings.id,
+          'Task Reminder ⏰',
+          '${task.taskName} (Lower priority than active task "${activeTask.taskName}"). What would you like to do?',
+          NotificationDetails(
             android: AndroidNotificationDetails(
-              'timer_feedback',
-              'Timer Feedback',
-              channelDescription: 'Task suspension notifications',
-              importance: Importance.high,
+              'task_alarms',
+              'Task Alarms',
+              channelDescription: 'Time-based task alarms',
+              importance: Importance.max,
               priority: Priority.high,
+              category: AndroidNotificationCategory.alarm,
               playSound: true,
               enableVibration: true,
+              actions: <AndroidNotificationAction>[
+                const AndroidNotificationAction(
+                  'com.intelliboro.DO_NOW',
+                  'Do Now 🏃‍♂️',
+                  showsUserInterface: true,
+                  cancelNotification: true,
+                ),
+                const AndroidNotificationAction(
+                  'com.intelliboro.DO_LATER',
+                  'Snooze 5min ⏰',
+                  showsUserInterface: true,
+                  cancelNotification: true,
+                ),
+                const AndroidNotificationAction(
+                  'com.intelliboro.RESCHEDULE_LATER',
+                  'Reschedule 📅',
+                  showsUserInterface: true,
+                  cancelNotification: true,
+                ),
+              ],
             ),
           ),
+          payload: task.id.toString(),
         );
 
-        developer.log('[main] ✅ Task suspended and notification shown');
+        developer.log('[main] ✅ Notification shown with action choices');
         return;
       }
 
