@@ -883,9 +883,34 @@ Future<void> _handleAlarmRingWithPriorityCheck(
         developer.log('[main] ✅ Task suspended and notification shown');
         return;
       }
+
+      // New task has higher priority - pause current task and request switch
+      if (newPriority > activePriority) {
+        developer.log(
+          '[main] 🔄 Task "${task.taskName}" (priority $newPriority) has higher priority than "${activeTask.taskName}" (priority $activePriority) - requesting switch',
+        );
+
+        // Stop the alarm sound immediately
+        await Alarm.stop(alarmSettings.id);
+        AudioFocusGuard.instance.onAlarmStop(alarmSettings.id);
+
+        // Cancel the alarm from service so it doesn't re-ring
+        if (task.id != null) {
+          await FlutterAlarmService().cancelForTaskId(task.id!);
+        }
+
+        // Request switch to pause current task and show the switch dialog
+        // This matches the geofence task behavior
+        await taskTimerService.requestSwitch(task);
+
+        developer.log(
+          '[main] ✅ Switch requested for higher priority alarm task',
+        );
+        return;
+      }
     }
 
-    // No active task or this task has higher priority - show alarm notification
+    // No active task or equal priority - show alarm notification
     developer.log(
       '[main] ✅ Task has sufficient priority, showing alarm notification',
     );

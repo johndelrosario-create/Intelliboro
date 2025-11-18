@@ -193,10 +193,10 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
             AudioFocusGuard.instance.onAlarmStop(response.id);
           }
 
-          // Start the task (may return false if lower priority)
-          final started = await taskTimerService.startTask(task);
+          // Request switch to pause current task and show switch UI (matches geofence behavior)
+          final started = await taskTimerService.requestSwitch(task);
           developer.log(
-            '[main] Task start result for id=$simpleTaskId: $started',
+            '[main] Task switch result for id=$simpleTaskId: $started',
           );
 
           if (started) {
@@ -323,13 +323,8 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
         final highest = candidates.reduce(
           (a, b) => a.getEffectivePriority() > b.getEffectivePriority() ? a : b,
         );
-        // If this DO_NOW originated from a geofence payload, prefer strict priority
-        final isFromGeofence =
-            geofenceIds.isNotEmpty || payloadTaskIds.isNotEmpty;
-        final started = await taskTimerService.startTask(
-          highest,
-          strictPriority: isFromGeofence,
-        );
+        // Use requestSwitch to match geofence behavior (pauses current task immediately)
+        final started = await taskTimerService.requestSwitch(highest);
         developer.log(
           '[main] Task timer started: $started for ${highest.taskName}',
         );
@@ -440,11 +435,7 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
               developer.log(
                 '[main] DO_NOW fallback matched task by name: ${matched.taskName}',
               );
-              final started = await taskTimerService.startTask(
-                matched,
-                strictPriority:
-                    geofenceIds.isNotEmpty || payloadTaskIds.isNotEmpty,
-              );
+              final started = await taskTimerService.requestSwitch(matched);
               if (started) {
                 await flutterLocalNotificationsPlugin.show(
                   99999,
@@ -571,10 +562,7 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
             (a, b) =>
                 a.getEffectivePriority() > b.getEffectivePriority() ? a : b,
           );
-          await taskTimerService.startTask(
-            highestFallback,
-            strictPriority: geofenceIds.isNotEmpty || payloadTaskIds.isNotEmpty,
-          );
+          await taskTimerService.requestSwitch(highestFallback);
           try {
             await _navigateToActiveView(maxRetries: 5);
           } catch (e) {
@@ -920,11 +908,7 @@ void main() async {
                     );
                   }
 
-                  final started = await taskTimerService.startTask(
-                    task,
-                    // For alarm notifications, don't use strict priority as it affects UX
-                    strictPriority: false,
-                  );
+                  final started = await taskTimerService.requestSwitch(task);
                   developer.log(
                     '[main] Native launch started task id=$launchTaskId started=$started',
                   );
@@ -1073,10 +1057,7 @@ void main() async {
                       );
                     }
 
-                    final started = await taskTimerService.startTask(
-                      task,
-                      strictPriority: false,
-                    );
+                    final started = await taskTimerService.requestSwitch(task);
                     developer.log(
                       '[main] onLaunchAction started task id=$launchTaskId started=$started',
                     );
