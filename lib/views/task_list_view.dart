@@ -815,6 +815,9 @@ class _TaskListViewState extends State<TaskListView>
                             // Notify listeners to refresh
                             _taskTimerService.tasksChanged.value = true;
 
+                            // Immediately reload tasks to update the UI
+                            await _loadTasks();
+
                             if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
