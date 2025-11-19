@@ -283,7 +283,7 @@ Future<void> geofenceTriggered(
       developer.log(
         '[GeofenceCallback] Received EXIT event for geofence(s): ${params.geofences.map((g) => g.id).join(', ')}',
       );
-      
+
       // Reset deduplication state if the exited geofence matches the last triggered one
       if (_lastGeofenceTrigger != null) {
         final exitedIds = params.geofences.map((g) => g.id).toSet();
@@ -636,7 +636,7 @@ Future<void> geofenceTriggered(
       category: AndroidNotificationCategory.alarm,
       showWhen: true,
       autoCancel: false, // Persistent until user acts
-      ongoing: false, // Changed from true - ongoing can be delayed
+      ongoing: true, // Make geofence reminder notifications non-dismissible
       icon: '@mipmap/ic_launcher',
       styleInformation: const BigTextStyleInformation(''),
       fullScreenIntent: false, // Disabled - can cause delays on newer Android
@@ -659,7 +659,7 @@ Future<void> geofenceTriggered(
           'com.intelliboro.DO_LATER',
           'Do Later \u23f0',
           showsUserInterface: false,
-          cancelNotification: false,
+          cancelNotification: true,
         ),
       ],
     );
