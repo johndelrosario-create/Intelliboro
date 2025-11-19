@@ -1,16 +1,12 @@
 import 'package:flutter/foundation.dart' show debugPrint; // For debug prints
+import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'dart:async';
 
-enum LocationStatus {
-  granted,
-  denied,
-  permanentlyDenied,
-  disabled,
-}
+enum LocationStatus { granted, denied, permanentlyDenied, disabled }
 
 class LocationService {
   static const String _lastLocationLatKey = 'last_location_latitude';
@@ -49,7 +45,10 @@ class LocationService {
 
     return LocationStatus.granted;
   }
-  Future<bool> requestLocationPermission() async {
+
+  Future<bool> requestLocationPermission({
+    bool showBackgroundExplanation = true,
+  }) async {
     final locationPerm = await Permission.location.request();
     debugPrint("[LocationService] Initial permission status: $locationPerm");
 
@@ -67,24 +66,48 @@ class LocationService {
       return false;
     }
 
-    debugPrint("[LocationService] Final permission status: $locationPerm");
-    final backgroundLocationPerm = await Permission.locationAlways.request();
-    debugPrint(
-      "[LocationService] Background location permission status: $backgroundLocationPerm",
-    );
-
-    if (backgroundLocationPerm.isDenied) {
-      debugPrint("[LocationService] Background location permission denied.");
-      return false;
-    } else if (backgroundLocationPerm.isPermanentlyDenied) {
+    // If foreground location was granted, request background location
+    if (locationPerm.isGranted || locationPerm.isLimited) {
       debugPrint(
-        "[LocationService] Background location permission permanently denied. Opening app settings.",
+        "[LocationService] Foreground location granted, checking background permission",
       );
-      openAppSettings();
-      return false;
+
+      // Check if background permission is already granted
+      final currentBackgroundStatus = await Permission.locationAlways.status;
+      if (currentBackgroundStatus.isGranted) {
+        debugPrint("[LocationService] Background location already granted");
+        return true;
+      }
+
+      // On Android 10+ (API 29+), background location requires explicit user consent
+      // We should explain why before requesting
+      debugPrint("[LocationService] Requesting background location permission");
+
+      // Note: For a better UX, the calling code should show an explanation dialog
+      // before calling this method. The system dialog won't explain why you need it.
+      final backgroundLocationPerm = await Permission.locationAlways.request();
+      debugPrint(
+        "[LocationService] Background location permission status: $backgroundLocationPerm",
+      );
+
+      if (backgroundLocationPerm.isDenied) {
+        debugPrint(
+          "[LocationService] Background location permission denied - app will work with limited functionality",
+        );
+        // Don't return false - app can still work with foreground-only location
+        return true; // Return true since foreground is granted
+      } else if (backgroundLocationPerm.isPermanentlyDenied) {
+        debugPrint(
+          "[LocationService] Background location permission permanently denied. Opening app settings.",
+        );
+        openAppSettings();
+        return true; // Return true since foreground is granted
+      }
+
+      return backgroundLocationPerm.isGranted;
     }
 
-    return true;
+    return false;
   }
 
   Future<Position> getCurrentLocation() async {
@@ -437,6 +460,113 @@ class LocationService {
       debugPrint("[LocationService] Error checking tracking availability: $e");
       return false;
     }
+  }
+
+  /// Show explanation dialog for background location permission
+  /// Should be called before requestLocationPermission() for better UX
+  static Future<bool> showBackgroundLocationExplanation(
+    BuildContext context,
+  ) async {
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (BuildContext context) {
+            return AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.location_on, color: Colors.blue, size: 28),
+                  SizedBox(width: 12),
+                  Text('Background Location'),
+                ],
+              ),
+              content: const SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'This app needs background location access to:',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    SizedBox(height: 12),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.notifications_active,
+                          size: 20,
+                          color: Colors.orange,
+                        ),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Remind you about tasks when you arrive at or leave locations',
+                            style: TextStyle(fontSize: 14),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 8),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.my_location, size: 20, color: Colors.green),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Track location-based geofences even when the screen is off',
+                            style: TextStyle(fontSize: 14),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 8),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.battery_charging_full,
+                          size: 20,
+                          color: Colors.blue,
+                        ),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Uses battery-efficient geofencing (not continuous GPS)',
+                            style: TextStyle(fontSize: 14),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 16),
+                    Text(
+                      'On the next screen, please select "Allow all the time" for full functionality.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontStyle: FontStyle.italic,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Not Now'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Continue'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false;
   }
 
   /// Dispose resources
