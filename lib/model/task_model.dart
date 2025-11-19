@@ -116,6 +116,9 @@ class TaskModel {
     }
   }
 
+  /// Whether this task allows text-to-speech announcements (defaults to true)
+  bool get ttsEnabled => enableTts ?? true;
+
   /// Calculate effective priority based on user priority and urgency
   /// Urgency is calculated based on how close the task time is to now
   double getEffectivePriority() {

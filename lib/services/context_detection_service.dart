@@ -6,14 +6,7 @@ import 'package:intelliboro/services/text_to_speech_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Enumeration of context types that can trigger TTS notifications
-enum ContextType {
-  location,
-  time,
-  battery,
-  connectivity,
-  calendar,
-  manual
-}
+enum ContextType { location, time, battery, connectivity, calendar, manual }
 
 /// Context data structure
 class ContextData {
@@ -37,30 +30,33 @@ class ContextData {
 
 /// Service for detecting contexts and triggering appropriate TTS notifications
 class ContextDetectionService {
-  static final ContextDetectionService _instance = ContextDetectionService._internal();
+  static final ContextDetectionService _instance =
+      ContextDetectionService._internal();
   factory ContextDetectionService() => _instance;
   ContextDetectionService._internal();
 
   final TextToSpeechService _ttsService = TextToSpeechService();
-  
+
   // Context detection settings
   bool _isEnabled = true;
   bool _locationContextEnabled = true;
   bool _timeContextEnabled = true;
   bool _batteryContextEnabled = false;
   bool _connectivityContextEnabled = false;
-  
+
   // Context-specific settings
   int _batteryThreshold = 20; // Battery percentage threshold
-  Duration _timeContextWindow = const Duration(minutes: 5); // Time window for task reminders
-  
+  Duration _timeContextWindow = const Duration(
+    minutes: 5,
+  ); // Time window for task reminders
+
   // Stream controllers for context events
-  final StreamController<ContextData> _contextStreamController = 
+  final StreamController<ContextData> _contextStreamController =
       StreamController<ContextData>.broadcast();
-  
+
   // Timer for periodic context checks
   Timer? _contextTimer;
-  
+
   // Keys for SharedPreferences
   static const String _enabledKey = 'context_detection_enabled';
   static const String _locationContextKey = 'location_context_enabled';
@@ -75,15 +71,15 @@ class ContextDetectionService {
     try {
       // Load settings
       await _loadSettings();
-      
+
       // Initialize TTS service
       await _ttsService.init();
-      
+
       // Start context monitoring if enabled
       if (_isEnabled) {
         _startContextMonitoring();
       }
-      
+
       developer.log('[ContextDetectionService] Successfully initialized');
     } catch (e, stackTrace) {
       developer.log(
@@ -98,14 +94,15 @@ class ContextDetectionService {
   Future<void> _loadSettings() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      
+
       _isEnabled = prefs.getBool(_enabledKey) ?? true;
       _locationContextEnabled = prefs.getBool(_locationContextKey) ?? true;
       _timeContextEnabled = prefs.getBool(_timeContextKey) ?? true;
       _batteryContextEnabled = prefs.getBool(_batteryContextKey) ?? false;
-      _connectivityContextEnabled = prefs.getBool(_connectivityContextKey) ?? false;
+      _connectivityContextEnabled =
+          prefs.getBool(_connectivityContextKey) ?? false;
       _batteryThreshold = prefs.getInt(_batteryThresholdKey) ?? 20;
-      
+
       final timeWindowMinutes = prefs.getInt(_timeWindowKey) ?? 5;
       _timeContextWindow = Duration(minutes: timeWindowMinutes);
 
@@ -119,7 +116,7 @@ class ContextDetectionService {
   Future<void> _saveSettings() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      
+
       await prefs.setBool(_enabledKey, _isEnabled);
       await prefs.setBool(_locationContextKey, _locationContextEnabled);
       await prefs.setBool(_timeContextKey, _timeContextEnabled);
@@ -142,7 +139,7 @@ class ContextDetectionService {
       _checkBatteryContext();
       _checkConnectivityContext();
     });
-    
+
     developer.log('[ContextDetectionService] Context monitoring started');
   }
 
@@ -156,7 +153,7 @@ class ContextDetectionService {
   /// Check time-based context for tasks
   void _checkTimeContext() {
     if (!_timeContextEnabled) return;
-    
+
     // This would be integrated with your task repository to check for upcoming tasks
     // For now, this is a placeholder for the time context detection logic
     developer.log('[ContextDetectionService] Checking time context');
@@ -165,7 +162,7 @@ class ContextDetectionService {
   /// Check battery context
   void _checkBatteryContext() {
     if (!_batteryContextEnabled) return;
-    
+
     // Battery level checking would be implemented here
     // This is a placeholder for battery context detection
     developer.log('[ContextDetectionService] Checking battery context');
@@ -174,14 +171,18 @@ class ContextDetectionService {
   /// Check connectivity context
   void _checkConnectivityContext() {
     if (!_connectivityContextEnabled) return;
-    
+
     // Network connectivity checking would be implemented here
     // This is a placeholder for connectivity context detection
     developer.log('[ContextDetectionService] Checking connectivity context');
   }
 
   /// Manually trigger a context detection for a specific task
-  Future<void> triggerContextForTask(TaskModel task, ContextType contextType, {Map<String, dynamic>? metadata}) async {
+  Future<void> triggerContextForTask(
+    TaskModel task,
+    ContextType contextType, {
+    Map<String, dynamic>? metadata,
+  }) async {
     if (!_isEnabled) {
       developer.log('[ContextDetectionService] Context detection is disabled');
       return;
@@ -200,7 +201,9 @@ class ContextDetectionService {
       // Trigger TTS notification
       await _triggerTtsNotification(task, contextData);
 
-      developer.log('[ContextDetectionService] Context triggered for task: ${task.taskName}');
+      developer.log(
+        '[ContextDetectionService] Context triggered for task: ${task.taskName}',
+      );
     } catch (e, stackTrace) {
       developer.log(
         '[ContextDetectionService] Error triggering context for task: $e',
@@ -211,14 +214,27 @@ class ContextDetectionService {
   }
 
   /// Trigger TTS notification for a task based on context
-  Future<void> _triggerTtsNotification(TaskModel task, ContextData context) async {
+  Future<void> _triggerTtsNotification(
+    TaskModel task,
+    ContextData context,
+  ) async {
     try {
+      if (!task.ttsEnabled) {
+        developer.log(
+          '[ContextDetectionService] Skipping TTS for ${task.taskName} because task-level TTS is disabled',
+        );
+        return;
+      }
       String contextString = _getContextString(context.type);
       await _ttsService.speakTaskNotification(task.taskName, contextString);
-      
-      developer.log('[ContextDetectionService] TTS notification triggered for task: ${task.taskName} with context: ${context.type}');
+
+      developer.log(
+        '[ContextDetectionService] TTS notification triggered for task: ${task.taskName} with context: ${context.type}',
+      );
     } catch (e) {
-      developer.log('[ContextDetectionService] Error triggering TTS notification: $e');
+      developer.log(
+        '[ContextDetectionService] Error triggering TTS notification: $e',
+      );
     }
   }
 
@@ -259,21 +275,22 @@ class ContextDetectionService {
   }
 
   /// Handle geofence-triggered context (integration with existing geofence system)
-  Future<void> handleGeofenceContext(String taskName, String geofenceId, {Map<String, dynamic>? metadata}) async {
+  Future<void> handleGeofenceContext(
+    String taskName,
+    String geofenceId, {
+    Map<String, dynamic>? metadata,
+  }) async {
     if (!_locationContextEnabled) return;
 
     try {
       final contextData = ContextData(
         type: ContextType.location,
         description: 'Geofence context triggered',
-        metadata: {
-          'geofence_id': geofenceId,
-          ...?metadata,
-        },
+        metadata: {'geofence_id': geofenceId, ...?metadata},
       );
 
       _contextStreamController.add(contextData);
-      
+
       // Create a temporary task model for TTS
       final tempTask = TaskModel(
         taskName: taskName,
@@ -285,10 +302,14 @@ class ContextDetectionService {
       );
 
       await _triggerTtsNotification(tempTask, contextData);
-      
-      developer.log('[ContextDetectionService] Geofence context handled for task: $taskName');
+
+      developer.log(
+        '[ContextDetectionService] Geofence context handled for task: $taskName',
+      );
     } catch (e) {
-      developer.log('[ContextDetectionService] Error handling geofence context: $e');
+      developer.log(
+        '[ContextDetectionService] Error handling geofence context: $e',
+      );
     }
   }
 
@@ -313,51 +334,65 @@ class ContextDetectionService {
       _stopContextMonitoring();
     }
     await _saveSettings();
-    developer.log('[ContextDetectionService] Context detection enabled: $_isEnabled');
+    developer.log(
+      '[ContextDetectionService] Context detection enabled: $_isEnabled',
+    );
   }
 
   /// Enable or disable location context
   Future<void> setLocationContextEnabled(bool enabled) async {
     _locationContextEnabled = enabled;
     await _saveSettings();
-    developer.log('[ContextDetectionService] Location context enabled: $_locationContextEnabled');
+    developer.log(
+      '[ContextDetectionService] Location context enabled: $_locationContextEnabled',
+    );
   }
 
   /// Enable or disable time context
   Future<void> setTimeContextEnabled(bool enabled) async {
     _timeContextEnabled = enabled;
     await _saveSettings();
-    developer.log('[ContextDetectionService] Time context enabled: $_timeContextEnabled');
+    developer.log(
+      '[ContextDetectionService] Time context enabled: $_timeContextEnabled',
+    );
   }
 
   /// Enable or disable battery context
   Future<void> setBatteryContextEnabled(bool enabled) async {
     _batteryContextEnabled = enabled;
     await _saveSettings();
-    developer.log('[ContextDetectionService] Battery context enabled: $_batteryContextEnabled');
+    developer.log(
+      '[ContextDetectionService] Battery context enabled: $_batteryContextEnabled',
+    );
   }
 
   /// Enable or disable connectivity context
   Future<void> setConnectivityContextEnabled(bool enabled) async {
     _connectivityContextEnabled = enabled;
     await _saveSettings();
-    developer.log('[ContextDetectionService] Connectivity context enabled: $_connectivityContextEnabled');
+    developer.log(
+      '[ContextDetectionService] Connectivity context enabled: $_connectivityContextEnabled',
+    );
   }
 
   /// Set battery threshold
   Future<void> setBatteryThreshold(int threshold) async {
     if (threshold < 0 || threshold > 100) return;
-    
+
     _batteryThreshold = threshold;
     await _saveSettings();
-    developer.log('[ContextDetectionService] Battery threshold set to: $_batteryThreshold%');
+    developer.log(
+      '[ContextDetectionService] Battery threshold set to: $_batteryThreshold%',
+    );
   }
 
   /// Set time context window
   Future<void> setTimeContextWindow(Duration window) async {
     _timeContextWindow = window;
     await _saveSettings();
-    developer.log('[ContextDetectionService] Time context window set to: ${_timeContextWindow.inMinutes} minutes');
+    developer.log(
+      '[ContextDetectionService] Time context window set to: ${_timeContextWindow.inMinutes} minutes',
+    );
   }
 
   /// Dispose of resources

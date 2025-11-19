@@ -45,6 +45,9 @@ class GeofencingService {
   // Track active geofence notifications and their watchdog timers
   final Map<int, Timer> _notificationWatchdogs = {};
   final Map<int, Map<String, dynamic>> _activeNotifications = {};
+  final Map<int, DateTime> _suppressedNotificationIds = {};
+  final Map<int, DateTime> _suppressedTaskIds = {};
+  static const Duration _defaultTtsSuppressionWindow = Duration(seconds: 12);
 
   // Private internal constructor
   GeofencingService._internal();
@@ -155,6 +158,28 @@ class GeofencingService {
                 );
                 final String text = data['text'] as String? ?? '';
                 final String context = data['context'] as String? ?? 'location';
+                final bool allowTts = data['allowTts'] as bool? ?? true;
+                final int? requestNotificationId = _coerceInt(
+                  data['notificationId'],
+                );
+                final int? requestTaskId = _coerceInt(data['taskId']);
+
+                if (!allowTts) {
+                  developer.log(
+                    '[GeofencingService] Skipping TTS request because task disabled TTS',
+                  );
+                  return;
+                }
+
+                if (_isTtsSuppressed(
+                  notificationId: requestNotificationId,
+                  taskId: requestTaskId,
+                )) {
+                  developer.log(
+                    '[GeofencingService] Skipping TTS request because notification/task is suppressed',
+                  );
+                  return;
+                }
 
                 // Schedule TTS on next frame to ensure UI is ready
                 WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -382,21 +407,24 @@ class GeofencingService {
                     '[GeofencingService] Posted pending notification $newNotifId for tasks: $ids',
                   );
                   // Also try to trigger a brief TTS that indicates tasks were snoozed
-                  try {
-                    final tts = TextToSpeechService();
-                    await tts.init();
-                    if (await tts.isAvailable() && tts.isEnabled) {
-                      await tts.speakTaskNotification(
-                        ids.length == 1
-                            ? 'Task ${names} has been snoozed and added to your pending list.'
-                            : '${ids.length} tasks were snoozed and added to your pending list.',
-                        'snooze',
+                  final ttsEligible =
+                      candidates.where((task) => task.ttsEnabled).toList();
+                  if (ttsEligible.isNotEmpty) {
+                    try {
+                      final tts = TextToSpeechService();
+                      await tts.init();
+                      if (await tts.isAvailable() && tts.isEnabled) {
+                        final message =
+                            ttsEligible.length == 1
+                                ? 'Task ${ttsEligible.first.taskName} has been snoozed and added to your pending list.'
+                                : '${ttsEligible.length} tasks were snoozed and added to your pending list.';
+                        await tts.speakTaskNotification(message, 'snooze');
+                      }
+                    } catch (ttsErr) {
+                      developer.log(
+                        '[GeofencingService] TTS for snooze failed: $ttsErr',
                       );
                     }
-                  } catch (ttsErr) {
-                    developer.log(
-                      '[GeofencingService] TTS for snooze failed: $ttsErr',
-                    );
                   }
                 } catch (e) {
                   developer.log(
@@ -538,20 +566,27 @@ class GeofencingService {
                         payloadData,
                       );
 
-                      // TTS in UI isolate using task name so generator creates "You have task: <name>"
-                      try {
-                        final tts = TextToSpeechService();
-                        await tts.init();
-                        if (await tts.isAvailable() && tts.isEnabled) {
-                          await tts.speakTaskNotification(
-                            best.taskName,
-                            'location',
+                      final bool suppressImmediateTts = _isTtsSuppressed(
+                        notificationId: uiNotifId,
+                        taskId: best.id,
+                      );
+
+                      // TTS in UI isolate only when explicitly allowed and not suppressed
+                      if (!suppressImmediateTts && best.ttsEnabled) {
+                        try {
+                          final tts = TextToSpeechService();
+                          await tts.init();
+                          if (await tts.isAvailable() && tts.isEnabled) {
+                            await tts.speakTaskNotification(
+                              best.taskName,
+                              'location',
+                            );
+                          }
+                        } catch (ttsErr) {
+                          developer.log(
+                            '[GeofencingService] TTS failed: $ttsErr',
                           );
                         }
-                      } catch (ttsErr) {
-                        developer.log(
-                          '[GeofencingService] TTS failed: $ttsErr',
-                        );
                       }
                     }
                   } catch (e) {
@@ -1000,6 +1035,57 @@ class GeofencingService {
         '[GeofencingService] ⚠️ No watchdog found for notification $notificationId (may have been shown from background isolate)',
       );
     }
+  }
+
+  void suppressTtsForNotification(
+    int? notificationId, {
+    int? taskId,
+    Duration duration = _defaultTtsSuppressionWindow,
+  }) {
+    if (notificationId == null && taskId == null) return;
+    final expiry = DateTime.now().add(duration);
+    _purgeExpiredTtsSuppressions();
+    if (notificationId != null) {
+      _suppressedNotificationIds[notificationId] = expiry;
+    }
+    if (taskId != null) {
+      _suppressedTaskIds[taskId] = expiry;
+    }
+    developer.log(
+      '[GeofencingService] Suppressed TTS for notification=$notificationId taskId=$taskId until $expiry',
+    );
+  }
+
+  bool _isTtsSuppressed({int? notificationId, int? taskId}) {
+    _purgeExpiredTtsSuppressions();
+    final now = DateTime.now();
+    if (notificationId != null) {
+      final expiry = _suppressedNotificationIds[notificationId];
+      if (expiry != null) {
+        if (now.isBefore(expiry)) return true;
+        _suppressedNotificationIds.remove(notificationId);
+      }
+    }
+    if (taskId != null) {
+      final expiry = _suppressedTaskIds[taskId];
+      if (expiry != null) {
+        if (now.isBefore(expiry)) return true;
+        _suppressedTaskIds.remove(taskId);
+      }
+    }
+    return false;
+  }
+
+  void _purgeExpiredTtsSuppressions() {
+    final now = DateTime.now();
+    _suppressedNotificationIds.removeWhere((_, expiry) => expiry.isBefore(now));
+    _suppressedTaskIds.removeWhere((_, expiry) => expiry.isBefore(now));
+  }
+
+  int? _coerceInt(dynamic value) {
+    if (value is int) return value;
+    if (value is String) return int.tryParse(value);
+    return null;
   }
 
   /// Public method to stop watchdog for a notification (called when notification is dismissed)

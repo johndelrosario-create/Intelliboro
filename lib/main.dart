@@ -552,6 +552,11 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
             '[main] DO_LATER: Effective notification ID: $effectiveNotificationId',
           );
 
+          GeofencingService().suppressTtsForNotification(
+            effectiveNotificationId,
+            taskId: task.id,
+          );
+
           if (effectiveNotificationId != null) {
             // Stop the alarm if it's ringing
             try {

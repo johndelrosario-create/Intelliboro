@@ -54,7 +54,7 @@ class TaskTimerService extends ChangeNotifier {
   Future<void> loadPersistedPending() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      
+
       // Load default snooze duration
       final snoozeMinutes = prefs.getInt('default_snooze_duration');
       if (snoozeMinutes != null) {
@@ -364,14 +364,16 @@ class TaskTimerService extends ChangeNotifier {
           details,
           payload: payload,
         );
-        // Try to speak the same line via TTS
-        try {
-          final tts = TextToSpeechService();
-          await tts.init();
-          if (await tts.isAvailable() && tts.isEnabled) {
-            await tts.speakTaskNotification(speakLine, 'priority');
-          }
-        } catch (_) {}
+        // Try to speak the same line via TTS when allowed for this task
+        if (task.ttsEnabled) {
+          try {
+            final tts = TextToSpeechService();
+            await tts.init();
+            if (await tts.isAvailable() && tts.isEnabled) {
+              await tts.speakTaskNotification(speakLine, 'priority');
+            }
+          } catch (_) {}
+        }
       } catch (e) {
         developer.log(
           '[TaskTimerService] Failed to post switch notification: $e',
@@ -510,14 +512,16 @@ class TaskTimerService extends ChangeNotifier {
                 details,
                 payload: payload,
               );
-              // Try to speak the same line via TTS
-              try {
-                final tts = TextToSpeechService();
-                await tts.init();
-                if (await tts.isAvailable() && tts.isEnabled) {
-                  await tts.speakTaskNotification(speakLine, 'priority');
-                }
-              } catch (_) {}
+              // Try to speak the same line via TTS when allowed for this task
+              if (task.ttsEnabled) {
+                try {
+                  final tts = TextToSpeechService();
+                  await tts.init();
+                  if (await tts.isAvailable() && tts.isEnabled) {
+                    await tts.speakTaskNotification(speakLine, 'priority');
+                  }
+                } catch (_) {}
+              }
             } catch (e) {
               developer.log(
                 '[TaskTimerService] Failed to post switch notification: $e',
@@ -872,7 +876,7 @@ class TaskTimerService extends ChangeNotifier {
     try {
       // Calculate new time using the default snooze duration instead of fixed 1 hour
       final now = DateTime.now();
-      
+
       // If task has no time (geofence only), we can't reschedule it to a specific time
       // unless we convert it to a time-based task.
       // Per user request, we just dismiss the notification for these tasks.

@@ -993,20 +993,40 @@ Future<void> geofenceTriggered(
             );
             // Determine if this geofence's task was persisted as pending by background/UI
             int? geofenceTaskId;
+            bool? taskAllowsTts;
             try {
               final rows = await database.query(
                 'tasks',
-                columns: ['id'],
+                columns: ['id', 'enable_tts'],
                 where: 'geofence_id = ?',
                 whereArgs: [detail.id],
                 limit: 1,
               );
               if (rows.isNotEmpty) {
-                final idv = rows.first['id'];
+                final row = rows.first;
+                final idv = row['id'];
                 geofenceTaskId =
                     idv is int ? idv : int.tryParse(idv.toString());
+                final enableVal = row['enable_tts'];
+                if (enableVal != null) {
+                  final enableInt =
+                      enableVal is int
+                          ? enableVal
+                          : int.tryParse(enableVal.toString());
+                  if (enableInt != null) {
+                    taskAllowsTts = enableInt != 0;
+                  }
+                }
               }
             } catch (_) {}
+
+            final bool allowTtsForTask = taskAllowsTts ?? true;
+            if (!allowTtsForTask) {
+              developer.log(
+                '[GeofenceCallback] Skipping TTS for geofence ${detail.id} because task disabled TTS',
+              );
+              continue;
+            }
 
             final bool wasPersistedPending =
                 geofenceTaskId != null &&
@@ -1037,6 +1057,9 @@ Future<void> geofenceTriggered(
                   'type': 'tts_request',
                   'text': speakText,
                   'context': wasPersistedPending ? 'snooze' : 'location',
+                  'allowTts': allowTtsForTask,
+                  'notificationId': notificationId,
+                  'taskId': geofenceTaskId,
                 });
 
                 developer.log(

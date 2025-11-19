@@ -488,6 +488,12 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
       }
       final candidates = await _resolveCandidates();
       for (final t in candidates) {
+        GeofencingService().suppressTtsForNotification(
+          notificationIdFromPayload,
+          taskId: t.id,
+        );
+      }
+      for (final t in candidates) {
         await taskTimerService.rescheduleTaskLater(t);
         developer.log('[main] Rescheduled task: ${t.taskName}');
       }
