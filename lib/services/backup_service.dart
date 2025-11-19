@@ -209,12 +209,12 @@ class BackupService {
 
       if (result != null && result.files.isNotEmpty) {
         final file = result.files.first;
-        String? filePath = file.path;
+        final filePath = file.path;
 
         developer.log('[BackupService] Starting import process...');
 
         // Handle both file path and bytes for better compatibility
-        if (filePath != null) {
+        if (filePath != null && filePath.isNotEmpty) {
           // Direct file path available (most common case)
           await importFromFile(filePath);
         } else if (file.bytes != null) {

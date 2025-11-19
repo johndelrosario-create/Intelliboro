@@ -6,6 +6,7 @@ import 'package:intelliboro/models/download_progress.dart';
 import 'package:intelliboro/models/geofence_data.dart';
 import 'package:intelliboro/services/geofence_storage.dart';
 import 'package:intelliboro/services/location_service.dart';
+import 'package:intelliboro/services/offline_search_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
@@ -165,6 +166,10 @@ class OfflineMapService {
       developer.log(
         '[OfflineMapService] Hometown region (25km) cached for offline use and real-time tracking',
       );
+
+      // Optional: Pre-populate offline search cache
+      // This runs in background and won't block the download completion
+      _prePopulateSearchCache();
     } catch (e, st) {
       developer.log(
         '[OfflineMapService] ensureHomeRegion error: $e',
@@ -175,6 +180,26 @@ class OfflineMapService {
         DownloadProgress.error('Download failed: $e', 0, 0),
       );
     }
+  }
+
+  /// Pre-populate offline search cache in background
+  void _prePopulateSearchCache() {
+    Future.microtask(() async {
+      try {
+        developer.log(
+          '[OfflineMapService] Starting background search cache pre-population',
+        );
+        final offlineSearchService = OfflineSearchService();
+        await offlineSearchService.prePopulateCacheForHomeRegion();
+        developer.log(
+          '[OfflineMapService] Search cache pre-population completed',
+        );
+      } catch (e) {
+        developer.log(
+          '[OfflineMapService] Search cache pre-population failed (non-critical): $e',
+        );
+      }
+    });
   }
 
   /// Ensure an offline region around a geofence center.

@@ -14,6 +14,7 @@ import 'package:intelliboro/services/task_timer_service.dart';
 import 'package:intelliboro/services/notification_preferences_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intelliboro/services/mapbox_search_service.dart';
+import 'package:intelliboro/services/offline_search_service.dart';
 import 'package:intelliboro/widgets/location_warning_banner.dart';
 import 'package:intelliboro/widgets/map_location_warning_overlay.dart';
 import 'dart:async';
@@ -77,7 +78,7 @@ class _TaskCreationState extends State<TaskCreation> {
   List<SearchResult> _searchResults = [];
   bool _isSearching = false;
   bool _showSearchResults = false;
-  MapboxSearchService? _searchService;
+  OfflineSearchService? _searchService;
   Timer? _searchDebounceTimer;
 
   @override
@@ -104,7 +105,7 @@ class _TaskCreationState extends State<TaskCreation> {
 
     // Initialize search service if Mapbox is configured
     if (MapboxSearchService.isConfigured) {
-      _searchService = MapboxSearchService();
+      _searchService = OfflineSearchService();
       _searchFocusNode.addListener(_onSearchFocusChanged);
     }
 
