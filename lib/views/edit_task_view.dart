@@ -9,6 +9,8 @@ import 'package:intelliboro/services/notification_preferences_service.dart';
 import 'package:intelliboro/services/task_timer_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:intelliboro/widgets/location_warning_banner.dart';
+import 'package:intelliboro/widgets/map_location_warning_overlay.dart';
 
 class EditTaskView extends StatefulWidget {
   final String geofenceId;
@@ -265,70 +267,72 @@ class _EditTaskViewState extends State<EditTaskView> {
         return SizedBox(
           height: MediaQuery.of(context).size.height * 0.4,
           width: MediaQuery.of(context).size.width,
-          child: Stack(
-            children: [
-              MapWidget(
-                key: const ValueKey("edit_task_mapwidget"),
-                onMapCreated: _onMapCreatedEditView,
-                onLongTapListener: _mapViewModel.onLongTap,
-                onZoomListener: _mapViewModel.onZoom,
-              ),
-              if (!_mapViewModel.isMapReady ||
-                  (_isLoading && _originalGeofenceData == null))
-                const Center(child: CircularProgressIndicator()),
-              if (_mapViewModel.mapInitializationError != null)
-                Center(
-                  child: Card(
-                    color: Colors.red.shade50,
-                    margin: const EdgeInsets.all(24),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            'Map Error',
-                            style: Theme.of(context).textTheme.titleMedium
-                                ?.copyWith(color: Colors.red),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            _mapViewModel.mapInitializationError ?? '',
-                            style: const TextStyle(color: Colors.black87),
-                          ),
-                          const SizedBox(height: 8),
-                          ElevatedButton(
-                            onPressed: () async {
-                              await _mapViewModel.refreshSavedGeofences();
-                            },
-                            child: const Text('Retry'),
-                          ),
-                        ],
+          child: MapLocationWarningOverlay(
+            child: Stack(
+              children: [
+                MapWidget(
+                  key: const ValueKey("edit_task_mapwidget"),
+                  onMapCreated: _onMapCreatedEditView,
+                  onLongTapListener: _mapViewModel.onLongTap,
+                  onZoomListener: _mapViewModel.onZoom,
+                ),
+                if (!_mapViewModel.isMapReady ||
+                    (_isLoading && _originalGeofenceData == null))
+                  const Center(child: CircularProgressIndicator()),
+                if (_mapViewModel.mapInitializationError != null)
+                  Center(
+                    child: Card(
+                      color: Colors.red.shade50,
+                      margin: const EdgeInsets.all(24),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Map Error',
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(color: Colors.red),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _mapViewModel.mapInitializationError ?? '',
+                              style: const TextStyle(color: Colors.black87),
+                            ),
+                            const SizedBox(height: 8),
+                            ElevatedButton(
+                              onPressed: () async {
+                                await _mapViewModel.refreshSavedGeofences();
+                              },
+                              child: const Text('Retry'),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              if (_mapViewModel.selectedPoint != null)
-                Positioned(
-                  top: 10,
-                  left: 10,
-                  child: Chip(
-                    label: Text(
-                      _mapViewModel.selectedPoint!.coordinates.lat
-                                      .toStringAsFixed(3) ==
-                                  _originalGeofenceData?.latitude
-                                      .toStringAsFixed(3) &&
-                              _mapViewModel.selectedPoint!.coordinates.lng
-                                      .toStringAsFixed(3) ==
-                                  _originalGeofenceData?.longitude
-                                      .toStringAsFixed(3)
-                          ? 'Current Geofence Location'
-                          : 'New Geofence Location Selected',
+                if (_mapViewModel.selectedPoint != null)
+                  Positioned(
+                    top: 10,
+                    left: 10,
+                    child: Chip(
+                      label: Text(
+                        _mapViewModel.selectedPoint!.coordinates.lat
+                                        .toStringAsFixed(3) ==
+                                    _originalGeofenceData?.latitude
+                                        .toStringAsFixed(3) &&
+                                _mapViewModel.selectedPoint!.coordinates.lng
+                                        .toStringAsFixed(3) ==
+                                    _originalGeofenceData?.longitude
+                                        .toStringAsFixed(3)
+                            ? 'Current Geofence Location'
+                            : 'New Geofence Location Selected',
+                      ),
+                      backgroundColor: Colors.greenAccent,
                     ),
-                    backgroundColor: Colors.greenAccent,
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         );
       },
@@ -459,157 +463,171 @@ class _EditTaskViewState extends State<EditTaskView> {
                       ? const Center(
                         child: Text('Task data not available to edit.'),
                       )
-                      : SingleChildScrollView(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Form(
-                          key: _formKey,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: <Widget>[
-                              Text('Task Name', style: textTheme.titleMedium),
-                              const SizedBox(height: 8.0),
-                              TextFormField(
-                                controller: _taskNameController,
-                                decoration: const InputDecoration(
-                                  border: OutlineInputBorder(),
-                                  hintText: 'Enter task name',
-                                ),
-                                validator: (value) {
-                                  if (value == null || value.isEmpty) {
-                                    return 'Please enter a task name';
-                                  }
-                                  return null;
-                                },
-                              ),
-                              const SizedBox(height: 16),
-                              Card.filled(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(16),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Default Notification Sound (Android)',
-                                        style: textTheme.titleMedium,
+                      : Column(
+                        children: [
+                          const LocationWarningBanner(),
+                          Expanded(
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Form(
+                                key: _formKey,
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: <Widget>[
+                                    Text(
+                                      'Task Name',
+                                      style: textTheme.titleMedium,
+                                    ),
+                                    const SizedBox(height: 8.0),
+                                    TextFormField(
+                                      controller: _taskNameController,
+                                      decoration: const InputDecoration(
+                                        border: OutlineInputBorder(),
+                                        hintText: 'Enter task name',
                                       ),
-                                      const SizedBox(height: 8),
-                                      Container(
-                                        width: double.infinity,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          border: Border.all(
-                                            color: Colors.grey.shade300,
-                                          ),
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                        ),
-                                        child: DropdownButtonHideUnderline(
-                                          child: DropdownButton<String>(
-                                            value: _selectedSoundKey,
-                                            items:
-                                                NotificationPreferencesService.getAvailableSounds()
-                                                    .map(
-                                                      (sound) =>
-                                                          DropdownMenuItem<
-                                                            String
-                                                          >(
-                                                            value: sound['key'],
-                                                            child: Text(
-                                                              sound['name']!,
-                                                            ),
-                                                          ),
-                                                    )
-                                                    .toList(),
-                                            onChanged: (value) {
-                                              if (value != null) {
-                                                setState(() {
-                                                  _selectedSoundKey = value;
-                                                });
-                                              }
-                                            },
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      const Text(
-                                        'This sets the app default sound used for task reminders on Android.',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Align(
-                                        alignment: Alignment.centerLeft,
-                                        child: OutlinedButton.icon(
-                                          onPressed: () async {
-                                            try {
-                                              await openAppSettings();
-                                            } catch (_) {}
-                                          },
-                                          icon: const Icon(
-                                            Icons
-                                                .settings_applications_outlined,
-                                          ),
-                                          label: const Text(
-                                            'Open app notification settings',
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 24),
-                              // Snooze settings section
-                              _buildSnoozeSettingsSection(),
-                              const SizedBox(height: 24),
-                              Text(
-                                'Geofence Location & Radius',
-                                style: textTheme.titleMedium,
-                              ),
-                              const Text(
-                                'Long-press on the map to select a new location. Radius is fixed at 50m for now.',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                              const SizedBox(height: 8.0),
-                              _buildMapSection(),
-                              const SizedBox(height: 24),
-                              ElevatedButton(
-                                onPressed: _isLoading ? null : _saveTask,
-                                style: ElevatedButton.styleFrom(
-                                  minimumSize: const ui.Size(300, 50),
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 16.0,
-                                  ),
-                                ),
-                                child:
-                                    (_isLoading &&
-                                            _originalGeofenceData != null)
-                                        ? const SizedBox(
-                                          height: 24.0,
-                                          width: 24.0,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2.5,
-                                            valueColor:
-                                                AlwaysStoppedAnimation<Color>(
-                                                  Colors.white,
+                                      validator: (value) {
+                                        if (value == null || value.isEmpty) {
+                                          return 'Please enter a task name';
+                                        }
+                                        return null;
+                                      },
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Card.filled(
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(16),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              'Default Notification Sound (Android)',
+                                              style: textTheme.titleMedium,
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Container(
+                                              width: double.infinity,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 12,
+                                                    vertical: 4,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                border: Border.all(
+                                                  color: Colors.grey.shade300,
                                                 ),
-                                          ),
-                                        )
-                                        : const Text('Save Changes'),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                              ),
+                                              child: DropdownButtonHideUnderline(
+                                                child: DropdownButton<String>(
+                                                  value: _selectedSoundKey,
+                                                  items:
+                                                      NotificationPreferencesService.getAvailableSounds()
+                                                          .map(
+                                                            (
+                                                              sound,
+                                                            ) => DropdownMenuItem<
+                                                              String
+                                                            >(
+                                                              value:
+                                                                  sound['key'],
+                                                              child: Text(
+                                                                sound['name']!,
+                                                              ),
+                                                            ),
+                                                          )
+                                                          .toList(),
+                                                  onChanged: (value) {
+                                                    if (value != null) {
+                                                      setState(() {
+                                                        _selectedSoundKey =
+                                                            value;
+                                                      });
+                                                    }
+                                                  },
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 8),
+                                            const Text(
+                                              'This sets the app default sound used for task reminders on Android.',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.grey,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Align(
+                                              alignment: Alignment.centerLeft,
+                                              child: OutlinedButton.icon(
+                                                onPressed: () async {
+                                                  try {
+                                                    await openAppSettings();
+                                                  } catch (_) {}
+                                                },
+                                                icon: const Icon(
+                                                  Icons
+                                                      .settings_applications_outlined,
+                                                ),
+                                                label: const Text(
+                                                  'Open app notification settings',
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 24),
+                                    // Snooze settings section
+                                    _buildSnoozeSettingsSection(),
+                                    const SizedBox(height: 24),
+                                    Text(
+                                      'Geofence Location & Radius',
+                                      style: textTheme.titleMedium,
+                                    ),
+                                    const Text(
+                                      'Long-press on the map to select a new location. Radius is fixed at 50m for now.',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8.0),
+                                    _buildMapSection(),
+                                    const SizedBox(height: 24),
+                                    ElevatedButton(
+                                      onPressed: _isLoading ? null : _saveTask,
+                                      style: ElevatedButton.styleFrom(
+                                        minimumSize: const ui.Size(300, 50),
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 16.0,
+                                        ),
+                                      ),
+                                      child:
+                                          (_isLoading &&
+                                                  _originalGeofenceData != null)
+                                              ? const SizedBox(
+                                                height: 24.0,
+                                                width: 24.0,
+                                                child: CircularProgressIndicator(
+                                                  strokeWidth: 2.5,
+                                                  valueColor:
+                                                      AlwaysStoppedAnimation<
+                                                        Color
+                                                      >(Colors.white),
+                                                ),
+                                              )
+                                              : const Text('Save Changes'),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ],
+                            ),
                           ),
-                        ),
+                        ],
                       ))),
     );
   }

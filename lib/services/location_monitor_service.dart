@@ -21,6 +21,17 @@ class LocationMonitorService {
   bool _isLocationDisabledNotificationShowing = false;
   Timer? _notificationWatchdog;
 
+  // Stream controller for broadcasting location status changes to UI
+  final StreamController<bool> _locationStatusController =
+      StreamController<bool>.broadcast();
+
+  /// Stream of location enabled status (true = enabled, false = disabled)
+  Stream<bool> get locationStatusStream => _locationStatusController.stream;
+
+  /// Current location status (cached)
+  bool _isLocationEnabled = true;
+  bool get isLocationEnabled => _isLocationEnabled;
+
   /// Start monitoring location status changes
   Future<void> startMonitoring() async {
     if (_isMonitoring) {
@@ -99,6 +110,10 @@ class LocationMonitorService {
 
   /// Handle location status change
   Future<void> _handleLocationStatusChange(bool isEnabled) async {
+    // Update cached status and broadcast to UI
+    _isLocationEnabled = isEnabled;
+    _locationStatusController.add(isEnabled);
+
     if (isEnabled) {
       // Location is enabled - clear notification
       if (_isLocationDisabledNotificationShowing) {

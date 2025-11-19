@@ -7,6 +7,8 @@ import 'package:intelliboro/services/task_timer_service.dart';
 import 'package:intelliboro/services/location_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:intelliboro/widgets/location_warning_banner.dart';
+import 'package:intelliboro/widgets/map_location_warning_overlay.dart';
 
 class MapboxMapView extends StatefulWidget {
   const MapboxMapView({Key? key}) : super(key: key);
@@ -58,6 +60,7 @@ class _MapboxMapViewState extends State<MapboxMapView> {
     return Scaffold(
       body: Column(
         children: [
+          const LocationWarningBanner(),
           // Search bar
           Container(
             padding: const EdgeInsets.all(16.0),
@@ -143,77 +146,86 @@ class _MapboxMapViewState extends State<MapboxMapView> {
             child: ListenableBuilder(
               listenable: mapViewModel,
               builder: (context, child) {
-                return Stack(
-                  children: [
-                    MapWidget(
-                      key: ValueKey("mapwidget"),
-                      onMapCreated: mapViewModel.onMapCreated,
-                      onLongTapListener: mapViewModel.onLongTap,
-                      onZoomListener: mapViewModel.onZoom,
-                      onMapIdleListener: mapViewModel.onCameraIdle,
-                    ),
-                    if (!mapViewModel.isMapReady)
-                      const Center(child: CircularProgressIndicator()),
-                    if (mapViewModel.mapInitializationError != null)
-                      Center(
-                        child: Card(
-                          color: Colors.red.shade50,
-                          margin: const EdgeInsets.all(24),
-                          child: Padding(
-                            padding: const EdgeInsets.all(12.0),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  'Map Error',
-                                  style: Theme.of(context).textTheme.titleMedium
-                                      ?.copyWith(color: Colors.red),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  mapViewModel.mapInitializationError ?? '',
-                                  style: const TextStyle(color: Colors.black87),
-                                ),
-                                const SizedBox(height: 8),
-                                ElevatedButton(
-                                  onPressed: () async {
-                                    // Retry by reloading saved geofences and re-running portions of setup
-                                    await mapViewModel.refreshSavedGeofences();
-                                  },
-                                  child: const Text('Retry'),
-                                ),
-                              ],
+                return MapLocationWarningOverlay(
+                  child: Stack(
+                    children: [
+                      MapWidget(
+                        key: ValueKey("mapwidget"),
+                        onMapCreated: mapViewModel.onMapCreated,
+                        onLongTapListener: mapViewModel.onLongTap,
+                        onZoomListener: mapViewModel.onZoom,
+                        onMapIdleListener: mapViewModel.onCameraIdle,
+                      ),
+                      if (!mapViewModel.isMapReady)
+                        const Center(child: CircularProgressIndicator()),
+                      if (mapViewModel.mapInitializationError != null)
+                        Center(
+                          child: Card(
+                            color: Colors.red.shade50,
+                            margin: const EdgeInsets.all(24),
+                            child: Padding(
+                              padding: const EdgeInsets.all(12.0),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Map Error',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(color: Colors.red),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    mapViewModel.mapInitializationError ?? '',
+                                    style: const TextStyle(
+                                      color: Colors.black87,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  ElevatedButton(
+                                    onPressed: () async {
+                                      // Retry by reloading saved geofences and re-running portions of setup
+                                      await mapViewModel
+                                          .refreshSavedGeofences();
+                                    },
+                                    child: const Text('Retry'),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
+
+                      // Floating action button for user location
+                      Positioned(
+                        bottom: 16,
+                        right: 16,
+                        child: FloatingActionButton(
+                          mini: true,
+                          onPressed: () async {
+                            final success =
+                                await mapViewModel.flyToUserLocation();
+                            if (!success && mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Unable to get current location',
+                                  ),
+                                  duration: Duration(seconds: 2),
+                                ),
+                              );
+                            }
+                          },
+                          child: const Icon(Icons.my_location),
+                        ),
                       ),
 
-                    // Floating action button for user location
-                    Positioned(
-                      bottom: 16,
-                      right: 16,
-                      child: FloatingActionButton(
-                        mini: true,
-                        onPressed: () async {
-                          final success =
-                              await mapViewModel.flyToUserLocation();
-                          if (!success && mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Unable to get current location'),
-                                duration: Duration(seconds: 2),
-                              ),
-                            );
-                          }
-                        },
-                        child: const Icon(Icons.my_location),
-                      ),
-                    ),
-
-                    // Location warning overlay
-                    if (mapViewModel.locationStatus != LocationStatus.granted)
-                      _buildLocationWarningOverlay(context),
-                  ],
+                      // Location warning overlay
+                      if (mapViewModel.locationStatus != LocationStatus.granted)
+                        _buildLocationWarningOverlay(context),
+                    ],
+                  ),
                 );
               },
             ),

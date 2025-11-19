@@ -14,6 +14,8 @@ import 'package:intelliboro/services/task_timer_service.dart';
 import 'package:intelliboro/services/notification_preferences_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intelliboro/services/mapbox_search_service.dart';
+import 'package:intelliboro/widgets/location_warning_banner.dart';
+import 'package:intelliboro/widgets/map_location_warning_overlay.dart';
 import 'dart:async';
 
 class TaskCreation extends StatefulWidget {
@@ -697,84 +699,39 @@ class _TaskCreationState extends State<TaskCreation> {
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(11),
-                child: Stack(
-                  children: [
-                    MapWidget(
-                      key: const ValueKey("embedded_mapwidget"),
-                      onMapCreated: _mapViewModel.onMapCreated,
-                      onLongTapListener: _mapViewModel.onLongTap,
-                      onZoomListener: _mapViewModel.onZoom,
-                      onMapIdleListener: _mapViewModel.onCameraIdle,
-                      // ScaleGestureRecognizer handles both panning and pinch-to-zoom
-                      gestureRecognizers:
-                          <Factory<OneSequenceGestureRecognizer>>{
-                            Factory<ScaleGestureRecognizer>(
-                              () => ScaleGestureRecognizer(),
-                            ),
-                            Factory<EagerGestureRecognizer>(
-                              () => EagerGestureRecognizer(),
-                            ),
-                          },
-                    ),
-                    if (!_mapViewModel.isMapReady)
-                      const Center(child: CircularProgressIndicator()),
-
-                    // Search UI - only show if search service is available
-                    if (_searchService != null)
-                      Positioned(
-                        top: 10,
-                        left: 10,
-                        right: 80, // Leave space for the "Saved" indicator
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(8),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black26,
-                                    blurRadius: 4,
-                                    offset: Offset(0, 2),
-                                  ),
-                                ],
+                child: MapLocationWarningOverlay(
+                  child: Stack(
+                    children: [
+                      MapWidget(
+                        key: const ValueKey("embedded_mapwidget"),
+                        onMapCreated: _mapViewModel.onMapCreated,
+                        onLongTapListener: _mapViewModel.onLongTap,
+                        onZoomListener: _mapViewModel.onZoom,
+                        onMapIdleListener: _mapViewModel.onCameraIdle,
+                        // ScaleGestureRecognizer handles both panning and pinch-to-zoom
+                        gestureRecognizers:
+                            <Factory<OneSequenceGestureRecognizer>>{
+                              Factory<ScaleGestureRecognizer>(
+                                () => ScaleGestureRecognizer(),
                               ),
-                              child: TextField(
-                                controller: _searchController,
-                                focusNode: _searchFocusNode,
-                                onChanged: _onSearchChanged,
-                                decoration: InputDecoration(
-                                  hintText: 'Search for places...',
-                                  prefixIcon: Icon(Icons.search),
-                                  suffixIcon:
-                                      _isSearching
-                                          ? SizedBox(
-                                            width: 20,
-                                            height: 20,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          )
-                                          : (_searchController.text.isNotEmpty
-                                              ? IconButton(
-                                                icon: Icon(Icons.clear),
-                                                onPressed: _clearSearch,
-                                              )
-                                              : null),
-                                  border: InputBorder.none,
-                                  contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 12,
-                                  ),
-                                ),
+                              Factory<EagerGestureRecognizer>(
+                                () => EagerGestureRecognizer(),
                               ),
-                            ),
+                            },
+                      ),
+                      if (!_mapViewModel.isMapReady)
+                        const Center(child: CircularProgressIndicator()),
 
-                            // Search results dropdown
-                            if (_showSearchResults && _searchResults.isNotEmpty)
+                      // Search UI - only show if search service is available
+                      if (_searchService != null)
+                        Positioned(
+                          top: 10,
+                          left: 10,
+                          right: 80, // Leave space for the "Saved" indicator
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
                               Container(
-                                margin: EdgeInsets.only(top: 4),
                                 decoration: BoxDecoration(
                                   color: Colors.white,
                                   borderRadius: BorderRadius.circular(8),
@@ -786,71 +743,120 @@ class _TaskCreationState extends State<TaskCreation> {
                                     ),
                                   ],
                                 ),
-                                constraints: BoxConstraints(maxHeight: 200),
-                                child: ListView.builder(
-                                  shrinkWrap: true,
-                                  itemCount: _searchResults.length,
-                                  itemBuilder: (context, index) {
-                                    final result = _searchResults[index];
-                                    return ListTile(
-                                      leading: Icon(
-                                        Icons.location_on,
-                                        color: Colors.blue,
-                                      ),
-                                      title: Text(
-                                        result.name,
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                      subtitle: Text(
-                                        result.fullName,
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey[600],
-                                        ),
-                                      ),
-                                      onTap: () => _selectSearchResult(result),
-                                      dense: true,
-                                    );
-                                  },
+                                child: TextField(
+                                  controller: _searchController,
+                                  focusNode: _searchFocusNode,
+                                  onChanged: _onSearchChanged,
+                                  decoration: InputDecoration(
+                                    hintText: 'Search for places...',
+                                    prefixIcon: Icon(Icons.search),
+                                    suffixIcon:
+                                        _isSearching
+                                            ? SizedBox(
+                                              width: 20,
+                                              height: 20,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            )
+                                            : (_searchController.text.isNotEmpty
+                                                ? IconButton(
+                                                  icon: Icon(Icons.clear),
+                                                  onPressed: _clearSearch,
+                                                )
+                                                : null),
+                                    border: InputBorder.none,
+                                    contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 12,
+                                    ),
+                                  ),
                                 ),
                               ),
-                          ],
-                        ),
-                      ),
 
-                    if (_mapViewModel.selectedPoint != null)
+                              // Search results dropdown
+                              if (_showSearchResults &&
+                                  _searchResults.isNotEmpty)
+                                Container(
+                                  margin: EdgeInsets.only(top: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black26,
+                                        blurRadius: 4,
+                                        offset: Offset(0, 2),
+                                      ),
+                                    ],
+                                  ),
+                                  constraints: BoxConstraints(maxHeight: 200),
+                                  child: ListView.builder(
+                                    shrinkWrap: true,
+                                    itemCount: _searchResults.length,
+                                    itemBuilder: (context, index) {
+                                      final result = _searchResults[index];
+                                      return ListTile(
+                                        leading: Icon(
+                                          Icons.location_on,
+                                          color: Colors.blue,
+                                        ),
+                                        title: Text(
+                                          result.name,
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                        subtitle: Text(
+                                          result.fullName,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.grey[600],
+                                          ),
+                                        ),
+                                        onTap:
+                                            () => _selectSearchResult(result),
+                                        dense: true,
+                                      );
+                                    },
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+
+                      if (_mapViewModel.selectedPoint != null)
+                        Positioned(
+                          bottom: 10,
+                          left: 10,
+                          child: Chip(
+                            label: Text('Location Selected for Geofence'),
+                            backgroundColor: Colors.greenAccent,
+                          ),
+                        ),
                       Positioned(
-                        bottom: 10,
-                        left: 10,
-                        child: Chip(
-                          label: Text('Location Selected for Geofence'),
-                          backgroundColor: Colors.greenAccent,
-                        ),
-                      ),
-                    Positioned(
-                      top: 10,
-                      right: 10,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.black54,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          'Saved: ${_mapViewModel.savedGeofences.length}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
+                        top: 10,
+                        right: 10,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            'Saved: ${_mapViewModel.savedGeofences.length}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1069,255 +1075,274 @@ class _TaskCreationState extends State<TaskCreation> {
           icon: const Icon(Icons.arrow_back),
         ),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Task Details', style: textTheme.headlineMedium),
-              const SizedBox(height: 16.0),
-              _buildTextField(),
-              const SizedBox(height: 16.0),
-              _buildPrioritySelector(),
-              const SizedBox(height: 16.0),
-              _buildRecurringSelector(),
-              const SizedBox(height: 16.0),
-              _buildSnoozeSettingsSection(),
-              const SizedBox(height: 16.0),
-              _buildNotificationSoundSelector(),
-              const SizedBox(height: 16.0),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextButton.icon(
-                      icon: const Icon(Icons.calendar_today),
-                      onPressed: () => _selectDate(context),
-                      label: Text(formatDate(selectedDate)),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextButton.icon(
-                      icon: const Icon(Icons.access_time),
-                      onPressed: () => _selectTime(context),
-                      label: Text(formatTimeOfDay(selectedTime)),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16.0),
-              if (widget.showMap) ...[
-                _buildGeofenceSelector(),
-                const SizedBox(height: 16.0),
-                if (_selectedGeofenceId == null) _buildMapSection(),
-              ] else
-                _buildMapDisabled(),
-              const SizedBox(height: 24.0),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                ),
-                onPressed: () async {
-                  final taskName = _nameController.text;
-                  debugPrint(
-                    "[CreateTaskView] Task name being sent to ViewModel: '$taskName'",
-                  );
-                  if (taskName.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Please enter a task name.'),
-                      ),
-                    );
-                    return;
-                  }
-
-                  // Determine the geofence ID to use (if any)
-                  String? geofenceIdForTask = _selectedGeofenceId;
-                  debugPrint(
-                    '[CreateTaskView] geofenceIdForTask: $geofenceIdForTask',
-                  );
-
-                  // Validate that either date/time OR geofence is provided
-                  final hasDateTime =
-                      selectedDate != null || selectedTime != null;
-                  final hasGeofence =
-                      geofenceIdForTask != null ||
-                      _mapViewModel.selectedPoint != null;
-
-                  debugPrint(
-                    '[CreateTaskView] hasDateTime: $hasDateTime, hasGeofence: $hasGeofence (selectedGeofenceId: $geofenceIdForTask, selectedPoint: ${_mapViewModel.selectedPoint})',
-                  );
-
-                  if (!hasDateTime && !hasGeofence) {
-                    showDialog(
-                      context: context,
-                      builder:
-                          (context) => AlertDialog(
-                            title: const Text('Task Timing Required'),
-                            content: const Text(
-                              'Every task needs either:\n\n'
-                              '• A specific date and/or time (for time-based reminders)\n'
-                              'OR\n'
-                              '• A geofence location (for location-based reminders)\n\n'
-                              'Please set one of these options to continue.',
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.of(context).pop(),
-                                child: const Text('OK'),
-                              ),
-                            ],
+      body: Column(
+        children: [
+          const LocationWarningBanner(),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text('Task Details', style: textTheme.headlineMedium),
+                    const SizedBox(height: 16.0),
+                    _buildTextField(),
+                    const SizedBox(height: 16.0),
+                    _buildPrioritySelector(),
+                    const SizedBox(height: 16.0),
+                    _buildRecurringSelector(),
+                    const SizedBox(height: 16.0),
+                    _buildSnoozeSettingsSection(),
+                    const SizedBox(height: 16.0),
+                    _buildNotificationSoundSelector(),
+                    const SizedBox(height: 16.0),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton.icon(
+                            icon: const Icon(Icons.calendar_today),
+                            onPressed: () => _selectDate(context),
+                            label: Text(formatDate(selectedDate)),
                           ),
-                    );
-                    return;
-                  }
-
-                  // Persist default notification sound preference
-                  try {
-                    await NotificationPreferencesService().setDefaultSound(
-                      _selectedSoundKey,
-                    );
-                  } catch (_) {}
-
-                  // Create or update the task
-                  if (widget.initialTask == null) {
-                    await TaskRepository().insertTask(
-                      TaskModel(
-                        taskName: taskName,
-                        taskPriority: selectedPriority,
-                        taskTime:
-                            selectedTime, // Only set if explicitly selected
-                        taskDate:
-                            selectedDate ??
-                            DateTime.now(), // Default to today if not selected
-                        isRecurring:
-                            selectedRecurringPattern.type != RecurringType.none,
-                        recurringPattern:
-                            selectedRecurringPattern.type != RecurringType.none
-                                ? selectedRecurringPattern
-                                : null,
-                        isCompleted: false,
-                        geofenceId: geofenceIdForTask,
-                        notificationSound: _taskNotificationSound,
-                        enableTts: _enableTts,
-                      ),
-                    );
-
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Task "$taskName" created.')),
-                      );
-                    }
-                  } else {
-                    // Update existing task
-                    final existing = widget.initialTask!;
-                    final updated = existing.copyWith(
-                      taskName: taskName,
-                      taskPriority: selectedPriority,
-                      taskTime: selectedTime ?? existing.taskTime,
-                      taskDate: selectedDate ?? existing.taskDate,
-                      isRecurring:
-                          selectedRecurringPattern.type != RecurringType.none,
-                      recurringPattern:
-                          selectedRecurringPattern.type != RecurringType.none
-                              ? selectedRecurringPattern
-                              : null,
-                      isCompleted: existing.isCompleted,
-                      geofenceId: geofenceIdForTask ?? existing.geofenceId,
-                      notificationSound: _taskNotificationSound,
-                      enableTts: _enableTts,
-                    );
-                    await TaskRepository().updateTask(updated);
-                    // Notify listeners that tasks changed
-                    TaskTimerService().tasksChanged.value = true;
-
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Task "$taskName" updated.')),
-                      );
-                    }
-                  }
-
-                  // Handle geofence creation or association
-                  if (widget.showMap) {
-                    if (_selectedGeofenceId != null) {
-                      // Task is already associated with the existing geofence via geofenceId
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              'Task associated with existing geofence.',
-                            ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextButton.icon(
+                            icon: const Icon(Icons.access_time),
+                            onPressed: () => _selectTime(context),
+                            label: Text(formatTimeOfDay(selectedTime)),
                           ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16.0),
+                    if (widget.showMap) ...[
+                      _buildGeofenceSelector(),
+                      const SizedBox(height: 16.0),
+                      if (_selectedGeofenceId == null) _buildMapSection(),
+                    ] else
+                      _buildMapDisabled(),
+                    const SizedBox(height: 24.0),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                      onPressed: () async {
+                        final taskName = _nameController.text;
+                        debugPrint(
+                          "[CreateTaskView] Task name being sent to ViewModel: '$taskName'",
                         );
-                      }
-                    } else if (_mapViewModel.selectedPoint != null) {
-                      try {
-                        final createdGeofenceId = await _mapViewModel
-                            .createGeofenceAtSelectedPoint(
-                              context,
+                        if (taskName.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Please enter a task name.'),
+                            ),
+                          );
+                          return;
+                        }
+
+                        // Determine the geofence ID to use (if any)
+                        String? geofenceIdForTask = _selectedGeofenceId;
+                        debugPrint(
+                          '[CreateTaskView] geofenceIdForTask: $geofenceIdForTask',
+                        );
+
+                        // Validate that either date/time OR geofence is provided
+                        final hasDateTime =
+                            selectedDate != null || selectedTime != null;
+                        final hasGeofence =
+                            geofenceIdForTask != null ||
+                            _mapViewModel.selectedPoint != null;
+
+                        debugPrint(
+                          '[CreateTaskView] hasDateTime: $hasDateTime, hasGeofence: $hasGeofence (selectedGeofenceId: $geofenceIdForTask, selectedPoint: ${_mapViewModel.selectedPoint})',
+                        );
+
+                        if (!hasDateTime && !hasGeofence) {
+                          showDialog(
+                            context: context,
+                            builder:
+                                (context) => AlertDialog(
+                                  title: const Text('Task Timing Required'),
+                                  content: const Text(
+                                    'Every task needs either:\n\n'
+                                    '• A specific date and/or time (for time-based reminders)\n'
+                                    'OR\n'
+                                    '• A geofence location (for location-based reminders)\n\n'
+                                    'Please set one of these options to continue.',
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed:
+                                          () => Navigator.of(context).pop(),
+                                      child: const Text('OK'),
+                                    ),
+                                  ],
+                                ),
+                          );
+                          return;
+                        }
+
+                        // Persist default notification sound preference
+                        try {
+                          await NotificationPreferencesService()
+                              .setDefaultSound(_selectedSoundKey);
+                        } catch (_) {}
+
+                        // Create or update the task
+                        if (widget.initialTask == null) {
+                          await TaskRepository().insertTask(
+                            TaskModel(
                               taskName: taskName,
-                            );
-
-                        // Set the newly created geofence as selected
-                        if (createdGeofenceId != null) {
-                          debugPrint(
-                            '[CreateTaskView] Setting _selectedGeofenceId to: $createdGeofenceId',
+                              taskPriority: selectedPriority,
+                              taskTime:
+                                  selectedTime, // Only set if explicitly selected
+                              taskDate:
+                                  selectedDate ??
+                                  DateTime.now(), // Default to today if not selected
+                              isRecurring:
+                                  selectedRecurringPattern.type !=
+                                  RecurringType.none,
+                              recurringPattern:
+                                  selectedRecurringPattern.type !=
+                                          RecurringType.none
+                                      ? selectedRecurringPattern
+                                      : null,
+                              isCompleted: false,
+                              geofenceId: geofenceIdForTask,
+                              notificationSound: _taskNotificationSound,
+                              enableTts: _enableTts,
+                            ),
                           );
-                          await _loadGeofences();
-                          if (!mounted) return;
-                          setState(() {
-                            _selectedGeofenceId = createdGeofenceId;
-                          });
-                        } else {
-                          debugPrint(
-                            '[CreateTaskView] Warning: createGeofenceAtSelectedPoint returned null',
-                          );
-                        }
 
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                'New geofence created for "$taskName".',
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Task "$taskName" created.'),
                               ),
-                            ),
+                            );
+                          }
+                        } else {
+                          // Update existing task
+                          final existing = widget.initialTask!;
+                          final updated = existing.copyWith(
+                            taskName: taskName,
+                            taskPriority: selectedPriority,
+                            taskTime: selectedTime ?? existing.taskTime,
+                            taskDate: selectedDate ?? existing.taskDate,
+                            isRecurring:
+                                selectedRecurringPattern.type !=
+                                RecurringType.none,
+                            recurringPattern:
+                                selectedRecurringPattern.type !=
+                                        RecurringType.none
+                                    ? selectedRecurringPattern
+                                    : null,
+                            isCompleted: existing.isCompleted,
+                            geofenceId:
+                                geofenceIdForTask ?? existing.geofenceId,
+                            notificationSound: _taskNotificationSound,
+                            enableTts: _enableTts,
                           );
-                        }
-                      } catch (e) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Error creating geofence: $e'),
-                            ),
-                          );
-                        }
-                      }
-                    }
-                  }
+                          await TaskRepository().updateTask(updated);
+                          // Notify listeners that tasks changed
+                          TaskTimerService().tasksChanged.value = true;
 
-                  if (context.mounted) {
-                    Navigator.pop(context);
-                  }
-                },
-                child: ListenableBuilder(
-                  listenable: _mapViewModel,
-                  builder: (context, child) {
-                    final buttonText =
-                        (widget.showMap && _mapViewModel.selectedPoint != null)
-                            ? "Create Task & Geofence"
-                            : "Create Task";
-                    return Text(
-                      buttonText,
-                      style: const TextStyle(fontSize: 16),
-                    );
-                  },
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Task "$taskName" updated.'),
+                              ),
+                            );
+                          }
+                        }
+
+                        // Handle geofence creation or association
+                        if (widget.showMap) {
+                          if (_selectedGeofenceId != null) {
+                            // Task is already associated with the existing geofence via geofenceId
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Task associated with existing geofence.',
+                                  ),
+                                ),
+                              );
+                            }
+                          } else if (_mapViewModel.selectedPoint != null) {
+                            try {
+                              final createdGeofenceId = await _mapViewModel
+                                  .createGeofenceAtSelectedPoint(
+                                    context,
+                                    taskName: taskName,
+                                  );
+
+                              // Set the newly created geofence as selected
+                              if (createdGeofenceId != null) {
+                                debugPrint(
+                                  '[CreateTaskView] Setting _selectedGeofenceId to: $createdGeofenceId',
+                                );
+                                await _loadGeofences();
+                                if (!mounted) return;
+                                setState(() {
+                                  _selectedGeofenceId = createdGeofenceId;
+                                });
+                              } else {
+                                debugPrint(
+                                  '[CreateTaskView] Warning: createGeofenceAtSelectedPoint returned null',
+                                );
+                              }
+
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'New geofence created for "$taskName".',
+                                    ),
+                                  ),
+                                );
+                              }
+                            } catch (e) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'Error creating geofence: $e',
+                                    ),
+                                  ),
+                                );
+                              }
+                            }
+                          }
+                        }
+
+                        if (context.mounted) {
+                          Navigator.pop(context);
+                        }
+                      },
+                      child: ListenableBuilder(
+                        listenable: _mapViewModel,
+                        builder: (context, child) {
+                          final buttonText =
+                              (widget.showMap &&
+                                      _mapViewModel.selectedPoint != null)
+                                  ? "Create Task & Geofence"
+                                  : "Create Task";
+                          return Text(
+                            buttonText,
+                            style: const TextStyle(fontSize: 16),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
