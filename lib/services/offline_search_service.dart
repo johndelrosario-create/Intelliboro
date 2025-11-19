@@ -78,10 +78,8 @@ class OfflineSearchService {
           limit: limit,
         );
 
-        // Cache the results for offline use
-        if (onlineResults.isNotEmpty) {
-          await _cacheSearchResults(onlineResults);
-        }
+        // Note: Don't cache search suggestions here because they don't have coordinates
+        // Results will be cached when retrievePlace() is called with full details
 
         developer.log(
           '[OfflineSearchService] Found ${onlineResults.length} results online',
@@ -233,6 +231,7 @@ class OfflineSearchService {
   }
 
   /// Cache search results for offline use
+  /// Only caches results with valid coordinates (not 0.0, 0.0)
   Future<void> _cacheSearchResults(List<SearchResult> results) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -243,8 +242,21 @@ class OfflineSearchService {
       for (final result in existingCache) {
         resultMap[result.id] = result;
       }
+
+      // Only add results with valid coordinates
+      int skippedCount = 0;
       for (final result in results) {
-        resultMap[result.id] = result;
+        if (result.latitude != 0.0 || result.longitude != 0.0) {
+          resultMap[result.id] = result;
+        } else {
+          skippedCount++;
+        }
+      }
+
+      if (skippedCount > 0) {
+        developer.log(
+          '[OfflineSearchService] Skipped caching $skippedCount results without coordinates',
+        );
       }
 
       // Limit cache size (keep most recent)
@@ -447,7 +459,11 @@ class OfflineSearchService {
         final searchService = MapboxSearchService();
         final result = await searchService.retrievePlace(id);
         if (result != null) {
+          // Cache the full result with coordinates for offline use
           await _cacheSearchResults([result]);
+          developer.log(
+            '[OfflineSearchService] Retrieved and cached: ${result.name} at (${result.latitude}, ${result.longitude})',
+          );
           return result;
         }
       } catch (e) {

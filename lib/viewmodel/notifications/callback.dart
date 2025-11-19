@@ -278,12 +278,30 @@ Future<void> geofenceTriggered(
       return;
     }
 
+    // Handle exit events to reset deduplication state
+    if (params.event == native_geofence.GeofenceEvent.exit) {
+      developer.log(
+        '[GeofenceCallback] Received EXIT event for geofence(s): ${params.geofences.map((g) => g.id).join(', ')}',
+      );
+      
+      // Reset deduplication state if the exited geofence matches the last triggered one
+      if (_lastGeofenceTrigger != null) {
+        final exitedIds = params.geofences.map((g) => g.id).toSet();
+        if (exitedIds.contains(_lastGeofenceTrigger!.geofenceId)) {
+          developer.log(
+            '[GeofenceCallback] Clearing deduplication state for geofence ${_lastGeofenceTrigger!.geofenceId} due to exit',
+          );
+          _lastGeofenceTrigger = null;
+        }
+      }
+      return;
+    }
+
     // Filter for 'enter' events before proceeding
     if (params.event != native_geofence.GeofenceEvent.enter) {
       developer.log(
         '[GeofenceCallback] Received event: ${params.event.name}, which is not an ENTER event. Skipping notification and history saving.',
       );
-      // No DB was opened yet in this path; nothing to close.
       return;
     }
 

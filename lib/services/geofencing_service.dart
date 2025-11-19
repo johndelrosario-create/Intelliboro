@@ -241,7 +241,16 @@ class GeofencingService {
                 '[GeofencingService] Active priority: ${hasActive ? activePriority : 'none'}, Incoming highest: $incomingHighest',
               );
 
-              if (hasActive && incomingHighest <= activePriority) {
+              // Check if any candidate is the active task
+              bool isSameTask = false;
+              if (hasActive && timerService.activeTask != null) {
+                isSameTask =
+                    candidates.any((c) => c.id == timerService.activeTask!.id);
+              }
+
+              if (hasActive &&
+                  incomingHighest <= activePriority &&
+                  !isSameTask) {
                 developer.log(
                   '[GeofencingService] Active task has higher/equal priority; snoozing incoming ${candidates.length} tasks',
                 );
@@ -481,8 +490,8 @@ class GeofencingService {
                   // Prefer using TaskTimerService.requestSwitch when there's an active task
                   try {
                     final timerService = TaskTimerService();
-                    if (hasActive) {
-                      // If incoming is higher priority, request switch
+                    if (hasActive && !isSameTask) {
+                      // If incoming is higher priority (and not same task), request switch
                       developer.log(
                         '[GeofencingService] Requesting switch to highest-priority task id=${best.id}, name=${best.taskName}, prio=$bestPrio',
                       );
@@ -672,6 +681,7 @@ class GeofencingService {
           radiusMeters: radiusMeters,
           triggers: {
             native_geofence.GeofenceEvent.enter,
+            native_geofence.GeofenceEvent.exit,
           },
           iosSettings: native_geofence.IosGeofenceSettings(
             initialTrigger: false,
@@ -680,7 +690,7 @@ class GeofencingService {
             initialTriggers: {
               native_geofence.GeofenceEvent.enter,
             }, // Don't fire on creation - only on actual boundary crossing
-            notificationResponsiveness: const Duration(seconds: 0),
+            notificationResponsiveness: const Duration(seconds: 5),
             loiteringDelay: const Duration(seconds: 0),
           ),
         ),

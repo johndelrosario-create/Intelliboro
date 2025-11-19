@@ -457,11 +457,45 @@ class _MapboxMapViewState extends State<MapboxMapView> {
     _searchController.text = result.name;
 
     try {
+      // Check if result has valid coordinates
+      SearchResult finalResult = result;
+
+      // If coordinates are (0.0, 0.0), need to retrieve full place details
+      if (result.latitude == 0.0 && result.longitude == 0.0) {
+        if (!mounted) return;
+        setState(() {
+          _isSearching = true;
+        });
+
+        // Retrieve full place details with coordinates
+        final detailedResult = await _searchService.retrievePlace(result.id);
+
+        if (!mounted) return;
+        setState(() {
+          _isSearching = false;
+        });
+
+        if (detailedResult == null) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Unable to retrieve location details'),
+                backgroundColor: Colors.orange,
+                duration: Duration(seconds: 3),
+              ),
+            );
+          }
+          return;
+        }
+
+        finalResult = detailedResult;
+      }
+
       // Fly to the selected location
       if (mapViewModel.mapboxMap != null) {
         await mapViewModel.mapboxMap!.flyTo(
           CameraOptions(
-            center: result.toMapboxPoint(),
+            center: finalResult.toMapboxPoint(),
             zoom: 16,
             bearing: 0,
             pitch: 0,
@@ -470,7 +504,7 @@ class _MapboxMapViewState extends State<MapboxMapView> {
         );
 
         // Auto-place a geofence helper at the searched location
-        await _placeGeofenceAtSearchResult(result);
+        await _placeGeofenceAtSearchResult(finalResult);
       }
     } catch (e) {
       if (mounted) {
