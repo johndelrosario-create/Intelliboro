@@ -7,6 +7,7 @@ import 'package:intelliboro/views/notification_history_view.dart';
 import 'package:intelliboro/views/create_task_view.dart';
 import 'package:intelliboro/views/active_task_view.dart';
 import 'package:intelliboro/views/task_statistics_view.dart';
+import 'package:intelliboro/views/settings_view.dart';
 import 'package:intelliboro/viewmodel/notification_history_viewmodel.dart';
 import 'package:intelliboro/widgets/task_timer_widget.dart';
 import 'dart:developer' as developer;
@@ -43,6 +44,7 @@ class _TaskListViewState extends State<TaskListView>
   StreamSubscription? _switchSubscription;
   TaskSortMode _sortMode = TaskSortMode.priority;
   static const _prefsSortKey = 'task_sort_mode';
+  bool _isClearingCompleted = false;
 
   @override
   void initState() {
@@ -254,10 +256,9 @@ class _TaskListViewState extends State<TaskListView>
 
       if (startNow) {
         try {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const ActiveTaskView()),
-            (r) => false,
-          );
+          Navigator.of(
+            context,
+          ).push(MaterialPageRoute(builder: (_) => const ActiveTaskView()));
         } catch (_) {}
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -429,6 +430,7 @@ class _TaskListViewState extends State<TaskListView>
     final isActiveTimer =
         _taskTimerService.hasActiveTask &&
         _taskTimerService.activeTask?.id == task.id;
+    final bool canEditTask = !task.isCompleted;
 
     return Card.filled(
       margin: const EdgeInsets.only(left: 16, right: 16, bottom: 12),
@@ -452,16 +454,19 @@ class _TaskListViewState extends State<TaskListView>
                 : null,
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
-          onTap: () {
-            // Open editor for the task
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder:
-                    (context) => TaskCreation(showMap: true, initialTask: task),
-              ),
-            ).then((_) => _loadTasks());
-          },
+          onTap:
+              canEditTask
+                  ? () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder:
+                            (context) =>
+                                TaskCreation(showMap: true, initialTask: task),
+                      ),
+                    ).then((_) => _loadTasks());
+                  }
+                  : null,
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -879,6 +884,79 @@ class _TaskListViewState extends State<TaskListView>
     );
   }
 
+  Future<void> _confirmClearCompletedTasks() async {
+    final completed =
+        _tasks.where((t) => t.isCompleted && t.id != null).toList();
+    if (completed.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No completed tasks to clear')),
+      );
+      return;
+    }
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Clear completed tasks?'),
+            content: Text(
+              'This will remove ${completed.length} completed task${completed.length == 1 ? '' : 's'}. This cannot be undone.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Clear All'),
+              ),
+            ],
+          ),
+    );
+
+    if (confirm == true) {
+      await _clearCompletedTasks(completed);
+    }
+  }
+
+  Future<void> _clearCompletedTasks(List<TaskModel> completed) async {
+    if (!mounted) return;
+    setState(() => _isClearingCompleted = true);
+    try {
+      for (final task in completed) {
+        final id = task.id;
+        if (id == null) continue;
+        if (_taskTimerService.isRunning(id)) {
+          await _taskTimerService.stopTimerForTask(id);
+        }
+        await _taskRepository.deleteTask(id);
+      }
+      _taskTimerService.tasksChanged.value = true;
+      await _loadTasks();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Cleared ${completed.length} completed task${completed.length == 1 ? '' : 's'}',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to clear completed tasks: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isClearingCompleted = false);
+      }
+    }
+  }
+
   Widget _buildEmptyState() {
     final theme = Theme.of(context);
     return Center(
@@ -1067,6 +1145,17 @@ class _TaskListViewState extends State<TaskListView>
                 MaterialPageRoute(
                   builder: (context) => const TaskStatisticsView(),
                 ),
+              );
+            },
+          ),
+          const SizedBox(width: 8),
+          IconButton.filledTonal(
+            icon: const Icon(Icons.settings_rounded),
+            tooltip: 'Settings',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SettingsView()),
               );
             },
           ),
@@ -1339,6 +1428,31 @@ class _TaskListViewState extends State<TaskListView>
                                   fontWeight: FontWeight.w600,
                                   color: theme.colorScheme.outline,
                                 ),
+                              ),
+                              const Spacer(),
+                              TextButton.icon(
+                                onPressed:
+                                    _isClearingCompleted
+                                        ? null
+                                        : _confirmClearCompletedTasks,
+                                icon:
+                                    _isClearingCompleted
+                                        ? SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color:
+                                                theme
+                                                    .colorScheme
+                                                    .onSurfaceVariant,
+                                          ),
+                                        )
+                                        : const Icon(
+                                          Icons.clear_all_rounded,
+                                          size: 18,
+                                        ),
+                                label: const Text('Clear All'),
                               ),
                             ],
                           ),
