@@ -648,20 +648,9 @@ Future<void> geofenceTriggered(
       // Immediate display flags
       timeoutAfter: null, // No timeout
       when: DateTime.now().millisecondsSinceEpoch,
-      actions: <AndroidNotificationAction>[
-        const AndroidNotificationAction(
-          'com.intelliboro.DO_NOW',
-          'Do Now \ud83c\udfc3\u200d\u2642\ufe0f',
-          showsUserInterface: true,
-          cancelNotification: true,
-        ),
-        const AndroidNotificationAction(
-          'com.intelliboro.DO_LATER',
-          'Do Later \u23f0',
-          showsUserInterface: false,
-          cancelNotification: true,
-        ),
-      ],
+      // NOTE: No action buttons on background notification because action handlers
+      // only work in the main UI isolate. The UI isolate will replace this notification
+      // with one that has working action buttons.
     );
 
     final NotificationDetails platformChannelSpecifics = NotificationDetails(

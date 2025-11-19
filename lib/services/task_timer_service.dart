@@ -54,6 +54,16 @@ class TaskTimerService extends ChangeNotifier {
   Future<void> loadPersistedPending() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      
+      // Load default snooze duration
+      final snoozeMinutes = prefs.getInt('default_snooze_duration');
+      if (snoozeMinutes != null) {
+        defaultSnoozeDuration = Duration(minutes: snoozeMinutes);
+        developer.log(
+          '[TaskTimerService] Loaded default snooze duration: $snoozeMinutes minutes',
+        );
+      }
+
       final keys = prefs.getKeys();
       for (final k in keys) {
         if (k.startsWith('pending_task_')) {
@@ -858,10 +868,21 @@ class TaskTimerService extends ChangeNotifier {
   // _stopCurrentTaskAndReschedule removed (pause-and-switch flow replaces it)
 
   /// Reschedule a task to a later time
-  Future<void> _rescheduleTask(TaskModel task) async {
+  Future<bool> _rescheduleTask(TaskModel task) async {
     try {
       // Calculate new time using the default snooze duration instead of fixed 1 hour
       final now = DateTime.now();
+      
+      // If task has no time (geofence only), we can't reschedule it to a specific time
+      // unless we convert it to a time-based task.
+      // Per user request, we just dismiss the notification for these tasks.
+      if (task.taskDate == null || task.taskTime == null) {
+        developer.log(
+          '[TaskTimerService] Task "${task.taskName}" has no time set. "Do Later" will just dismiss notification.',
+        );
+        return false;
+      }
+
       final originalDateTime = DateTime(
         task.taskDate!.year,
         task.taskDate!.month,
@@ -911,18 +932,21 @@ class TaskTimerService extends ChangeNotifier {
       developer.log(
         '[TaskTimerService] Rescheduled task "${task.taskName}" to ${_formatDateTime(newDateTime)} (snooze duration: ${defaultSnoozeDuration.inMinutes} minutes)',
       );
+      return true;
     } catch (e, stackTrace) {
       developer.log(
         '[TaskTimerService] Error rescheduling task',
         error: e,
         stackTrace: stackTrace,
       );
+      return false;
     }
   }
 
   /// Reschedule a task manually (for "Do Later" action)
-  Future<void> rescheduleTaskLater(TaskModel task) async {
-    await _rescheduleTask(task);
+  /// Returns true if rescheduled, false if skipped (e.g. no time set)
+  Future<bool> rescheduleTaskLater(TaskModel task) async {
+    return await _rescheduleTask(task);
   }
 
   /// Complete a task manually (called from UI)

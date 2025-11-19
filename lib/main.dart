@@ -41,6 +41,179 @@ import 'package:geolocator/geolocator.dart';
 
 const String _kPermissionsPromptShown = 'permissions_prompt_shown_v1';
 
+// Top-level background notification response handler
+// This MUST be a top-level function to work when the app is in the background
+@pragma('vm:entry-point')
+@pragma('vm:entry-point')
+Future<void> notificationTapBackground(NotificationResponse response) async {
+  // Initialize WidgetsFlutterBinding if not already initialized
+  WidgetsFlutterBinding.ensureInitialized();
+
+  developer.log('');
+  developer.log('╔════════════════════════════════════════╗');
+  developer.log('║  BACKGROUND NOTIFICATION TAP           ║');
+  developer.log('╚════════════════════════════════════════╝');
+  developer.log('[notificationTapBackground] Action ID: ${response.actionId}');
+  developer.log('[notificationTapBackground] Response ID: ${response.id}');
+  developer.log('[notificationTapBackground] Payload: ${response.payload}');
+  developer.log('');
+
+  // Show immediate feedback notification to confirm handler was called
+  try {
+    final plugin = FlutterLocalNotificationsPlugin();
+    await plugin.show(
+      99995,
+      'DEBUG: Button Pressed',
+      'Action: ${response.actionId ?? "none"}',
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'timer_feedback',
+          'Timer Feedback',
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
+      ),
+    );
+  } catch (e) {
+    developer.log(
+      '[notificationTapBackground] Error showing debug notification: $e',
+    );
+  }
+
+  // For background taps, we need to handle the action directly here
+  // since we can't rely on the UI being available
+
+  try {
+    final String? payload = response.payload;
+
+    // Helper to extract task ID from payload
+    int? extractTaskId(String? payload) {
+      if (payload == null) return null;
+      try {
+        if (payload.startsWith('{')) {
+          final data = jsonDecode(payload);
+          if (data is Map && data.containsKey('taskIds')) {
+            final list = data['taskIds'];
+            if (list is List && list.isNotEmpty) {
+              return list.first as int?;
+            }
+          }
+        }
+      } catch (_) {}
+      return int.tryParse(payload);
+    }
+
+    // Extract notification ID from both sources
+    final int? notificationId = response.id;
+    int? payloadNotificationId;
+    try {
+      if (payload != null && payload.startsWith('{')) {
+        final data = jsonDecode(payload);
+        if (data is Map && data.containsKey('notificationId')) {
+          final nid = data['notificationId'];
+          payloadNotificationId =
+              nid is int ? nid : (nid is String ? int.tryParse(nid) : null);
+        }
+      }
+    } catch (e) {
+      developer.log(
+        '[notificationTapBackground] Error extracting notification ID from payload: $e',
+      );
+    }
+
+    final int? effectiveNotificationId =
+        notificationId ?? payloadNotificationId;
+    developer.log(
+      '[notificationTapBackground] Effective notification ID: $effectiveNotificationId',
+    );
+
+    if (response.actionId == 'com.intelliboro.DO_LATER') {
+      developer.log(
+        '[notificationTapBackground] DO_LATER action in background',
+      );
+
+      // Cancel the notification
+      if (effectiveNotificationId != null) {
+        try {
+          final plugin = FlutterLocalNotificationsPlugin();
+          await plugin.cancel(effectiveNotificationId);
+          developer.log(
+            '[notificationTapBackground] Cancelled notification $effectiveNotificationId',
+          );
+        } catch (e) {
+          developer.log(
+            '[notificationTapBackground] Error cancelling notification: $e',
+          );
+        }
+      }
+
+      // Try to stop the watchdog through GeofencingService
+      // Note: This might not work in background isolate, but worth trying
+      if (effectiveNotificationId != null) {
+        try {
+          GeofencingService().stopNotificationWatchdog(effectiveNotificationId);
+          developer.log(
+            '[notificationTapBackground] Stopped watchdog for notification $effectiveNotificationId',
+          );
+        } catch (e) {
+          developer.log(
+            '[notificationTapBackground] Error stopping watchdog: $e',
+          );
+        }
+      }
+
+      // Reschedule the task if we can extract the task ID
+      final int? taskId = extractTaskId(payload);
+      if (taskId != null) {
+        try {
+          final task = await TaskRepository().getTaskById(taskId);
+          if (task != null) {
+            final timerService = TaskTimerService();
+            await timerService.rescheduleTaskLater(task);
+            developer.log(
+              '[notificationTapBackground] Rescheduled task $taskId',
+            );
+
+            // Show confirmation notification
+            final plugin = FlutterLocalNotificationsPlugin();
+            await plugin.show(
+              99996,
+              'Snoozed ⏰',
+              'Task "${task.taskName}" snoozed for ${timerService.defaultSnoozeDuration.inMinutes} minutes',
+              const NotificationDetails(
+                android: AndroidNotificationDetails(
+                  'timer_feedback',
+                  'Timer Feedback',
+                  channelDescription: 'Confirms snooze actions',
+                  importance: Importance.defaultImportance,
+                  priority: Priority.defaultPriority,
+                  autoCancel: true,
+                  timeoutAfter: 4000,
+                ),
+              ),
+            );
+          }
+        } catch (e) {
+          developer.log(
+            '[notificationTapBackground] Error rescheduling task: $e',
+          );
+        }
+      }
+    } else if (response.actionId == 'com.intelliboro.DO_NOW') {
+      developer.log(
+        '[notificationTapBackground] DO_NOW action in background - will be handled when app opens',
+      );
+      // DO_NOW requires UI, so we'll let the foreground handler deal with it
+    }
+  } catch (e, st) {
+    developer.log(
+      '[notificationTapBackground] Error handling background notification: $e',
+      error: e,
+      stackTrace: st,
+    );
+  }
+}
+
 // Define the access token
 const String accessToken = String.fromEnvironment('ACCESS_TOKEN');
 
@@ -203,10 +376,30 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
       return;
     }
 
+    // Helper to extract task ID from payload (handles JSON or simple string)
+    int? extractTaskId(String? payload) {
+      if (payload == null) return null;
+      // Try parsing as JSON first
+      try {
+        if (payload.startsWith('{')) {
+          final data = jsonDecode(payload);
+          if (data is Map && data.containsKey('taskIds')) {
+            final list = data['taskIds'];
+            if (list is List && list.isNotEmpty) {
+              return list.first as int?;
+            }
+          }
+          // Fallback for other JSON structures if needed
+        }
+      } catch (_) {}
+      // Fallback to simple integer parse
+      return int.tryParse(payload);
+    }
+
     // 1) If action is DO_NOW and payload is a simple task id, start that task
     if (response.actionId == 'com.intelliboro.DO_NOW') {
       developer.log('[main] Processing DO_NOW action with payload: $payload');
-      final int? simpleTaskId = payload == null ? null : int.tryParse(payload);
+      final int? simpleTaskId = extractTaskId(payload);
       if (simpleTaskId != null) {
         developer.log('[main] Parsed valid task ID: $simpleTaskId');
         final task = await TaskRepository().getTaskById(simpleTaskId);
@@ -217,6 +410,9 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
 
           // Clear any existing notification for this response
           if (response.id != null) {
+            // Stop the watchdog for this notification (if any)
+            GeofencingService().stopNotificationWatchdog(response.id!);
+
             await flutterLocalNotificationsPlugin.cancel(response.id!);
             developer.log(
               '[main] Cancelled originating notification id=${response.id}',
@@ -309,7 +505,7 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
       developer.log('============================================');
       developer.log('');
 
-      final int? simpleTaskId = payload == null ? null : int.tryParse(payload);
+      final int? simpleTaskId = extractTaskId(payload);
       developer.log('[main] Parsed task ID: $simpleTaskId');
 
       if (simpleTaskId != null) {
@@ -322,12 +518,46 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
 
           // Stop the alarm FIRST before doing anything else
           final int? notificationId = response.id;
-          if (notificationId != null) {
+          developer.log(
+            '[main] DO_LATER: Notification ID from response: $notificationId',
+          );
+          developer.log('[main] DO_LATER: Payload: $payload');
+
+          // Also try to extract notification ID from payload as a fallback
+          int? payloadNotificationId;
+          try {
+            if (payload != null && payload.startsWith('{')) {
+              final data = jsonDecode(payload);
+              if (data is Map && data.containsKey('notificationId')) {
+                final nid = data['notificationId'];
+                payloadNotificationId =
+                    nid is int
+                        ? nid
+                        : (nid is String ? int.tryParse(nid) : null);
+                developer.log(
+                  '[main] DO_LATER: Notification ID from payload: $payloadNotificationId',
+                );
+              }
+            }
+          } catch (e) {
+            developer.log(
+              '[main] DO_LATER: Error extracting notification ID from payload: $e',
+            );
+          }
+
+          // Use response.id first, fallback to payload notification ID
+          final int? effectiveNotificationId =
+              notificationId ?? payloadNotificationId;
+          developer.log(
+            '[main] DO_LATER: Effective notification ID: $effectiveNotificationId',
+          );
+
+          if (effectiveNotificationId != null) {
             // Stop the alarm if it's ringing
             try {
-              await Alarm.stop(notificationId);
+              await Alarm.stop(effectiveNotificationId);
               developer.log(
-                '[main] Stopped alarm id=$notificationId for snooze',
+                '[main] Stopped alarm id=$effectiveNotificationId for snooze',
               );
             } catch (e) {
               developer.log('[main] Error stopping alarm: $e');
@@ -335,20 +565,40 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
 
             // Release audio focus guard
             try {
-              AudioFocusGuard.instance.onAlarmStop(notificationId);
+              AudioFocusGuard.instance.onAlarmStop(effectiveNotificationId);
             } catch (e) {
               developer.log('[main] Error releasing audio focus: $e');
             }
 
             // Cancel the notification
             try {
-              await flutterLocalNotificationsPlugin.cancel(notificationId);
+              // Stop the watchdog for this notification (if any)
               developer.log(
-                '[main] Cancelled notification id=$notificationId for snooze',
+                '[main] DO_LATER: Attempting to stop watchdog for notification $effectiveNotificationId',
+              );
+              GeofencingService().stopNotificationWatchdog(
+                effectiveNotificationId,
+              );
+              developer.log('[main] DO_LATER: Watchdog stop called');
+
+              developer.log(
+                '[main] DO_LATER: Attempting to cancel notification $effectiveNotificationId',
+              );
+              await flutterLocalNotificationsPlugin.cancel(
+                effectiveNotificationId,
+              );
+              developer.log(
+                '[main] DO_LATER: Successfully cancelled notification id=$effectiveNotificationId for snooze',
               );
             } catch (e) {
-              developer.log('[main] Error cancelling notification: $e');
+              developer.log(
+                '[main] DO_LATER: Error cancelling notification: $e',
+              );
             }
+          } else {
+            developer.log(
+              '[main] DO_LATER: WARNING - notification ID is null in both response and payload!',
+            );
           }
 
           // Ensure the underlying alarm is cancelled even if notification id was null
@@ -364,27 +614,34 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
           }
 
           // Reschedule the task for later using the task's snooze duration
-          await taskTimerService.rescheduleTaskLater(task);
+          final bool snoozed = await taskTimerService.rescheduleTaskLater(task);
           developer.log(
-            '[main] Rescheduled task ${task.taskName} for ${taskTimerService.defaultSnoozeDuration.inMinutes} minutes later',
+            '[main] Rescheduled task ${task.taskName} result: $snoozed',
           );
 
-          // Show confirmation
-          await flutterLocalNotificationsPlugin.show(
-            99998,
-            'Task Snoozed ⏰',
-            '${task.taskName} will remind you in ${taskTimerService.defaultSnoozeDuration.inMinutes} minutes',
-            const NotificationDetails(
-              android: AndroidNotificationDetails(
-                'timer_feedback',
-                'Timer Feedback',
-                channelDescription: 'Confirms snooze actions',
-                importance: Importance.defaultImportance,
-                priority: Priority.defaultPriority,
+          if (snoozed) {
+            // Show confirmation only if actually snoozed
+            await flutterLocalNotificationsPlugin.show(
+              99998,
+              'Task Snoozed ⏰',
+              '${task.taskName} will remind you in ${taskTimerService.defaultSnoozeDuration.inMinutes} minutes',
+              const NotificationDetails(
+                android: AndroidNotificationDetails(
+                  'timer_feedback',
+                  'Timer Feedback',
+                  channelDescription: 'Confirms snooze actions',
+                  importance: Importance.defaultImportance,
+                  priority: Priority.defaultPriority,
+                ),
               ),
-            ),
-          );
-          developer.log('[main] ✅ Posted snooze confirmation notification');
+            );
+            developer.log('[main] ✅ Posted snooze confirmation notification');
+          } else {
+            developer.log(
+              '[main] ℹ️ Task was not snoozed (likely geofence-only), notification dismissed.',
+            );
+          }
+
           developer.log('[main] ✅ DO_LATER handler completed successfully');
           developer.log('============================================');
 
@@ -544,6 +801,8 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
       );
       if (notificationIdFromPayload != null) {
         await flutterLocalNotificationsPlugin.cancel(notificationIdFromPayload);
+        // Stop the watchdog timer for this notification
+        GeofencingService().stopNotificationWatchdog(notificationIdFromPayload);
       }
       final candidates = await _resolveCandidates();
       if (candidates.isNotEmpty) {
@@ -719,10 +978,24 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
       developer.log(
         '[main] DO_LATER action received (payload notificationId=$notificationIdFromPayload)',
       );
+
+      // CRITICAL: Stop watchdog FIRST, then cancel notification
       if (notificationIdFromPayload != null) {
+        developer.log(
+          '[main] DO_LATER: Stopping watchdog for notification $notificationIdFromPayload',
+        );
+        GeofencingService().stopNotificationWatchdog(notificationIdFromPayload);
+        developer.log(
+          '[main] DO_LATER: Cancelling notification $notificationIdFromPayload',
+        );
         await flutterLocalNotificationsPlugin.cancel(notificationIdFromPayload);
+        developer.log('[main] DO_LATER: Notification cancelled');
       }
+
       final candidates = await _resolveCandidates();
+      developer.log(
+        '[main] DO_LATER: Found ${candidates.length} candidate tasks',
+      );
 
       if (candidates.isNotEmpty) {
         // Add tasks to pending queue with default snooze duration
@@ -768,6 +1041,10 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
               timeoutAfter: 4000,
             ),
           ),
+        );
+      } else {
+        developer.log(
+          '[main] DO_LATER: No candidates found, notification already dismissed',
         );
       }
       return;
@@ -1165,10 +1442,14 @@ void main() async {
       ),
       onDidReceiveNotificationResponse: (NotificationResponse response) async {
         developer.log(
-          '[main] Notification tapped: payload=${response.payload}, actionId=${response.actionId}, id=${response.id}',
+          '[main] Notification tapped (foreground): payload=${response.payload}, actionId=${response.actionId}, id=${response.id}',
         );
         await _onNotificationResponse(response);
       },
+      onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
+    );
+    developer.log(
+      '[main] Notification plugin initialized with background handler',
     );
 
     // Set up alarm ring listener

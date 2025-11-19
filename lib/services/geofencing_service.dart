@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:isolate' show ReceivePort;
+import 'dart:typed_data';
 import 'dart:ui' show IsolateNameServer;
 
 import 'package:flutter/material.dart';
@@ -40,6 +41,10 @@ class GeofencingService {
   final ReceivePort _newNotificationReceivePort = ReceivePort();
   final StreamController<void> _newNotificationStreamController =
       StreamController<void>.broadcast();
+
+  // Track active geofence notifications and their watchdog timers
+  final Map<int, Timer> _notificationWatchdogs = {};
+  final Map<int, Map<String, dynamic>> _activeNotifications = {};
 
   // Private internal constructor
   GeofencingService._internal();
@@ -244,8 +249,9 @@ class GeofencingService {
               // Check if any candidate is the active task
               bool isSameTask = false;
               if (hasActive && timerService.activeTask != null) {
-                isSameTask =
-                    candidates.any((c) => c.id == timerService.activeTask!.id);
+                isSameTask = candidates.any(
+                  (c) => c.id == timerService.activeTask!.id,
+                );
               }
 
               if (hasActive &&
@@ -448,44 +454,60 @@ class GeofencingService {
                     }
                   } catch (_) {}
 
-                  const AndroidNotificationDetails androidDetails =
-                      AndroidNotificationDetails(
-                        'geofence_alerts',
-                        'Geofence Alerts',
-                        channelDescription:
-                            'Alerts when entering/exiting geofences',
-                        importance: Importance.max,
-                        priority: Priority.max,
-                        playSound: true,
-                        visibility: NotificationVisibility.public,
-                        category: AndroidNotificationCategory.alarm,
-                        fullScreenIntent: true,
-                        styleInformation: BigTextStyleInformation(''),
-                        actions: <AndroidNotificationAction>[
-                          AndroidNotificationAction(
-                            'com.intelliboro.DO_NOW',
-                            '▶️ Do task now',
-                            showsUserInterface: true,
-                            cancelNotification: true,
-                          ),
-                          AndroidNotificationAction(
-                            'com.intelliboro.DO_LATER',
-                            '⏰ Do Later',
-                            showsUserInterface: false,
-                            cancelNotification: false,
-                          ),
-                        ],
+                  final AndroidNotificationDetails
+                  androidDetails = AndroidNotificationDetails(
+                    'geofence_alerts',
+                    'Geofence Alerts',
+                    channelDescription:
+                        'Alerts when entering/exiting geofences',
+                    importance: Importance.max,
+                    priority: Priority.max,
+                    playSound: true,
+                    enableVibration: true,
+                    vibrationPattern: Int64List.fromList([0, 1000, 500, 1000]),
+                    visibility: NotificationVisibility.public,
+                    category: AndroidNotificationCategory.alarm,
+                    fullScreenIntent: true,
+                    styleInformation: const BigTextStyleInformation(''),
+                    ongoing: true, // Cannot be dismissed by swiping
+                    autoCancel: false, // Cannot be dismissed by swiping
+                    colorized: true,
+                    color: const Color(
+                      0xFFFF9800,
+                    ), // Orange color for geofence alerts
+                    actions: const <AndroidNotificationAction>[
+                      AndroidNotificationAction(
+                        'com.intelliboro.DO_NOW',
+                        '▶️ Do task now',
+                        showsUserInterface: true,
+                        cancelNotification:
+                            false, // Don't auto-dismiss, handled by action handler
+                      ),
+                      AndroidNotificationAction(
+                        'com.intelliboro.DO_LATER',
+                        '⏰ Do Later',
+                        showsUserInterface: true,
+                        cancelNotification:
+                            false, // Don't auto-dismiss, handled by action handler
+                      ),
+                    ],
+                  );
+
+                  // Prefer to reuse the early/background notification id when
+                  // available so the UI replaces the background notification
+                  // instead of creating a duplicate.
+                  final int uiNotifId =
+                      notificationId ??
+                      DateTime.now().millisecondsSinceEpoch.remainder(
+                        2147483647,
                       );
 
-                  // Use a fresh id for the UI alert
-                  final int uiNotifId = DateTime.now().millisecondsSinceEpoch
-                      .remainder(2147483647);
-
-                  final payload = jsonEncode({
+                  final payloadData = {
                     'notificationId': uiNotifId,
                     'geofenceIds': geofenceIds,
                     'taskIds': [best.id],
-                  });
+                  };
+                  final payload = jsonEncode(payloadData);
 
                   // Prefer using TaskTimerService.requestSwitch when there's an active task
                   try {
@@ -506,6 +528,14 @@ class GeofencingService {
                       );
                       developer.log(
                         '[GeofencingService] Posted geofence alert notification $uiNotifId for task: ${best.id}',
+                      );
+
+                      // Start watchdog timer to prevent dismissal
+                      _startNotificationWatchdog(
+                        uiNotifId,
+                        title,
+                        body,
+                        payloadData,
                       );
 
                       // TTS in UI isolate using task name so generator creates "You have task: <name>"
@@ -867,12 +897,135 @@ class GeofencingService {
     }
   }
 
+  /// Start a watchdog timer for a specific notification to prevent dismissal
+  void _startNotificationWatchdog(
+    int notificationId,
+    String title,
+    String body,
+    Map<String, dynamic> payload,
+  ) {
+    // Cancel existing watchdog if any
+    _stopNotificationWatchdog(notificationId);
+
+    // Store notification details
+    _activeNotifications[notificationId] = {
+      'title': title,
+      'body': body,
+      'payload': payload,
+    };
+
+    // Re-show notification every 3 seconds to prevent permanent dismissal
+    _notificationWatchdogs[notificationId] = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) async {
+        try {
+          final notifData = _activeNotifications[notificationId];
+          if (notifData == null) {
+            _stopNotificationWatchdog(notificationId);
+            return;
+          }
+
+          // Re-show the notification with the same ID
+          final androidDetails = AndroidNotificationDetails(
+            'geofence_alerts',
+            'Geofence Alerts',
+            channelDescription: 'Alerts when entering/exiting geofences',
+            importance: Importance.max,
+            priority: Priority.max,
+            playSound: false, // Don't play sound on re-show
+            enableVibration: false, // Don't vibrate on re-show
+            visibility: NotificationVisibility.public,
+            category: AndroidNotificationCategory.alarm,
+            fullScreenIntent: true,
+            styleInformation: const BigTextStyleInformation(''),
+            ongoing: true,
+            autoCancel: false,
+            colorized: true,
+            color: const Color(0xFFFF9800),
+            actions: const <AndroidNotificationAction>[
+              AndroidNotificationAction(
+                'com.intelliboro.DO_NOW',
+                '▶️ Do task now',
+                showsUserInterface: true,
+                cancelNotification: false,
+              ),
+              AndroidNotificationAction(
+                'com.intelliboro.DO_LATER',
+                '⏰ Do Later',
+                showsUserInterface: true,
+                cancelNotification: false,
+              ),
+            ],
+          );
+
+          await notificationPlugin.show(
+            notificationId,
+            notifData['title'] as String,
+            notifData['body'] as String,
+            NotificationDetails(android: androidDetails),
+            payload: jsonEncode(notifData['payload']),
+          );
+        } catch (e) {
+          developer.log(
+            '[GeofencingService] Watchdog error for notification $notificationId: $e',
+          );
+        }
+      },
+    );
+
+    developer.log(
+      '[GeofencingService] Started watchdog for notification $notificationId',
+    );
+  }
+
+  /// Stop the watchdog timer for a specific notification
+  void _stopNotificationWatchdog(int notificationId) {
+    developer.log(
+      '[GeofencingService] Attempting to stop watchdog for notification $notificationId',
+    );
+    developer.log(
+      '[GeofencingService] Active watchdogs: ${_notificationWatchdogs.keys.toList()}',
+    );
+
+    final timer = _notificationWatchdogs[notificationId];
+    if (timer != null) {
+      timer.cancel();
+      _notificationWatchdogs.remove(notificationId);
+      _activeNotifications.remove(notificationId);
+      developer.log(
+        '[GeofencingService] ✅ Successfully stopped watchdog for notification $notificationId',
+      );
+    } else {
+      developer.log(
+        '[GeofencingService] ⚠️ No watchdog found for notification $notificationId (may have been shown from background isolate)',
+      );
+    }
+  }
+
+  /// Public method to stop watchdog for a notification (called when notification is dismissed)
+  void stopNotificationWatchdog(int notificationId) {
+    _stopNotificationWatchdog(notificationId);
+  }
+
+  /// Stop all active notification watchdogs
+  void _stopAllNotificationWatchdogs() {
+    for (final timer in _notificationWatchdogs.values) {
+      timer.cancel();
+    }
+    _notificationWatchdogs.clear();
+    _activeNotifications.clear();
+    developer.log('[GeofencingService] Stopped all notification watchdogs');
+  }
+
   // Clean up resources
   void dispose() {
     try {
       developer.log(
         '[GeofencingService] Global dispose called. This should be rare.',
       );
+
+      // Stop all watchdog timers
+      _stopAllNotificationWatchdogs();
 
       // Do NOT close the port or remove the port mapping here
       // as it needs to stay alive for geofence callbacks
