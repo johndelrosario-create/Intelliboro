@@ -723,9 +723,52 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
         await flutterLocalNotificationsPlugin.cancel(notificationIdFromPayload);
       }
       final candidates = await _resolveCandidates();
-      for (final t in candidates) {
-        await taskTimerService.rescheduleTaskLater(t);
-        developer.log('[main] Rescheduled task: ${t.taskName}');
+
+      if (candidates.isNotEmpty) {
+        // Add tasks to pending queue with default snooze duration
+        for (final t in candidates) {
+          await taskTimerService.addToPending(
+            t,
+            taskTimerService.defaultSnoozeDuration,
+          );
+
+          // Temporarily remove geofence to prevent repeated notifications during snooze
+          if (t.geofenceId != null) {
+            try {
+              await GeofencingService().removeGeofence(t.geofenceId!);
+              developer.log(
+                '[main] Removed geofence ${t.geofenceId} for task: ${t.taskName}',
+              );
+            } catch (e) {
+              developer.log('[main] Failed to remove geofence for snooze: $e');
+            }
+          }
+
+          // Also reschedule alarm if task has one
+          await taskTimerService.rescheduleTaskLater(t);
+          developer.log(
+            '[main] Snoozed task: ${t.taskName} for ${taskTimerService.defaultSnoozeDuration.inMinutes} minutes',
+          );
+        }
+
+        // Show confirmation notification
+        final taskNames = candidates.map((t) => t.taskName).join(', ');
+        await flutterLocalNotificationsPlugin.show(
+          99996,
+          'Snoozed ⏰',
+          'Task(s) snoozed for ${taskTimerService.defaultSnoozeDuration.inMinutes} minutes: $taskNames',
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              'timer_feedback',
+              'Timer Feedback',
+              channelDescription: 'Confirms snooze actions',
+              importance: Importance.defaultImportance,
+              priority: Priority.defaultPriority,
+              autoCancel: true,
+              timeoutAfter: 4000,
+            ),
+          ),
+        );
       }
       return;
     }
