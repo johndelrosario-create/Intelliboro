@@ -52,10 +52,12 @@ class MainActivity : FlutterActivity() {
         }
 
         val filter = IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION)
+        // Register receiver on the application context so it survives activity
+        // lifecycle events while the app process remains alive.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(locationReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            applicationContext.registerReceiver(locationReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
-            registerReceiver(locationReceiver, filter)
+            applicationContext.registerReceiver(locationReceiver, filter)
         }
 
         // Check initial status
@@ -65,9 +67,10 @@ class MainActivity : FlutterActivity() {
     private fun stopLocationMonitoring() {
         locationReceiver?.let {
             try {
-                unregisterReceiver(it)
+                // Unregister from application context to match registration
+                applicationContext.unregisterReceiver(it)
             } catch (e: Exception) {
-                // Receiver not registered
+                // Receiver not registered or already unregistered
             }
             locationReceiver = null
         }

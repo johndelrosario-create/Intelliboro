@@ -19,6 +19,7 @@ class LocationMonitorService {
   static const int _notificationId = 999999; // Unique ID for location alert
   bool _isMonitoring = false;
   bool _isLocationDisabledNotificationShowing = false;
+  Timer? _notificationWatchdog;
 
   /// Start monitoring location status changes
   Future<void> startMonitoring() async {
@@ -102,11 +103,13 @@ class LocationMonitorService {
       // Location is enabled - clear notification
       if (_isLocationDisabledNotificationShowing) {
         await _clearLocationDisabledNotification();
+        _stopNotificationWatchdog();
       }
     } else {
       // Location is disabled - show notification
       if (!_isLocationDisabledNotificationShowing) {
         await _showLocationDisabledNotification();
+        _startNotificationWatchdog();
       }
     }
   }
@@ -124,9 +127,13 @@ class LocationMonitorService {
         ongoing: true, // Cannot be dismissed by swiping
         autoCancel: false,
         playSound: true,
-        sound: const RawResourceAndroidNotificationSound(
-          'alarm_sound',
-        ), // Will fall back to default if not found
+        // Use a bundled raw resource named 'alarm_sound' if present.
+        // If it's missing on the Android project, fall back to the default sound
+        // by omitting the custom sound to avoid PlatformException(invalid_sound).
+        // To use a custom sound, add the file to:
+        // android/app/src/main/res/raw/alarm_sound.mp3
+        // and rebuild the app.
+        sound: null,
         enableVibration: true,
         vibrationPattern: Int64List.fromList([
           0,
@@ -177,6 +184,39 @@ class LocationMonitorService {
     } catch (e) {
       developer.log('[LocationMonitorService] Error showing notification: $e');
     }
+  }
+
+  void _startNotificationWatchdog() {
+    // Periodically re-show the notification while location remains disabled.
+    // This prevents the user from permanently dismissing the alert by swiping it away.
+    _notificationWatchdog?.cancel();
+    _notificationWatchdog = Timer.periodic(const Duration(seconds: 3), (
+      _,
+    ) async {
+      try {
+        final isEnabled = await Geolocator.isLocationServiceEnabled();
+        if (isEnabled) {
+          await _clearLocationDisabledNotification();
+          _stopNotificationWatchdog();
+          return;
+        }
+
+        // Re-show the notification (harmless if already visible).
+        if (!_isLocationDisabledNotificationShowing) {
+          await _showLocationDisabledNotification();
+        } else {
+          // Refresh by showing again with same id to prevent dismissal for long
+          await _showLocationDisabledNotification();
+        }
+      } catch (e) {
+        developer.log('[LocationMonitorService] Watchdog error: $e');
+      }
+    });
+  }
+
+  void _stopNotificationWatchdog() {
+    _notificationWatchdog?.cancel();
+    _notificationWatchdog = null;
   }
 
   /// Clear the location disabled notification

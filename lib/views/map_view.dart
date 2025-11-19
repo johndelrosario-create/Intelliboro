@@ -560,7 +560,8 @@ class _MapboxMapViewState extends State<MapboxMapView> {
     switch (mapViewModel.locationStatus) {
       case LocationStatus.disabled:
         title = '⚠️ Location Services Disabled';
-        message = 'Location services are currently turned off. This app requires location access to display the map and set location-based alarms.\n\nPlease enable location services in your device settings.';
+        message =
+            'Location services are currently turned off. This app requires location access to display the map and set location-based alarms.\n\nPlease enable location services in your device settings.';
         actionButtonText = 'Open Settings';
         actionButtonCallback = () async {
           await Geolocator.openLocationSettings();
@@ -573,7 +574,8 @@ class _MapboxMapViewState extends State<MapboxMapView> {
 
       case LocationStatus.denied:
         title = '⚠️ Location Permission Required';
-        message = 'This app needs location permission to display the map and set location-based alarms.\n\nPlease grant location permission to continue.';
+        message =
+            'This app needs location permission to display the map and set location-based alarms.\n\nPlease grant location permission to continue.';
         actionButtonText = 'Grant Permission';
         actionButtonCallback = () async {
           await mapViewModel.retryLocationSetup();
@@ -585,7 +587,8 @@ class _MapboxMapViewState extends State<MapboxMapView> {
 
       case LocationStatus.permanentlyDenied:
         title = '⚠️ Location Permission Denied';
-        message = 'Location permission has been permanently denied. This app requires location access to display the map and set location-based alarms.\n\nPlease enable location permission in app settings.';
+        message =
+            'Location permission has been permanently denied. This app requires location access to display the map and set location-based alarms.\n\nPlease enable location permission in app settings.';
         actionButtonText = 'Open App Settings';
         actionButtonCallback = () async {
           await openAppSettings();
@@ -643,7 +646,8 @@ class _MapboxMapViewState extends State<MapboxMapView> {
                       style: ElevatedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         backgroundColor: Theme.of(context).colorScheme.primary,
-                        foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                        foregroundColor:
+                            Theme.of(context).colorScheme.onPrimary,
                       ),
                     ),
                   ),
