@@ -78,7 +78,7 @@ class _LocationWarningBannerState extends State<LocationWarningBanner> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Location is required for geofence-based tasks',
+                  'Geofenced reminders will not work while location is turned off',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.9),
                     fontSize: 13,

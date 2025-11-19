@@ -49,61 +49,94 @@ class _MapLocationWarningOverlayState extends State<MapLocationWarningOverlay> {
       return widget.child;
     }
 
-    // Show full-screen warning instead of map
+    // Show a responsive warning overlay that adapts when used inside a
+    // constrained container (e.g. embedded map in a smaller area).
     return Container(
       color: Colors.red.shade50,
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.location_off, size: 120, color: Colors.red.shade700),
-              const SizedBox(height: 32),
-              Text(
-                'LOCATION SERVICES DISABLED',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.red.shade900,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final bool isCompact =
+              constraints.maxHeight < 300 || constraints.maxWidth < 320;
+          final double padding = isCompact ? 12.0 : 32.0;
+          // Ensure icon and text sizes scale to fit inside the provided map
+          final double maxContentWidth = (constraints.maxWidth - (padding * 2))
+              .clamp(120.0, 800.0);
+          final double iconSize = (isCompact ? 64.0 : 120.0).clamp(
+            40.0,
+            maxContentWidth * 0.28,
+          );
+          final double titleSize = (isCompact ? 18.0 : 28.0).clamp(
+            14.0,
+            maxContentWidth * 0.09,
+          );
+          final double subtitleSize = (isCompact ? 13.0 : 18.0).clamp(
+            12.0,
+            maxContentWidth * 0.06,
+          );
+
+          return Center(
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              child: Padding(
+                padding: EdgeInsets.all(padding),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: maxContentWidth),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.location_off,
+                        size: iconSize,
+                        color: Colors.red.shade700,
+                      ),
+                      SizedBox(height: isCompact ? 10 : 20),
+                      Text(
+                        'LOCATION SERVICES DISABLED',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: titleSize,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red.shade900,
+                        ),
+                      ),
+                      SizedBox(height: isCompact ? 8 : 12),
+                      Text(
+                        'Map and location features are unavailable. Geofenced reminders will not work while location is turned off.',
+                        textAlign: TextAlign.center,
+                        softWrap: true,
+                        overflow: TextOverflow.visible,
+                        style: TextStyle(
+                          fontSize: subtitleSize,
+                          color: Colors.red.shade800,
+                        ),
+                      ),
+                      SizedBox(height: isCompact ? 10 : 16),
+                      ElevatedButton.icon(
+                        onPressed: () async {
+                          await Geolocator.openLocationSettings();
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red.shade700,
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(
+                            horizontal: isCompact ? 12 : 24,
+                            vertical: isCompact ? 8 : 12,
+                          ),
+                          textStyle: TextStyle(
+                            fontSize: isCompact ? 13 : 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        icon: Icon(Icons.settings, size: isCompact ? 16 : 22),
+                        label: const Text('Open Location Settings'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 16),
-              Text(
-                'Map and location features are unavailable',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 18, color: Colors.red.shade800),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Please enable location services to continue',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 16, color: Colors.red.shade700),
-              ),
-              const SizedBox(height: 48),
-              ElevatedButton.icon(
-                onPressed: () async {
-                  await Geolocator.openLocationSettings();
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red.shade700,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 32,
-                    vertical: 16,
-                  ),
-                  textStyle: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                icon: const Icon(Icons.settings, size: 28),
-                label: const Text('Open Location Settings'),
-              ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
