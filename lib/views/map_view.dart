@@ -4,6 +4,9 @@ import 'package:intelliboro/viewmodel/Geofencing/map_viewmodel.dart'
 import 'package:intelliboro/services/mapbox_search_service.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:intelliboro/services/task_timer_service.dart';
+import 'package:intelliboro/services/location_service.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:geolocator/geolocator.dart';
 
 class MapboxMapView extends StatefulWidget {
   const MapboxMapView({Key? key}) : super(key: key);
@@ -206,6 +209,10 @@ class _MapboxMapViewState extends State<MapboxMapView> {
                         child: const Icon(Icons.my_location),
                       ),
                     ),
+
+                    // Location warning overlay
+                    if (mapViewModel.locationStatus != LocationStatus.granted)
+                      _buildLocationWarningOverlay(context),
                   ],
                 );
               },
@@ -540,6 +547,134 @@ class _MapboxMapViewState extends State<MapboxMapView> {
           ],
         );
       },
+    );
+  }
+
+  /// Build location warning overlay
+  Widget _buildLocationWarningOverlay(BuildContext context) {
+    String title;
+    String message;
+    String actionButtonText;
+    VoidCallback actionButtonCallback;
+
+    switch (mapViewModel.locationStatus) {
+      case LocationStatus.disabled:
+        title = '⚠️ Location Services Disabled';
+        message = 'Location services are currently turned off. This app requires location access to display the map and set location-based alarms.\n\nPlease enable location services in your device settings.';
+        actionButtonText = 'Open Settings';
+        actionButtonCallback = () async {
+          await Geolocator.openLocationSettings();
+          // Wait a bit and then check status again
+          Future.delayed(const Duration(seconds: 1), () {
+            mapViewModel.checkLocationStatus();
+          });
+        };
+        break;
+
+      case LocationStatus.denied:
+        title = '⚠️ Location Permission Required';
+        message = 'This app needs location permission to display the map and set location-based alarms.\n\nPlease grant location permission to continue.';
+        actionButtonText = 'Grant Permission';
+        actionButtonCallback = () async {
+          await mapViewModel.retryLocationSetup();
+          if (mounted) {
+            await mapViewModel.checkLocationStatus();
+          }
+        };
+        break;
+
+      case LocationStatus.permanentlyDenied:
+        title = '⚠️ Location Permission Denied';
+        message = 'Location permission has been permanently denied. This app requires location access to display the map and set location-based alarms.\n\nPlease enable location permission in app settings.';
+        actionButtonText = 'Open App Settings';
+        actionButtonCallback = () async {
+          await openAppSettings();
+          // Wait a bit and then check status again
+          Future.delayed(const Duration(seconds: 1), () {
+            mapViewModel.checkLocationStatus();
+          });
+        };
+        break;
+
+      case LocationStatus.granted:
+        // This shouldn't happen as the overlay is only shown when not granted
+        return const SizedBox.shrink();
+    }
+
+    return Container(
+      color: Colors.black.withOpacity(0.85),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Card(
+            elevation: 8,
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.location_off,
+                    size: 64,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    message,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: actionButtonCallback,
+                      icon: const Icon(Icons.settings),
+                      label: Text(actionButtonText),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        backgroundColor: Theme.of(context).colorScheme.primary,
+                        foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                      },
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                      child: const Text('Go Back'),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Note: Without location access, you can still set regular alarms, but map view and location-based features will be unavailable.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontStyle: FontStyle.italic,
+                      color: Colors.grey[600],
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

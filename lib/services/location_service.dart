@@ -5,6 +5,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'dart:async';
 
+enum LocationStatus {
+  granted,
+  denied,
+  permanentlyDenied,
+  disabled,
+}
+
 class LocationService {
   static const String _lastLocationLatKey = 'last_location_latitude';
   static const String _lastLocationLngKey = 'last_location_longitude';
@@ -26,6 +33,22 @@ class LocationService {
   static final LocationService _instance = LocationService._internal();
   factory LocationService() => _instance;
   LocationService._internal();
+
+  Future<LocationStatus> checkStatus() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      return LocationStatus.disabled;
+    }
+
+    var permission = await Permission.location.status;
+    if (permission.isDenied) {
+      return LocationStatus.denied;
+    } else if (permission.isPermanentlyDenied) {
+      return LocationStatus.permanentlyDenied;
+    }
+
+    return LocationStatus.granted;
+  }
   Future<bool> requestLocationPermission() async {
     final locationPerm = await Permission.location.request();
     debugPrint("[LocationService] Initial permission status: $locationPerm");

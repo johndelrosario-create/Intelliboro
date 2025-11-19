@@ -36,6 +36,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'package:intelliboro/services/audio_focus_guard.dart';
 import 'package:intelliboro/services/offline_operation_queue.dart';
+import 'package:intelliboro/services/location_monitor_service.dart';
+import 'package:geolocator/geolocator.dart';
 
 const String _kPermissionsPromptShown = 'permissions_prompt_shown_v1';
 
@@ -177,6 +179,29 @@ Future<void> _onNotificationResponse(NotificationResponse response) async {
       '[main] Processing notification response: ${response.actionId} ${response.id}',
     );
     developer.log('[main] Payload: $payload');
+
+    // Handle location disabled notification action
+    if (response.actionId == 'open_location_settings') {
+      developer.log('[main] Opening location settings from notification');
+      try {
+        await Geolocator.openLocationSettings();
+        // Also check and update status after opening settings
+        Future.delayed(const Duration(seconds: 2), () async {
+          final isEnabled = await Geolocator.isLocationServiceEnabled();
+          developer.log(
+            '[main] Location enabled after opening settings: $isEnabled',
+          );
+          if (isEnabled) {
+            // Clear the notification if location is now enabled
+            await LocationMonitorService().stopMonitoring();
+            await LocationMonitorService().startMonitoring();
+          }
+        });
+      } catch (e) {
+        developer.log('[main] Error opening location settings: $e');
+      }
+      return;
+    }
 
     // 1) If action is DO_NOW and payload is a simple task id, start that task
     if (response.actionId == 'com.intelliboro.DO_NOW') {
@@ -1201,6 +1226,18 @@ void main() async {
     } catch (e, st) {
       developer.log(
         '[main] Error during orphaned geofence cleanup: $e',
+        error: e,
+        stackTrace: st,
+      );
+    }
+
+    // Start location monitoring service
+    try {
+      await LocationMonitorService().startMonitoring();
+      developer.log('[main] LocationMonitorService started monitoring');
+    } catch (e, st) {
+      developer.log(
+        '[main] Error starting LocationMonitorService: $e',
         error: e,
         stackTrace: st,
       );

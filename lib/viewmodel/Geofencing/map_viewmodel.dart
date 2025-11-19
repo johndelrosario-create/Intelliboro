@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 import 'package:intelliboro/services/geofencing_service.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart' as locator;
@@ -138,6 +139,10 @@ class MapboxMapViewModel extends ChangeNotifier {
   StreamSubscription<locator.Position>? _locationStreamSubscription;
   bool _isLocationTrackingActive = false;
 
+  // Location status tracking
+  LocationStatus _locationStatus = LocationStatus.granted;
+  LocationStatus get locationStatus => _locationStatus;
+
   // Pending/selected radius in meters for the helper circle (adjustable via UI).
   double pendingRadiusMeters = 50.0;
   // Padding to avoid edge-touch glitches when checking overlaps (in meters).
@@ -210,6 +215,29 @@ class MapboxMapViewModel extends ChangeNotifier {
     _geofencingService.registerMapViewModel(this);
     // Ensure the service is initialized. It has internal guards to run only once.
     _geofencingService.init();
+
+    // Check location status on init
+    checkLocationStatus();
+  }
+
+  /// Check and update location status
+  Future<void> checkLocationStatus() async {
+    _locationStatus = await _locationService.checkStatus();
+    debugPrint('[MapViewModel] Location status: $_locationStatus');
+    notifyListeners();
+  }
+
+  /// Retry location setup - call this when user takes action to enable location
+  Future<void> retryLocationSetup() async {
+    await checkLocationStatus();
+
+    if (_locationStatus == LocationStatus.granted) {
+      // Restart location tracking if needed
+      await restartLocationTracking();
+
+      // Try to fly to user location
+      await flyToUserLocation();
+    }
   }
 
   // Public method to force reload of saved geofences and redraw
