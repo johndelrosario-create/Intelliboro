@@ -129,39 +129,38 @@ class LocationMonitorService {
     }
   }
 
-  /// Show persistent notification when location is disabled
+  /// Show persistent notification when location is disabled (with sound)
   Future<void> _showLocationDisabledNotification() async {
+    await _showLocationDisabledNotificationInternal(playSound: true);
+  }
+
+  /// Show persistent notification when location is disabled (silent refresh)
+  Future<void> _showLocationDisabledNotificationSilent() async {
+    await _showLocationDisabledNotificationInternal(playSound: false);
+  }
+
+  /// Internal method to show notification with optional sound
+  Future<void> _showLocationDisabledNotificationInternal({
+    required bool playSound,
+  }) async {
     try {
       final androidDetails = AndroidNotificationDetails(
-        'location_alerts',
+        'location_alerts_v2', // Changed channel ID to force new channel creation
         'Location Alerts',
         channelDescription:
-            'Critical alerts when location services are disabled',
+            'Persistent reminder when location services are disabled',
         importance: Importance.max,
         priority: Priority.max,
         ongoing: true, // Cannot be dismissed by swiping
         autoCancel: false,
-        playSound: true,
-        // Use a bundled raw resource named 'alarm_sound' if present.
-        // If it's missing on the Android project, fall back to the default sound
-        // by omitting the custom sound to avoid PlatformException(invalid_sound).
-        // To use a custom sound, add the file to:
-        // android/app/src/main/res/raw/alarm_sound.mp3
-        // and rebuild the app.
-        sound: null,
-        enableVibration: true,
-        vibrationPattern: Int64List.fromList([
-          0,
-          1000,
-          500,
-          1000,
-        ]), // Vibrate pattern
-        fullScreenIntent: true, // Show as full-screen on some devices
-        category: AndroidNotificationCategory.alarm,
+        onlyAlertOnce: true, // Only play sound/vibrate once, not on updates
+        playSound: playSound, // Play sound only on first show
+        enableVibration: false, // No vibration
+        category: AndroidNotificationCategory.service, // Service category instead of alarm
         visibility: NotificationVisibility.public,
-        // Make it stand out
+        // Make it stand out but not alarming
         colorized: true,
-        color: const Color(0xFFFF0000), // Red color
+        color: const Color(0xFFFF9800), // Orange color instead of red
         // Add action button to open settings
         actions: const [
           AndroidNotificationAction(
@@ -194,7 +193,7 @@ class LocationMonitorService {
 
       _isLocationDisabledNotificationShowing = true;
       developer.log(
-        '[LocationMonitorService] Showed location disabled notification',
+        '[LocationMonitorService] Showed location disabled notification (sound: $playSound)',
       );
     } catch (e) {
       developer.log('[LocationMonitorService] Error showing notification: $e');
@@ -218,10 +217,10 @@ class LocationMonitorService {
 
         // Re-show the notification (harmless if already visible).
         if (!_isLocationDisabledNotificationShowing) {
-          await _showLocationDisabledNotification();
+          await _showLocationDisabledNotification(); // First time - with sound
         } else {
-          // Refresh by showing again with same id to prevent dismissal for long
-          await _showLocationDisabledNotification();
+          // Refresh silently to keep notification persistent without repeating sound
+          await _showLocationDisabledNotificationSilent();
         }
       } catch (e) {
         developer.log('[LocationMonitorService] Watchdog error: $e');
