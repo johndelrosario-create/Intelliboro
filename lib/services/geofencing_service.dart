@@ -484,7 +484,7 @@ class GeofencingService {
 
                   final AndroidNotificationDetails
                   androidDetails = AndroidNotificationDetails(
-                    'geofence_alerts',
+                    'geofence_alerts_v2', // Changed channel ID to force update
                     'Geofence Alerts',
                     channelDescription:
                         'Alerts when entering/exiting geofences',
@@ -499,6 +499,7 @@ class GeofencingService {
                     styleInformation: const BigTextStyleInformation(''),
                     ongoing: true, // Cannot be dismissed by swiping
                     autoCancel: false, // Cannot be dismissed by swiping
+                    onlyAlertOnce: true, // Only play sound/vibrate once
                     colorized: true,
                     color: const Color(
                       0xFFFF9800,
@@ -962,7 +963,7 @@ class GeofencingService {
 
           // Re-show the notification with the same ID
           final androidDetails = AndroidNotificationDetails(
-            'geofence_alerts',
+            'geofence_alerts_v2', // Changed channel ID to match main alert
             'Geofence Alerts',
             channelDescription: 'Alerts when entering/exiting geofences',
             importance: Importance.max,
@@ -975,6 +976,7 @@ class GeofencingService {
             styleInformation: const BigTextStyleInformation(''),
             ongoing: true,
             autoCancel: false,
+            onlyAlertOnce: true, // Ensure silent update
             colorized: true,
             color: const Color(0xFFFF9800),
             actions: const <AndroidNotificationAction>[
